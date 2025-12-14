@@ -65,11 +65,6 @@ class _GameScreenState extends State<GameScreen> {
   @override
   Widget build(BuildContext context) {
     final elapsed = stopwatch.elapsed.inMilliseconds / 1000.0;
-    final screenSize = MediaQuery.of(context).size;
-    final double gridPadding = 16 * 2;
-    final double spacing = 8 * 5;
-    final double availableHeight = screenSize.height - kToolbarHeight - 180;
-    final double tileSize = (availableHeight - spacing) / 6;
 
     return Scaffold(
       appBar: AppBar(
@@ -86,18 +81,20 @@ class _GameScreenState extends State<GameScreen> {
             ),
             const SizedBox(height: 6),
             Text(
-              bestRecord != double.infinity ? '최고 기록: ${bestRecord.toStringAsFixed(2)}초' : '최고 기록 없음',
+              bestRecord != double.infinity
+                  ? '최고 기록: ${bestRecord.toStringAsFixed(2)}초'
+                  : '최고 기록 없음',
               style: const TextStyle(fontSize: 16, color: Colors.grey),
             ),
             const SizedBox(height: 16),
             Expanded(
               child: GridView.builder(
                 physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 5,
                   mainAxisSpacing: 8,
                   crossAxisSpacing: 8,
-                  childAspectRatio: 1.0,
+                  childAspectRatio: 1, // ✅ 칸 비율 조정 (작게 보이게)
                 ),
                 itemCount: numbers.length,
                 itemBuilder: (context, index) {
@@ -119,7 +116,8 @@ class _GameScreenState extends State<GameScreen> {
                         boxShadow: isLastTapped
                             ? [
                           BoxShadow(
-                            color: Colors.orangeAccent.withOpacity(0.6),
+                            color:
+                            Colors.orangeAccent.withOpacity(0.6),
                             blurRadius: 10,
                             spreadRadius: 1,
                           ),

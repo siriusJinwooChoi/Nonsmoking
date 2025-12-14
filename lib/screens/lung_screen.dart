@@ -14,7 +14,6 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
   int lungHealth = 0; // 0 ~ 100
   late AnimationController _controller;
   Timer? _healTimer;
-  bool _initialized = false;
 
   @override
   void initState() {
@@ -23,33 +22,71 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(seconds: 2),
     );
-    _loadLungHealth();
-    _healTimer = Timer.periodic(const Duration(seconds: 1), (_) => _healLung());
+    _initializeLungHealth();
+
+    // ✅ 1시간마다 1%씩 회복
+    _healTimer = Timer.periodic(const Duration(hours: 1), (_) => _healLung());
   }
 
-  Future<void> _loadLungHealth() async {
+  /// 앱 실행 시 저장된 데이터 + 경과 시간 기반으로 상태 초기화
+  Future<void> _initializeLungHealth() async {
     final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      lungHealth = prefs.getInt('lungHealth') ?? 0;
-      _controller.value = lungHealth / 100;
-    });
+    final lastTimestamp = prefs.getInt('lastUpdatedTime');
+    final savedHealth = prefs.getInt('lungHealth') ?? 0;
+
+    int recoveredHealth = 0;
+    if (lastTimestamp != null) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      // ✅ 1시간 = 3600000ms 기준으로 회복량 계산
+      final diffHours = ((now - lastTimestamp) / 3600000).floor();
+      recoveredHealth = diffHours; // 1시간에 1%
+    }
+
+    lungHealth = (savedHealth + recoveredHealth).clamp(0, 100);
+
+    _controller.animateTo(
+      lungHealth / 100,
+      duration: const Duration(seconds: 2),
+      curve: Curves.easeOut,
+    );
+
+    await _saveLungHealth();
+    setState(() {});
   }
 
+  /// 상태 저장
   Future<void> _saveLungHealth() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('lungHealth', lungHealth);
+    await prefs.setInt('lastUpdatedTime', DateTime.now().millisecondsSinceEpoch);
   }
 
+  /// 1시간마다 1%씩 회복
   void _healLung() {
     if (lungHealth < 100) {
       setState(() {
         lungHealth++;
-        _controller.animateTo(lungHealth / 100, duration: const Duration(milliseconds: 500));
+        _controller.animateTo(
+          lungHealth / 100,
+          duration: const Duration(milliseconds: 500),
+        );
       });
       _saveLungHealth();
     } else {
       _healTimer?.cancel();
     }
+  }
+
+  /// 흡연 시 -10%
+  void _smokeAndDamage() {
+    setState(() {
+      lungHealth = (lungHealth - 10).clamp(0, 100);
+      _controller.animateTo(
+        lungHealth / 100,
+        duration: const Duration(milliseconds: 500),
+      );
+    });
+    _saveLungHealth();
   }
 
   @override
@@ -88,6 +125,8 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
               ),
             ),
             const SizedBox(height: 30),
+
+            // 회복 상태
             Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -113,6 +152,19 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
                   style: const TextStyle(fontSize: 14),
                 ),
               ],
+            ),
+
+            const SizedBox(height: 40),
+
+            // 흡연 버튼
+            ElevatedButton.icon(
+              onPressed: _smokeAndDamage,
+              icon: const Icon(Icons.smoking_rooms),
+              label: const Text('흡연: -10%', style: TextStyle(fontSize: 18)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.redAccent,
+                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
+              ),
             ),
           ],
         ),

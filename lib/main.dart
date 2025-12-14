@@ -1,9 +1,10 @@
-// Flutter의 핵심 UI 패키지
 import 'package:flutter/material.dart';
-// 사용자 설정을 앱에 저장하기 위한 패키지
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:timezone/data/latest_all.dart' as tzData;
+import 'package:timezone/timezone.dart' as tz;
 
-// 온보딩(초기 설정) 화면 관련 import
+// 온보딩 화면
 import 'screens/intro/screen1_encourage.dart';
 import 'screens/intro/screen2_goals.dart';
 import 'screens/intro/screen3_reasons.dart';
@@ -14,16 +15,23 @@ import 'screens/intro/screen7_per_pack.dart';
 import 'screens/intro/screen8_price.dart';
 import 'screens/intro/screen9_summary.dart';
 
-// 실제 앱 사용 중 표시되는 주요 화면 import
+// 주요 앱 화면
 import 'screens/main_screen.dart';
 import 'screens/game_screen.dart';
 import 'screens/tree_screen.dart';
 import 'screens/lung_screen.dart';
-import 'screens/youtube_screen.dart';
 import 'screens/health_screen.dart';
+import 'screens/nonsmoke_helper_screen.dart';
+import 'screens/reason_why_screen.dart';
+import 'screens/smoking_screen.dart'; // ✅ 추가
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await MobileAds.instance.initialize(); // ✅ 광고 초기화
+
+  tzData.initializeTimeZones();
+  tz.setLocalLocation(tz.getLocation('Asia/Seoul'));
+
   runApp(const QuitSmokingApp());
 }
 
@@ -159,9 +167,7 @@ class _IntroFlowWrapperState extends State<IntroFlowWrapper> {
           durationDays: durationDays,
         );
       default:
-        return const Scaffold(
-          body: Center(child: Text('잘못된 화면 흐름입니다.')),
-        );
+        return const Scaffold(body: Center(child: Text('잘못된 화면 흐름입니다.')));
     }
   }
 
@@ -187,15 +193,76 @@ class MainScreenWrapper extends StatefulWidget {
 
 class _MainScreenWrapperState extends State<MainScreenWrapper> {
   int currentIndex = 0;
-  final Duration quitDuration = const Duration(days: 5, hours: 10);
+  InterstitialAd? _interstitialAd;
+  int _clickCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadInterstitialAd();
+    _loadClickCount();
+  }
+
+  Future<void> _loadClickCount() async {
+    final prefs = await SharedPreferences.getInstance();
+    _clickCount = prefs.getInt('clickCount') ?? 0;
+  }
+
+  Future<void> _saveClickCount() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('clickCount', _clickCount);
+  }
+
+  void _loadInterstitialAd() {
+    InterstitialAd.load(
+      //adUnitId: 'ca-app-pub-3940256099942544/1033173712', // ✅ 테스트용 ID
+      adUnitId: 'ca-app-pub-2294312189421130/4538637779', // ✅ 실제 광고 ID
+      request: const AdRequest(),
+      adLoadCallback: InterstitialAdLoadCallback(
+        onAdLoaded: (ad) {
+          _interstitialAd = ad;
+        },
+        onAdFailedToLoad: (error) {
+          _interstitialAd = null;
+        },
+      ),
+    );
+  }
+
+  void _showAdThenNavigate(int index) async {
+    _clickCount++;
+    await _saveClickCount();
+
+    // ✅ 5번 클릭마다 광고 표시
+    if (_clickCount % 5 == 0 && _interstitialAd != null) {
+      _interstitialAd!.fullScreenContentCallback = FullScreenContentCallback(
+        onAdDismissedFullScreenContent: (ad) {
+          ad.dispose();
+          _loadInterstitialAd();
+          setState(() => currentIndex = index);
+        },
+        onAdFailedToShowFullScreenContent: (ad, error) {
+          ad.dispose();
+          _loadInterstitialAd();
+          setState(() => currentIndex = index);
+        },
+      );
+      _interstitialAd!.show();
+    } else {
+      setState(() => currentIndex = index);
+      _loadInterstitialAd();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final screens = [
       MainScreen(
-        onAlarmTap: () => setState(() => currentIndex = 5),
-        onCravingTap: () => setState(() => currentIndex = 1),
-        onResetTap: () => setState(() => currentIndex = 0),
+        onAlarmTap: () => _showAdThenNavigate(5),
+        onCravingTap: () => _showAdThenNavigate(1),
+        onResetTap: () => _showAdThenNavigate(0),
+        onReasonTap: () => _showAdThenNavigate(6),
+        onHelperTap: () => _showAdThenNavigate(7),
         dailyCigarettes: widget.dailyCigarettes,
         cigarettesPerPack: widget.cigarettesPerPack,
         pricePerPack: widget.pricePerPack,
@@ -203,8 +270,8 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
       const GameScreen(),
       const TreeScreen(),
       const LungScreen(),
-      const YoutubeScreen(),
-      HealthScreen(quitDuration: quitDuration),
+      const SmokingScreen(),
+      HealthScreen(),
     ];
 
     return Scaffold(
@@ -213,13 +280,13 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
         currentIndex: currentIndex,
         type: BottomNavigationBarType.fixed,
         selectedItemColor: Colors.teal,
-        onTap: (index) => setState(() => currentIndex = index),
+        onTap: (index) => _showAdThenNavigate(index),
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: '메인'),
           BottomNavigationBarItem(icon: Icon(Icons.videogame_asset), label: '게임'),
-          BottomNavigationBarItem(icon: Icon(Icons.nature), label: '나무'),
+          BottomNavigationBarItem(icon: Icon(Icons.nature), label: '나무 키우기'),
           BottomNavigationBarItem(icon: Icon(Icons.healing), label: '나의 폐'),
-          BottomNavigationBarItem(icon: Icon(Icons.video_library), label: '유튜브'),
+          BottomNavigationBarItem(icon: Icon(Icons.smoking_rooms), label: '흡연하기'),
           BottomNavigationBarItem(icon: Icon(Icons.health_and_safety), label: '건강'),
         ],
       ),
