@@ -27,7 +27,7 @@ import 'screens/lung_screen.dart';
 import 'screens/health_screen.dart';
 import 'screens/smoking_screen.dart';
 
-//firebase 사용
+// firebase
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
@@ -47,10 +47,8 @@ void main() async {
   // ✅ Crashlytics 설정은 Firebase 초기화 이후에!
   await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(true);
 
-  // Flutter 프레임워크 에러 수집
   FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterFatalError;
 
-  // Dart 비동기 에러까지 잡기 (강력 추천)
   runZonedGuarded(() async {
     // ✅ 광고 초기화
     await MobileAds.instance.initialize();
@@ -58,10 +56,9 @@ void main() async {
     // ✅ WorkManager 초기화
     await Workmanager().initialize(
       callbackDispatcher,
-      isInDebugMode: false, // 테스트 중이면 true로 두고 로그 확인
+      isInDebugMode: false,
     );
 
-    // ✅ timezone 초기화 (필요하면 유지)
     tzData.initializeTimeZones();
     tz.setLocalLocation(tz.getLocation('Asia/Seoul'));
 
@@ -199,7 +196,6 @@ class _IntroFlowWrapperState extends State<IntroFlowWrapper> {
             final prefs = await SharedPreferences.getInstance();
             await prefs.setBool('isConfigured', true);
 
-            //firebase analytics 추가
             await AppAnalytics.log('onboarding_complete', params: {
               'daily_cigs': dailyCigarettes,
               'cigs_per_pack': cigarettesPerPack,
@@ -260,15 +256,96 @@ class MainScreenWrapper extends StatefulWidget {
 class _MainScreenWrapperState extends State<MainScreenWrapper> {
   int currentIndex = 0;
 
+  // ✅ 전면광고
+  InterstitialAd? _interstitialAd;
+
+  // ✅ 클릭 카운트(10번마다 노출)
+  int _clickCount = 0;
+  static const int _showEvery = 10;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadClickCount();
+    _loadInterstitialAd();
+  }
+
+  Future<void> _loadClickCount() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _clickCount = prefs.getInt('clickCount') ?? 0;
+    });
+  }
+
+  Future<void> _saveClickCount() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('clickCount', _clickCount);
+  }
+
+  void _loadInterstitialAd() {
+    InterstitialAd.load(
+      // ✅ 실제 광고 ID
+      adUnitId: 'ca-app-pub-2294312189421130/4538637779',
+      request: const AdRequest(),
+      adLoadCallback: InterstitialAdLoadCallback(
+        onAdLoaded: (ad) {
+          _interstitialAd = ad;
+        },
+        onAdFailedToLoad: (error) {
+          _interstitialAd = null;
+          debugPrint("Interstitial failed to load: $error");
+        },
+      ),
+    );
+  }
+
+  void _showAdThenNavigate(int index) async {
+    _clickCount++;
+    await _saveClickCount();
+
+    // ✅ 디버그 확인용(원하면 삭제)
+    debugPrint("menu click=$_clickCount, adLoaded=${_interstitialAd != null}");
+
+    // ✅ 10번마다 광고
+    if (_clickCount % _showEvery == 0 && _interstitialAd != null) {
+      _interstitialAd!.fullScreenContentCallback = FullScreenContentCallback(
+        onAdDismissedFullScreenContent: (ad) {
+          ad.dispose();
+          _interstitialAd = null;
+          _loadInterstitialAd();
+          setState(() => currentIndex = index);
+        },
+        onAdFailedToShowFullScreenContent: (ad, error) {
+          ad.dispose();
+          _interstitialAd = null;
+          _loadInterstitialAd();
+          setState(() => currentIndex = index);
+        },
+      );
+
+      _interstitialAd!.show();
+    } else {
+      setState(() => currentIndex = index);
+      // 다음을 위해 계속 로드
+      if (_interstitialAd == null) _loadInterstitialAd();
+    }
+  }
+
+  @override
+  void dispose() {
+    _interstitialAd?.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final screens = [
       MainScreen(
-        onAlarmTap: () => setState(() => currentIndex = 0),
-        onCravingTap: () => setState(() => currentIndex = 1),
-        onResetTap: () => setState(() => currentIndex = 0),
-        onReasonTap: () => setState(() => currentIndex = 0),
-        onHelperTap: () => setState(() => currentIndex = 0),
+        onAlarmTap: () => _showAdThenNavigate(0),
+        onCravingTap: () => _showAdThenNavigate(1),
+        onResetTap: () => _showAdThenNavigate(0),
+        onReasonTap: () => _showAdThenNavigate(0),
+        onHelperTap: () => _showAdThenNavigate(0),
         dailyCigarettes: widget.dailyCigarettes,
         cigarettesPerPack: widget.cigarettesPerPack,
         pricePerPack: widget.pricePerPack,
@@ -286,7 +363,7 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
         currentIndex: currentIndex,
         type: BottomNavigationBarType.fixed,
         selectedItemColor: Colors.teal,
-        onTap: (index) => setState(() => currentIndex = index),
+        onTap: (index) => _showAdThenNavigate(index), // ✅ 여기만 변경!
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: '메인'),
           BottomNavigationBarItem(icon: Icon(Icons.videogame_asset), label: '게임'),
