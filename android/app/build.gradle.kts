@@ -5,6 +5,9 @@ plugins {
     id("com.android.application")
     id("kotlin-android")
     id("dev.flutter.flutter-gradle-plugin")
+
+    id("com.google.gms.google-services")
+    id("com.google.firebase.crashlytics")
 }
 
 // ✅ KeyStore 설정 불러오기
@@ -37,6 +40,13 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            // debug에서는 난독화/리소스 축소 절대 금지
+            isMinifyEnabled = false
+            isShrinkResources = false
+            // debug용 서명은 기본 debug keystore 사용(설정 불필요)
+        }
+
         getByName("release") {
             signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
@@ -62,6 +72,9 @@ android {
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
     implementation("com.google.android.gms:play-services-ads:22.6.0")
+
+    implementation(platform("com.google.firebase:firebase-bom:34.7.0"))
+    implementation("com.google.firebase:firebase-analytics")
 }
 
 flutter {

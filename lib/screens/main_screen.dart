@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // ✅ SystemNavigator.pop
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:timezone/timezone.dart' as tz;
-import 'package:timezone/data/latest_all.dart' as tzData;
 
 import 'reason_why_screen.dart';
 import 'nonsmoke_helper_screen.dart';
-import '../main.dart'; // ✅ IntroFlowWrapper 사용
+
+// ✅ Analytics helper
+import '../analytics/app_analytics.dart';
+
+// ✅ WorkManager 알림(네 프로젝트 구조 기준)
+import '../notifications/daily_reminder_worker.dart';
 
 class MainScreen extends StatefulWidget {
   final VoidCallback onAlarmTap;
@@ -46,36 +49,19 @@ class _MainScreenState extends State<MainScreen> {
   Timer? _timer;
   TimeOfDay? _reminderTime;
 
-  final FlutterLocalNotificationsPlugin _notificationsPlugin =
-  FlutterLocalNotificationsPlugin();
-
   BannerAd? _bannerAd;
   bool _isBannerReady = false;
+
+  final _moneyFormatter = NumberFormat.decimalPattern('ko_KR');
 
   @override
   void initState() {
     super.initState();
-    tzData.initializeTimeZones();
-    tz.setLocalLocation(tz.getLocation('Asia/Seoul'));
-    _initNotifications();
+    AppAnalytics.screen('main_screen');
     _loadPersistedData();
     _loadBannerAd();
   }
 
-  /// ✅ Flutter Local Notifications 초기화 + 권한 요청
-  Future<void> _initNotifications() async {
-    const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const settings = InitializationSettings(android: androidInit);
-    await _notificationsPlugin.initialize(settings);
-
-    final androidImpl = _notificationsPlugin
-        .resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
-    await androidImpl?.requestNotificationsPermission(); // ✅ Android 13 이상 권한 요청
-  }
-
-
-  /// ✅ 배너 광고 로드
   void _loadBannerAd() {
     final banner = BannerAd(
       adUnitId: 'ca-app-pub-2294312189421130/2526201037',
@@ -91,7 +77,6 @@ class _MainScreenState extends State<MainScreen> {
         onAdFailedToLoad: (ad, error) {
           ad.dispose();
           setState(() => _isBannerReady = false);
-          debugPrint('배너 광고 로드 실패: $error');
         },
       ),
     );
@@ -105,7 +90,6 @@ class _MainScreenState extends State<MainScreen> {
     super.dispose();
   }
 
-  /// ✅ 저장된 데이터 불러오기
   Future<void> _loadPersistedData() async {
     final prefs = await SharedPreferences.getInstance();
     final millis = prefs.getInt('startTime');
@@ -126,19 +110,21 @@ class _MainScreenState extends State<MainScreen> {
     _startTimer();
   }
 
-  /// ✅ 금연 타이머 계산
   void _startTimer() {
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (_startTime == null) return;
+
       final now = DateTime.now();
       final diff = now.difference(_startTime!);
       final seconds = diff.inSeconds;
 
       final totalCigs = (widget.dailyCigarettes / (24 * 60 * 60)) * seconds;
+
       final costPerCig = widget.cigarettesPerPack > 0
           ? widget.pricePerPack / widget.cigarettesPerPack
-          : 0;
+          : 0.0;
+
       final money = totalCigs * costPerCig;
 
       setState(() {
@@ -149,11 +135,10 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
-  /// ✅ 알림 시간 선택 다이얼로그
   Future<void> _pickReminderTime() async {
     final picked = await showTimePicker(
       context: context,
-      initialTime: TimeOfDay.now(),
+      initialTime: _reminderTime ?? TimeOfDay.now(),
     );
 
     if (picked != null) {
@@ -162,66 +147,62 @@ class _MainScreenState extends State<MainScreen> {
       await prefs.setInt('reminderMinute', picked.minute);
       setState(() => _reminderTime = picked);
 
-      await _scheduleDailyNotification(picked);
+      // ✅ WorkManager 기반 알림 ON
+      await enableDailyReminder(picked);
+
+      // ✅ Analytics
+      await AppAnalytics.log('reminder_set', params: {
+        'hour': picked.hour,
+        'minute': picked.minute,
+        'source': 'main_screen',
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('매일 ${picked.format(context)}에 알림이 설정되었습니다.')),
+        );
+      }
     }
   }
 
-  /// ✅ 알림 예약 (19.2.1 완전 호환)
-  Future<void> _scheduleDailyNotification(TimeOfDay time) async {
-    final now = DateTime.now();
-    final scheduledDate = DateTime(
-      now.year,
-      now.month,
-      now.day,
-      time.hour,
-      time.minute,
+  Future<void> _turnOffReminder() async {
+    if (_reminderTime == null) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('알림 끄기'),
+        content: const Text('매일 리마인더 알림을 끄시겠습니까?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('끄기'),
+          ),
+        ],
+      ),
     );
 
-    final tzScheduled = tz.TZDateTime.from(
-      scheduledDate.isBefore(now)
-          ? scheduledDate.add(const Duration(days: 1))
-          : scheduledDate,
-      tz.local,
-    );
+    if (confirmed != true) return;
 
-    const androidDetails = AndroidNotificationDetails(
-      'daily_reminder_channel',
-      '금연 리마인더',
-      channelDescription: '매일 설정된 시간에 금연 리마인더를 표시합니다.',
-      importance: Importance.max,
-      priority: Priority.high,
-      icon: '@mipmap/ic_launcher',
-    );
+    final prev = _reminderTime!;
+    await disableDailyReminder();
 
-    const details = NotificationDetails(android: androidDetails);
+    setState(() => _reminderTime = null);
 
-    // 알림기능 workmark로 변경해야함
-  /*
-    await _notificationsPlugin.show(
-      0,
-      '테스트 알림 🔔',
-      '지금 바로 표시되는 알림입니다!',
-      const NotificationDetails(android: androidDetails),
-    );*/
-
-    // 알림기능 workmark로 변경해야함
-    /*
-    await _notificationsPlugin.zonedSchedule(
-      0,
-      '금연 리마인더 🔔',
-      '오늘도 담배 없이 힘내세요 💪',
-      tzScheduled,
-      details,
-      androidAllowWhileIdle: true,
-      uiLocalNotificationDateInterpretation:
-      UILocalNotificationDateInterpretation.absoluteTime,
-      matchDateTimeComponents: DateTimeComponents.time,
-    );
-    */
+    // ✅ Analytics
+    await AppAnalytics.log('reminder_off', params: {
+      'hour': prev.hour,
+      'minute': prev.minute,
+      'source': 'main_screen',
+    });
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('매일 ${time.format(context)}에 알림이 설정되었습니다.')),
+        const SnackBar(content: Text('알림이 꺼졌습니다.')),
       );
     }
   }
@@ -233,13 +214,13 @@ class _MainScreenState extends State<MainScreen> {
         "${twoDigits(d.inSeconds.remainder(60))}";
   }
 
-  /// ✅ 금연 리셋
   Future<void> _resetSmokingStatus() async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('금연 리셋 확인'),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('⚠️ 금연 리셋'),
           content: const Text('정말로 금연 리셋을 진행하시겠습니까?\n기록이 초기화됩니다.'),
           actions: [
             TextButton(
@@ -248,6 +229,7 @@ class _MainScreenState extends State<MainScreen> {
             ),
             ElevatedButton(
               onPressed: () => Navigator.of(context).pop(true),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
               child: const Text('확인'),
             ),
           ],
@@ -262,9 +244,17 @@ class _MainScreenState extends State<MainScreen> {
     await prefs.setInt('startTime', now.millisecondsSinceEpoch);
     setState(() => _startTime = now);
 
-    final currentLungHealth = prefs.getInt('lungHealth') ?? 100;
-    final newLungHealth = (currentLungHealth - 10).clamp(0, 100);
-    await prefs.setInt('lungHealth', newLungHealth);
+    // (기존 로직 유지: 폐 건강 -10)
+    final before = prefs.getInt('lungHealth') ?? 100;
+    final after = (before - 10).clamp(0, 100);
+    await prefs.setInt('lungHealth', after);
+
+    // ✅ Analytics
+    await AppAnalytics.log('reset_quit', params: {
+      'lung_before': before,
+      'lung_after': after,
+      'source': 'main_screen',
+    });
 
     widget.onResetTap();
 
@@ -275,24 +265,96 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  /// ✅ UI 구성
+  // ✅ 설정 아이콘: "처음 설정으로 돌아가기" 구현
+  Future<void> _confirmAndGoToFirstSetup() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('처음 설정으로 돌아가기'),
+        content: const Text(
+          '처음 설정 화면으로 돌아가시겠습니까?\n\n'
+              '⚠️ 입력한 설정(흡연량/가격 등)과 진행 기록이 초기화될 수 있습니다.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('돌아가기'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    // ✅ Analytics
+    await AppAnalytics.log('go_to_first_setup', params: {'source': 'main_screen'});
+
+    // ✅ 알림 OFF(예약 작업 취소 + 설정 제거)
+    await disableDailyReminder();
+
+    // ✅ 설정값 초기화 (필요 키만 삭제해도 되지만, 안전하게 관련 키 정리)
+    final prefs = await SharedPreferences.getInstance();
+
+    // "처음 설정"에 영향을 주는 값들
+    await prefs.setBool('isConfigured', false);
+    await prefs.remove('dailyCigarettes');
+    await prefs.remove('cigarettesPerPack');
+    await prefs.remove('pricePerPack');
+
+    // 시작시간/리마인더 관련
+    await prefs.remove('startTime');
+    await prefs.remove('reminderHour');
+    await prefs.remove('reminderMinute');
+
+    // (선택) 광고 클릭 카운트도 초기화하고 싶으면
+    // await prefs.remove('clickCount');
+
+    // (선택) 나무/게임/폐 건강 등도 "처음부터"로 돌리고 싶으면 같이 초기화
+    // await prefs.remove('growthStage');
+    // await prefs.remove('water');
+    // await prefs.remove('currentWater');
+    // await prefs.remove('bestRecord');
+    // await prefs.remove('lungHealth');
+    // await prefs.remove('lastUpdatedTime');
+    // await prefs.remove('lastExitTime');
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('초기 설정으로 돌아갑니다. 앱을 다시 시작합니다.')),
+      );
+    }
+
+    // ✅ 현재 구조에서 가장 안전한 방식: 앱 종료 후 재실행
+    // (재실행하면 isConfigured=false라 IntroFlowWrapper가 다시 뜸)
+    await Future.delayed(const Duration(milliseconds: 400));
+    SystemNavigator.pop();
+  }
+
   @override
   Widget build(BuildContext context) {
     final formattedStart =
     _startTime != null ? DateFormat('yyyy년 MM월 dd일').format(_startTime!) : '';
-    final days =
-    _startTime != null ? DateTime.now().difference(_startTime!).inDays : 0;
+    final days = _startTime != null ? DateTime.now().difference(_startTime!).inDays : 0;
+    final savedMoneyStr = _moneyFormatter.format(_savedMoney.round());
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF0F4F8),
+      backgroundColor: const Color(0xFFF3F7F5),
       appBar: AppBar(
-        backgroundColor: Colors.teal,
-        title: const Text('금연 현황'),
+        backgroundColor: Colors.teal.shade700,
+        title: const Text('금연 현황 🌿', style: TextStyle(fontWeight: FontWeight.bold)),
+        centerTitle: true,
+        elevation: 3,
         actions: [
           IconButton(
-            tooltip: '설정',
             icon: const Icon(Icons.settings),
-            onPressed: _openSettingsSheet,
+            tooltip: '설정',
+            onPressed: _confirmAndGoToFirstSetup, // ✅ 변경
           ),
         ],
       ),
@@ -301,48 +363,63 @@ class _MainScreenState extends State<MainScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // 상단 카드
             Container(
               decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [Colors.teal.shade400, Colors.teal.shade700],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
                 borderRadius: BorderRadius.circular(20),
-                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.teal.withOpacity(0.3),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
               ),
               padding: const EdgeInsets.all(20),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text("📅 시작일: $formattedStart",
-                      style: const TextStyle(fontSize: 16)),
+                      style: const TextStyle(color: Colors.white, fontSize: 16)),
                   const SizedBox(height: 6),
                   Text("📈 누적일: ${days}일",
-                      style: const TextStyle(fontSize: 16)),
-                  const Divider(height: 24),
+                      style: const TextStyle(color: Colors.white, fontSize: 16)),
+                  const Divider(height: 24, color: Colors.white70),
                   Text("⏳ 금연 시간: ${formatDuration(_elapsed)}",
                       style: const TextStyle(
-                          fontSize: 22, fontWeight: FontWeight.bold)),
+                          color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
-                  Text("💰 절약 금액: ₩${_savedMoney.toStringAsFixed(0)}",
-                      style:
-                      const TextStyle(fontSize: 20, color: Colors.green)),
+                  Text("💰 절약 금액: ₩$savedMoneyStr",
+                      style: const TextStyle(
+                          color: Colors.amberAccent, fontSize: 20, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 8),
                   Text("🚭 안 핀 담배 수: $_skippedCigarettes개비",
-                      style: const TextStyle(fontSize: 18)),
+                      style: const TextStyle(color: Colors.white, fontSize: 18)),
                 ],
               ),
             ),
-            const SizedBox(height: 30),
+            const SizedBox(height: 24),
+
+            // 알림 / 욕구 버튼
             Row(
               children: [
                 Expanded(
                   child: ElevatedButton.icon(
                     onPressed: _pickReminderTime,
-                    icon: const Icon(Icons.notifications),
-                    label: Text(_reminderTime == null
-                        ? '알림 설정'
-                        : '⏰ ${_reminderTime!.format(context)}'),
+                    icon: const Icon(Icons.notifications_active),
+                    label: Text(
+                      _reminderTime == null ? '알림 설정' : '⏰ ${_reminderTime!.format(context)}',
+                    ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.indigoAccent,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     ),
                   ),
                 ),
@@ -356,26 +433,41 @@ class _MainScreenState extends State<MainScreen> {
                       backgroundColor: Colors.deepPurpleAccent,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 20),
+
+            // ✅ 알림 끄기 버튼(알림이 설정되어 있을 때만)
+            if (_reminderTime != null) ...[
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: _turnOffReminder,
+                icon: const Icon(Icons.notifications_off),
+                label: const Text('알림 끄기'),
+              ),
+            ],
+
+            const SizedBox(height: 16),
+
+            // 리셋 버튼
             ElevatedButton.icon(
               onPressed: _resetSmokingStatus,
               icon: const Icon(Icons.refresh),
               label: const Text('금연 리셋'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.redAccent.shade100,
+                backgroundColor: Colors.redAccent,
                 foregroundColor: Colors.white,
-                padding:
-                const EdgeInsets.symmetric(horizontal: 30, vertical: 14),
-                textStyle:
-                const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 14),
+                textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
+
+            // 이유 / 도우미 버튼
             Row(
               children: [
                 Expanded(
@@ -385,14 +477,14 @@ class _MainScreenState extends State<MainScreen> {
                     onPressed: () {
                       Navigator.push(
                         context,
-                        MaterialPageRoute(
-                            builder: (_) => const ReasonWhyScreen()),
+                        MaterialPageRoute(builder: (_) => const ReasonWhyScreen()),
                       );
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.orangeAccent,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     ),
                   ),
                 ),
@@ -404,59 +496,36 @@ class _MainScreenState extends State<MainScreen> {
                     onPressed: () {
                       Navigator.push(
                         context,
-                        MaterialPageRoute(
-                            builder: (_) => const NonsmokeHelperScreen()),
+                        MaterialPageRoute(builder: (_) => const NonsmokeHelperScreen()),
                       );
                     },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.green,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-            if (_isBannerReady)
-              Align(
-                alignment: Alignment.center,
-                child: Container(
-                  margin: const EdgeInsets.only(top: 10),
-                  width: _bannerAd!.size.width.toDouble(),
-                  height: _bannerAd!.size.height.toDouble(),
-                  child: AdWidget(ad: _bannerAd!),
+
+            // 광고 영역
+            if (_isBannerReady && _bannerAd != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 20),
+                child: Align(
+                  alignment: Alignment.center,
+                  child: SizedBox(
+                    width: _bannerAd!.size.width.toDouble(),
+                    height: _bannerAd!.size.height.toDouble(),
+                    child: AdWidget(ad: _bannerAd!),
+                  ),
                 ),
               ),
-            const SizedBox(height: 20),
           ],
         ),
       ),
-    );
-  }
-
-  /// ✅ 설정 시트
-  void _openSettingsSheet() {
-    showModalBottomSheet(
-      context: context,
-      showDragHandle: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (_) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: const [
-              ListTile(
-                leading: Icon(Icons.info),
-                title: Text('설정 화면'),
-                subtitle: Text('기본 기능 유지'),
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 }

@@ -24,10 +24,14 @@ dependencies:
   #timezone: ^0.10.1
 
   #알람기능 사용시, workmanger로 사용
-  #workmanager: ^0.5.2
+  workmanager: ^0.6.0
 
   google_mobile_ads: ^4.0.0
-  #cupertino_icons: ^1.0.8
+
+  #firebase 사용
+  firebase_core: ^3.0.0
+  firebase_crashlytics: ^4.0.0
+  firebase_analytics: ^11.0.0
 
 dev_dependencies:
   flutter_test:
