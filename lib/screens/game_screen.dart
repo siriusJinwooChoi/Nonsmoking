@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../theme/app_theme.dart';
 
 // ✅ Analytics helper
 import '../analytics/app_analytics.dart';
@@ -43,9 +44,11 @@ class _GameScreenState extends State<GameScreen> {
     await prefs.setDouble('bestRecord', newRecord);
   }
 
+  static const int _maxNumber = 30;
+
   void resetGame() {
     final rand = Random();
-    numbers = List.generate(30, (index) => index + 1);
+    numbers = List.generate(_maxNumber, (index) => index + 1);
     numbers.shuffle(rand);
 
     clicked.clear();
@@ -53,23 +56,20 @@ class _GameScreenState extends State<GameScreen> {
     stopwatch.reset();
     _loggedStart = false;
 
-    // ✅ Analytics (fire-and-forget)
     unawaited(AppAnalytics.log('game_restart', params: {'source': 'game_screen'}));
-
     setState(() {});
   }
 
   void onNumberTap(int number) async {
     if (number != clicked.length + 1) return;
 
-    // 첫 탭에만 스톱워치 시작 + 시작 이벤트
+    // 1을 누르는 순간 스톱워치 시작
     if (clicked.isEmpty) {
       stopwatch.start();
-
       if (!_loggedStart) {
         _loggedStart = true;
         unawaited(AppAnalytics.log('game_start', params: {
-          'size': 30,
+          'size': _maxNumber,
           'source': 'game_screen',
         }));
       }
@@ -77,11 +77,10 @@ class _GameScreenState extends State<GameScreen> {
 
     clicked.add(number);
     lastTapped = number;
-
-    // ✅ 탭 즉시 UI 반영
     setState(() {});
 
-    if (number == 30) {
+    // 30을 누르면 시간 정지 후 기록 표시
+    if (number == _maxNumber) {
       stopwatch.stop();
       final elapsed = stopwatch.elapsed.inMilliseconds / 1000.0;
 
@@ -95,7 +94,7 @@ class _GameScreenState extends State<GameScreen> {
       }
 
       // ✅ 먼저 다이얼로그 띄우기 (Analytics 지연/오류로 “안 눌림” 체감 방지)
-      _showGameClearDialog(elapsed);
+      _showGameClearDialog(elapsed, isNewBest);
 
       // ✅ Analytics는 뒤에서 안전하게 (예외/지연 무시)
       unawaited(() async {
@@ -113,16 +112,18 @@ class _GameScreenState extends State<GameScreen> {
     }
   }
 
-  void _showGameClearDialog(double elapsed) {
+  void _showGameClearDialog(double elapsed, [bool isNewBest = false]) {
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('🎉 축하합니다!'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('축하합니다!'),
         content: Text(
-          '모든 숫자를 완료했습니다!\n\n⏱ 기록: ${elapsed.toStringAsFixed(2)}초',
+          '1부터 30까지 완료했습니다!\n\n'
+          '기록: ${elapsed.toStringAsFixed(2)}초'
+          '${isNewBest ? '\n\n🎉 새 최고 기록!' : ''}',
           textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 18),
+          style: AppTheme.bodyLarge,
         ),
         actions: [
           TextButton(
@@ -142,76 +143,56 @@ class _GameScreenState extends State<GameScreen> {
     final elapsed = stopwatch.elapsed.inMilliseconds / 1000.0;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F6F9),
+      backgroundColor: AppTheme.surface,
       appBar: AppBar(
-        backgroundColor: Colors.teal,
-        elevation: 3,
-        title: const Text(
-          '1부터 30까지 빠르게!',
-          style: TextStyle(fontWeight: FontWeight.w600),
-        ),
-        centerTitle: true,
+        title: const Text('1부터 30까지 빠르게!'),
       ),
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
             return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               child: Column(
                 children: [
-                  // 상단 기록 카드
+                  // 상단 기록 카드 (컴팩트)
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                     decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Colors.black12,
-                          blurRadius: 6,
-                          offset: Offset(0, 3),
-                        ),
-                      ],
+                      color: AppTheme.surfaceCard,
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: AppTheme.cardShadowSubtle,
                     ),
-                    child: Column(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          clicked.length == 30
-                              ? '🎯 완료! 기록: ${elapsed.toStringAsFixed(2)}초'
-                              : '⏱ 진행 중...',
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black87,
-                          ),
+                          clicked.length == _maxNumber
+                              ? '완료! ${elapsed.toStringAsFixed(2)}초'
+                              : '진행 중 (${clicked.length}/$_maxNumber)',
+                          style: AppTheme.titleMedium.copyWith(fontSize: 15),
                         ),
-                        const SizedBox(height: 6),
                         Text(
                           bestRecord != double.infinity
-                              ? '🏆 최고 기록: ${bestRecord.toStringAsFixed(2)}초'
-                              : '아직 최고 기록이 없습니다.',
-                          style: const TextStyle(
-                            fontSize: 15,
-                            color: Colors.teal,
-                            height: 1.4,
-                          ),
+                              ? '최고: ${bestRecord.toStringAsFixed(2)}초'
+                              : '최고 기록 없음',
+                          style: AppTheme.bodyMedium.copyWith(color: AppTheme.primary, fontSize: 13),
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 8),
 
-                  // ✅ Grid: 스크롤 끔 + bottom padding으로 제스처 영역 회피
+                  // 1~30 숫자 그리드 (5열 x 6행, 한 화면에 수납)
                   Expanded(
                     child: GridView.builder(
-                      padding: const EdgeInsets.only(bottom: 24), // ✅ 하단 제스처 영역 회피
-                      physics: const NeverScrollableScrollPhysics(), // ✅ 탭 씹힘 방지
+                      padding: const EdgeInsets.only(bottom: 6),
+                      physics: const NeverScrollableScrollPhysics(),
                       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: 5,
-                        mainAxisSpacing: 8,
-                        crossAxisSpacing: 8,
-                        childAspectRatio: 1,
+                        mainAxisSpacing: 6,
+                        crossAxisSpacing: 6,
+                        childAspectRatio: 1.05,
                       ),
                       itemCount: numbers.length,
                       itemBuilder: (context, index) {
@@ -220,10 +201,10 @@ class _GameScreenState extends State<GameScreen> {
                         final isLastTapped = lastTapped == n;
 
                         final bgColor = clickedAlready
-                            ? Colors.grey[300]
+                            ? AppTheme.textMuted.withOpacity(0.4)
                             : isLastTapped
-                            ? Colors.orangeAccent
-                            : Colors.teal;
+                            ? AppTheme.warning
+                            : AppTheme.primary;
 
                         return Material(
                           color: Colors.transparent,
@@ -250,9 +231,9 @@ class _GameScreenState extends State<GameScreen> {
                                   child: Text(
                                     '$n',
                                     style: TextStyle(
-                                      fontSize: constraints.maxWidth * 0.05,
+                                      fontSize: 14,
                                       fontWeight: FontWeight.w700,
-                                      color: clickedAlready ? Colors.black54 : Colors.white,
+                                      color: clickedAlready ? AppTheme.textSecondary : Colors.white,
                                     ),
                                   ),
                                 ),
@@ -264,23 +245,20 @@ class _GameScreenState extends State<GameScreen> {
                     ),
                   ),
 
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 6),
 
                   // 하단 버튼
                   SafeArea(
                     top: false,
                     child: SizedBox(
                       width: double.infinity,
-                      height: 52,
+                      height: 46,
                       child: ElevatedButton.icon(
                         onPressed: resetGame,
-                        icon: const Icon(Icons.refresh, size: 22),
-                        label: const Text(
-                          '다시 시작',
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                        ),
+                        icon: const Icon(Icons.refresh_rounded, size: 22),
+                        label: const Text('다시 시작'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.teal,
+                          backgroundColor: AppTheme.primary,
                           foregroundColor: Colors.white,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),

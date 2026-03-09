@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lottie/lottie.dart';
 import 'dart:async';
+import '../theme/app_theme.dart';
 
 // ✅ Analytics helper
 import '../analytics/app_analytics.dart';
@@ -83,8 +84,8 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('🚬 흡연하시겠습니까?'),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('흡연하시겠습니까?'),
         content: const Text('흡연하면 폐 건강이 10% 감소합니다.'),
         actions: [
           TextButton(
@@ -92,7 +93,7 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
             child: const Text('취소'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('흡연'),
           ),
@@ -140,23 +141,17 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
 
     Color healthColor;
     if (lungHealth >= 80) {
-      healthColor = Colors.teal;
+      healthColor = AppTheme.success;
     } else if (lungHealth >= 50) {
-      healthColor = Colors.orangeAccent;
+      healthColor = AppTheme.warning;
     } else {
-      healthColor = Colors.redAccent;
+      healthColor = AppTheme.error;
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF9F9F9),
+      backgroundColor: AppTheme.surface,
       appBar: AppBar(
-        backgroundColor: Colors.redAccent,
-        title: const Text(
-          '나의 폐 건강 상태 🫁',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        centerTitle: true,
-        elevation: 3,
+        title: const Text('나의 폐 건강'),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
@@ -164,29 +159,26 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Card(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                elevation: 4,
-                color: Colors.white,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
-                  child: Column(
-                    children: [
-                      const Text(
-                        '폐는 시간에 따라 회복됩니다 💨',
-                        style: TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black87),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        '흡연 시 건강도가 감소하지만, 금연을 유지하면 다시 회복됩니다.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
-                      ),
-                    ],
-                  ),
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 20),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceCard,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: AppTheme.cardShadow,
+                ),
+                child: Column(
+                  children: [
+                    Text(
+                      '폐는 시간에 따라 회복됩니다',
+                      style: AppTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '흡연 시 건강도가 감소하지만, 금연을 유지하면 다시 회복됩니다.',
+                      textAlign: TextAlign.center,
+                      style: AppTheme.bodyMedium,
+                    ),
+                  ],
                 ),
               ),
 
@@ -204,51 +196,39 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
               ),
 
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(14),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black12.withOpacity(0.05),
-                      blurRadius: 6,
-                      offset: const Offset(0, 3),
-                    )
-                  ],
+                  color: AppTheme.surfaceCard,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: AppTheme.cardShadowSubtle,
                 ),
                 child: Column(
                   children: [
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(Icons.monitor_heart, color: Colors.teal),
-                        const SizedBox(width: 6),
-                        Text(
-                          '폐 회복 상태',
-                          style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey[800]),
-                        ),
+                        Icon(Icons.favorite_rounded, color: healthColor, size: 22),
+                        const SizedBox(width: 8),
+                        Text('폐 회복 상태', style: AppTheme.titleMedium),
                       ],
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 12),
                     ClipRRect(
                       borderRadius: BorderRadius.circular(8),
                       child: LinearProgressIndicator(
                         value: progress,
                         minHeight: 12,
-                        backgroundColor: Colors.grey.shade300,
+                        backgroundColor: AppTheme.textMuted.withOpacity(0.3),
                         valueColor: AlwaysStoppedAnimation<Color>(healthColor),
                       ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 10),
                     Text(
                       '${(progress * 100).toStringAsFixed(0)}% 회복됨',
-                      style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: healthColor),
+                      style: AppTheme.bodyLarge.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: healthColor,
+                      ),
                     ),
                   ],
                 ),
@@ -256,19 +236,15 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
 
               ElevatedButton.icon(
                 onPressed: _confirmSmokeAndDamage,
-                icon: const Icon(Icons.smoking_rooms, size: 22),
-                label: const Text(
-                  '흡연 (-10%)',
-                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
-                ),
+                icon: const Icon(Icons.smoking_rooms_rounded, size: 20),
+                label: const Text('흡연 (-10%)'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.redAccent,
+                  backgroundColor: AppTheme.error,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 30),
+                  padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 28),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  elevation: 3,
                 ),
               ),
 

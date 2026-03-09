@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "813289650706",
+    "project_id": "nonsmoking-ef941",
+    "storage_bucket": "nonsmoking-ef941.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:813289650706:android:6c1919718a717fdc3036cb",
+        "android_client_info": {
+          "package_name": "com.cjw.nonsmoking"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBWLMMyXbswXWG19KBuZ3MQ_-feBdvHBOI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

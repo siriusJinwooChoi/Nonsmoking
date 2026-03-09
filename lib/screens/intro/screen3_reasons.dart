@@ -1,18 +1,25 @@
-// Flutter의 UI 컴포넌트 사용을 위한 패키지 import
 import 'package:flutter/material.dart';
+import '../../theme/app_theme.dart';
+import '../../theme/onboarding_theme.dart';
 
 /// 사용자가 금연을 결심한 이유를 선택하는 화면
-/// [onNext]는 '계속하기' 버튼을 눌렀을 때 다음 화면으로 이동하게 해주는 콜백 함수
 class Screen3Reasons extends StatefulWidget {
   final VoidCallback onNext;
-  const Screen3Reasons({super.key, required this.onNext});
+  final int step;
+  final int totalSteps;
+
+  const Screen3Reasons({
+    super.key,
+    required this.onNext,
+    this.step = 3,
+    this.totalSteps = 9,
+  });
 
   @override
   State<Screen3Reasons> createState() => _Screen3ReasonsState();
 }
 
 class _Screen3ReasonsState extends State<Screen3Reasons> {
-  /// 사용자가 선택할 수 있는 금연 이유 목록
   final List<String> reasons = [
     '건강 회복을 위해',
     '가족을 위해',
@@ -20,55 +27,78 @@ class _Screen3ReasonsState extends State<Screen3Reasons> {
     '나를 위한 자기관리',
     '습관 개선'
   ];
-
-  /// 선택된 이유를 저장하는 변수
   String? selectedReason;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white, // 전체 배경 흰색 설정
-
-      body: Padding(
-        padding: const EdgeInsets.all(24), // 전체 콘텐츠 여백
-
-        // 콘텐츠를 세로로 나열
+      backgroundColor: OnboardingTheme.pageBackground,
+      body: SafeArea(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start, // 좌측 정렬
-          mainAxisAlignment: MainAxisAlignment.center, // 수직 중앙 정렬
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // 제목 텍스트
-            const Text(
-              '금연을 결심한 이유는 무엇인가요?',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
+            OnboardingTheme.progressBar(widget.step, widget.totalSteps),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                '금연을 결심한 이유는\n무엇인가요?',
+                style: OnboardingTheme.headline,
               ),
             ),
-            const SizedBox(height: 24), // 제목과 라디오 버튼 사이 간격
-
-            // 금연 이유 리스트를 라디오 버튼 형태로 출력
-            ...reasons.map((reason) => RadioListTile<String>(
-              title: Text(reason, style: const TextStyle(fontSize: 18)), // 이유 텍스트
-              value: reason, // 현재 항목의 값
-              groupValue: selectedReason, // 선택된 항목과 비교
-              onChanged: (value) => setState(() => selectedReason = value), // 선택되면 상태 갱신
-            )),
-
-            const SizedBox(height: 40), // 버튼과 항목들 사이 간격
-
-            // '계속하기' 버튼 (선택된 이유가 있을 때만 활성화됨)
-            Center(
-              child: ElevatedButton(
-                onPressed: selectedReason != null ? widget.onNext : null, // 이유 선택 안 했으면 비활성화
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blue, // 버튼 배경색
-                  foregroundColor: Colors.white, // 버튼 글자색
-                  padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
-                ),
-                child: const Text(
-                  '계속하기',
-                  style: TextStyle(fontSize: 18),
+            const SizedBox(height: 24),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                children: reasons.map((reason) {
+                  final isSelected = selectedReason == reason;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () => setState(() => selectedReason = reason),
+                        borderRadius: BorderRadius.circular(14),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+                          decoration: OnboardingTheme.optionCardDecoration(selected: isSelected),
+                          child: Row(
+                            children: [
+                              Icon(
+                                isSelected ? Icons.radio_button_checked_rounded : Icons.radio_button_unchecked_rounded,
+                                color: isSelected ? AppTheme.primary : AppTheme.textMuted,
+                                size: 24,
+                              ),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Text(
+                                  reason,
+                                  style: OnboardingTheme.bodyBold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+              child: SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: FilledButton(
+                  onPressed: selectedReason != null ? widget.onNext : null,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppTheme.primary,
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor: AppTheme.textMuted.withOpacity(0.3),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    elevation: 0,
+                  ),
+                  child: Text('계속하기', style: OnboardingTheme.button),
                 ),
               ),
             ),

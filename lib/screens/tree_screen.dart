@@ -3,6 +3,7 @@ import 'package:lottie/lottie.dart';
 import 'dart:async';
 import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../theme/app_theme.dart';
 
 // ✅ Analytics helper
 import '../analytics/app_analytics.dart';
@@ -196,8 +197,8 @@ class _TreeScreenState extends State<TreeScreen>
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text('🌱 나무 초기화'),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text('나무 초기화'),
           content: const Text('정말로 나무를 초기화하시겠습니까?'),
           actions: [
             TextButton(
@@ -205,7 +206,7 @@ class _TreeScreenState extends State<TreeScreen>
               onPressed: () => Navigator.of(context).pop(),
             ),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
               child: const Text('초기화'),
               onPressed: () async {
                 final prefs = await SharedPreferences.getInstance();
@@ -244,49 +245,58 @@ class _TreeScreenState extends State<TreeScreen>
         : '100';
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF6F9F4),
+      backgroundColor: AppTheme.surface,
       appBar: AppBar(
-        title: const Text('나의 성장 나무 🌳',
-            style: TextStyle(fontWeight: FontWeight.bold)),
-        centerTitle: true,
-        backgroundColor: Colors.green.shade700,
+        title: const Text('나의 성장 나무'),
       ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: EdgeInsets.only(
+            left: 12,
+            right: 12,
+            top: 8,
+            bottom: MediaQuery.of(context).padding.bottom + 24,
+          ),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Container(
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: const [
-                    BoxShadow(color: Colors.black12, blurRadius: 4)
-                  ],
+                  color: AppTheme.surfaceCard,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: AppTheme.cardShadowSubtle,
                 ),
-                padding:
-                const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-                child: const Column(
+                padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      '꾸준히 물을 주면 나무가 자라요 🌱',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green,
-                      ),
+                    Row(
+                      children: [
+                        Icon(Icons.eco_rounded, color: AppTheme.success, size: 22),
+                        const SizedBox(width: 8),
+                        Text(
+                          '나의 성장 나무는 왜 있나요?',
+                          style: AppTheme.titleMedium.copyWith(color: AppTheme.success),
+                        ),
+                      ],
                     ),
-                    SizedBox(height: 4),
+                    const SizedBox(height: 10),
                     Text(
-                      '현재 나무는 5단계까지 성장합니다.',
-                      style: TextStyle(fontSize: 13, color: Colors.grey),
+                      '금연을 지키는 동안 이 나무에 물을 주면 나무가 자랍니다. '
+                      '작은 실천이 쌓일수록 나무가 커지고, 나무가 자랄수록 금연 동기가 더 커져요. '
+                      '목표를 시각적으로 보면서 동기부여를 받을 수 있습니다.',
+                      style: AppTheme.bodyMedium.copyWith(height: 1.5),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '• 물은 2분마다 1ml씩 차요 • 5단계까지 성장해요',
+                      style: AppTheme.labelMedium.copyWith(color: AppTheme.primary),
                     ),
                   ],
                 ),
               ),
+              const SizedBox(height: 12),
               SizedBox(
-                height: 180,
+                height: 160,
                 child: Stack(
                   alignment: Alignment.center,
                   clipBehavior: Clip.none,
@@ -311,7 +321,7 @@ class _TreeScreenState extends State<TreeScreen>
                           angle: angle,
                           child: Image.asset(
                             'assets/tree_stage_$growthStage.png',
-                            height: 160,
+                            height: 140,
                           ),
                         );
                       },
@@ -319,61 +329,52 @@ class _TreeScreenState extends State<TreeScreen>
                   ],
                 ),
               ),
+              const SizedBox(height: 8),
               Column(
                 children: [
-                  Text('🌿 현재 단계: $growthStage단계',
-                      style: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.w600)),
-                  Text('📈 성장률: $percent%',
-                      style:
-                      const TextStyle(fontSize: 15, color: Colors.teal)),
+                  Text('현재 단계: $growthStage단계', style: AppTheme.titleMedium),
+                  const SizedBox(height: 4),
+                  Text('성장률: $percent%', style: AppTheme.bodyLarge.copyWith(color: AppTheme.primary)),
                 ],
               ),
+              const SizedBox(height: 12),
               Container(
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: const [
-                    BoxShadow(color: Colors.black12, blurRadius: 3)
-                  ],
+                  color: AppTheme.surfaceCard,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: AppTheme.cardShadowSubtle,
                 ),
-                padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 child: Column(
                   children: [
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
-                      children: const [
-                        Icon(Icons.water_drop,
-                            color: Colors.lightBlue, size: 18),
-                        SizedBox(width: 6),
-                        Text('보유한 물 (ml)',
-                            style: TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 14)),
+                      children: [
+                        Icon(Icons.water_drop_rounded, color: Colors.blue.shade400, size: 20),
+                        const SizedBox(width: 8),
+                        Text('보유한 물 (ml)', style: AppTheme.titleMedium),
                       ],
                     ),
-                    const SizedBox(height: 6),
-                    LinearProgressIndicator(
-                      value: growthStage < 5
-                          ? (water / stageGoal[growthStage]!).clamp(0.0, 1.0)
-                          : 1.0,
-                      minHeight: 10,
+                    const SizedBox(height: 10),
+                    ClipRRect(
                       borderRadius: BorderRadius.circular(8),
-                      backgroundColor: Colors.grey.shade300,
-                      valueColor: const AlwaysStoppedAnimation<Color>(
-                          Colors.lightBlueAccent),
+                      child: LinearProgressIndicator(
+                        value: growthStage < 5
+                            ? (water / stageGoal[growthStage]!).clamp(0.0, 1.0)
+                            : 1.0,
+                        minHeight: 10,
+                        backgroundColor: AppTheme.textMuted.withOpacity(0.3),
+                        valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF0EA5E9)),
+                      ),
                     ),
-                    const SizedBox(height: 6),
-                    Text('현재 물: $currentWater ml / 최대: $_maxCurrentWater ml',
-                        style: const TextStyle(
-                            fontSize: 12, color: Colors.grey)),
-                    const SizedBox(height: 6),
-                    const Text('※ 물은 2분마다 1ml씩 증가합니다.',
-                        style:
-                        TextStyle(fontSize: 12, color: Colors.black54)),
+                    const SizedBox(height: 8),
+                    Text('$currentWater ml / $_maxCurrentWater ml', style: AppTheme.labelMedium),
+                    const SizedBox(height: 4),
+                    Text('물은 2분마다 1ml씩 증가합니다.', style: AppTheme.labelMedium),
                   ],
                 ),
               ),
+              const SizedBox(height: 12),
               Row(
                 children: [
                   Expanded(
@@ -383,16 +384,15 @@ class _TreeScreenState extends State<TreeScreen>
                           ? null
                           : () => _giveWater(10),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.lightBlue.shade400,
-                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        backgroundColor: const Color(0xFF0EA5E9),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8)),
+                            borderRadius: BorderRadius.circular(12)),
                       ),
-                      child: const Text('💧 10ml',
-                          style: TextStyle(fontSize: 14)),
+                      child: const Text('10ml'),
                     ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: ElevatedButton(
                       onPressed:
@@ -400,33 +400,31 @@ class _TreeScreenState extends State<TreeScreen>
                           ? null
                           : () => _giveWater(100),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blueAccent,
-                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        backgroundColor: const Color(0xFF0284C7),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8)),
+                            borderRadius: BorderRadius.circular(12)),
                       ),
-                      child: const Text('💦 100ml',
-                          style: TextStyle(fontSize: 14)),
+                      child: const Text('100ml'),
                     ),
                   ),
                 ],
               ),
-              ElevatedButton.icon(
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
                 onPressed: _showResetConfirmationDialog,
-                icon: const Icon(Icons.restart_alt, size: 18),
+                icon: const Icon(Icons.restart_alt_rounded, size: 18),
                 label: const Text('나무 초기화'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.redAccent,
-                  foregroundColor: Colors.white,
-                  padding:
-                  const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                  textStyle: const TextStyle(
-                      fontSize: 14, fontWeight: FontWeight.bold),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppTheme.error,
+                  side: const BorderSide(color: AppTheme.error),
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(12),
                   ),
                 ),
               ),
+              const SizedBox(height: 24),
             ],
           ),
         ),

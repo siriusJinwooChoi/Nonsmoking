@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:lottie/lottie.dart';
+import '../theme/app_theme.dart';
 
 class SmokingScreen extends StatefulWidget {
   const SmokingScreen({super.key});
@@ -39,58 +40,43 @@ class _SmokingScreenState extends State<SmokingScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F8F9),
+      backgroundColor: AppTheme.surface,
       appBar: AppBar(
-        elevation: 2,
-        backgroundColor: Colors.brown.shade600,
-        centerTitle: true,
-        title: const Text(
-          "흡연 시뮬레이션 🚬",
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            letterSpacing: 0.5,
-          ),
-        ),
+        title: const Text('금연해보도록 노력해봐요'),
       ),
       body: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            // 🔸 설명 텍스트 카드
-            Card(
-              elevation: 4,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16)),
-              child: Padding(
-                padding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-                child: Column(
-                  children: [
-                    Text(
-                      _isSmoking
-                          ? "연기가 피어오르고 있습니다 ☁️"
-                          : "버튼을 누르면 흡연 애니메이션이 재생됩니다.",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: _isSmoking
-                            ? Colors.redAccent
-                            : Colors.grey.shade800,
-                        fontWeight: FontWeight.w600,
-                      ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+              decoration: BoxDecoration(
+                color: AppTheme.surfaceCard,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: AppTheme.cardShadow,
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    _isSmoking
+                        ? '연기가 피어오르고 있습니다'
+                        : '버튼을 누르면 흡연 애니메이션이 재생됩니다.',
+                    textAlign: TextAlign.center,
+                    style: AppTheme.bodyLarge.copyWith(
+                      color: _isSmoking ? AppTheme.error : AppTheme.textPrimary,
+                      fontWeight: FontWeight.w600,
                     ),
-                    const SizedBox(height: 6),
-                    Text(
-                      _isSmoking
-                          ? "흡연 중... 건강을 위해 잠시 멈춰보세요 🚫"
-                          : "이 장면은 흡연의 습관적 행동을 보여줍니다.",
-                      textAlign: TextAlign.center,
-                      style:
-                      TextStyle(fontSize: 13, color: Colors.grey.shade600),
-                    ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    _isSmoking
+                        ? '흡연 중... 건강을 위해 잠시 멈춰보세요.'
+                        : '이 장면은 흡연의 습관적 행동을 보여줍니다.',
+                    textAlign: TextAlign.center,
+                    style: AppTheme.bodyMedium,
+                  ),
+                ],
               ),
             ),
 
@@ -149,29 +135,26 @@ class _SmokingScreenState extends State<SmokingScreen>
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     colors: _isSmoking
-                        ? [Colors.redAccent.shade200, Colors.red.shade700]
-                        : [Colors.brown.shade500, Colors.brown.shade700],
+                        ? [const Color(0xFFF87171), AppTheme.error]
+                        : [const Color(0xFF78716C), const Color(0xFF57534E)],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   ),
-                  borderRadius: BorderRadius.circular(40),
+                  borderRadius: BorderRadius.circular(16),
                   boxShadow: [
                     BoxShadow(
-                      color: _isSmoking
-                          ? Colors.redAccent.withOpacity(0.4)
-                          : Colors.brown.withOpacity(0.4),
+                      color: (_isSmoking ? AppTheme.error : const Color(0xFF57534E)).withOpacity(0.3),
                       blurRadius: 12,
-                      offset: const Offset(0, 6),
+                      offset: const Offset(0, 4),
                     ),
                   ],
                 ),
                 child: Text(
-                  _isSmoking ? "흡연 중..." : "담배 피우기 시작",
+                  _isSmoking ? '흡연 중...' : '담배 피우기 시작',
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 0.5,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ),
@@ -182,12 +165,11 @@ class _SmokingScreenState extends State<SmokingScreen>
               padding: const EdgeInsets.only(bottom: 16),
               child: Text(
                 _isSmoking
-                    ? "잠깐의 흡연, 오랜 회복이 필요합니다 💨"
-                    : "흡연을 줄이면 폐가 점차 회복됩니다 🌿",
+                    ? '잠깐의 흡연, 오랜 회복이 필요합니다.'
+                    : '흡연을 줄이면 폐가 점차 회복됩니다.',
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: _isSmoking ? Colors.redAccent : Colors.grey.shade700,
-                  fontSize: 14,
+                style: AppTheme.bodyMedium.copyWith(
+                  color: _isSmoking ? AppTheme.error : AppTheme.textSecondary,
                   fontStyle: FontStyle.italic,
                 ),
               ),

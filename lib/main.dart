@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'theme/app_theme.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:timezone/data/latest_all.dart' as tzData;
 import 'package:timezone/timezone.dart' as tz;
@@ -91,17 +92,21 @@ class QuitSmokingApp extends StatelessWidget {
       future: checkIfConfigured(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
-          return const MaterialApp(
+          return MaterialApp(
             debugShowCheckedModeBanner: false,
-            home: Scaffold(body: Center(child: CircularProgressIndicator())),
+            theme: AppTheme.lightTheme,
+            home: const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            ),
           );
         }
 
         final isConfigured = snapshot.data!;
         if (!isConfigured) {
-          return const MaterialApp(
+          return MaterialApp(
             debugShowCheckedModeBanner: false,
-            home: IntroFlowWrapper(),
+            theme: AppTheme.lightTheme,
+            home: const IntroFlowWrapper(),
           );
         }
 
@@ -109,17 +114,20 @@ class QuitSmokingApp extends StatelessWidget {
           future: loadUserSettings(),
           builder: (context, userSnapshot) {
             if (!userSnapshot.hasData) {
-              return const MaterialApp(
+              return MaterialApp(
                 debugShowCheckedModeBanner: false,
-                home: Scaffold(body: Center(child: CircularProgressIndicator())),
+                theme: AppTheme.lightTheme,
+                home: const Scaffold(
+                  body: Center(child: CircularProgressIndicator()),
+                ),
               );
             }
 
             final settings = userSnapshot.data!;
             return MaterialApp(
               debugShowCheckedModeBanner: false,
-              title: '금연 앱',
-              theme: ThemeData(primarySwatch: Colors.teal),
+              title: '금연머니',
+              theme: AppTheme.lightTheme,
               home: MainScreenWrapper(
                 dailyCigarettes: settings['dailyCigarettes']!,
                 cigarettesPerPack: settings['cigarettesPerPack']!,
@@ -152,46 +160,51 @@ class _IntroFlowWrapperState extends State<IntroFlowWrapper> {
 
   void nextScreen() => setState(() => currentIndex++);
 
+  static const int _introTotalSteps = 9;
+
   Widget _startFlow() {
+    final step = currentIndex + 1;
     switch (currentIndex) {
       case 0:
-        return Screen1Encourage(onNext: nextScreen);
+        return Screen1Encourage(onNext: nextScreen, step: step, totalSteps: _introTotalSteps);
 
       case 1:
-        return Screen2Goals(onNext: nextScreen);
+        return Screen2Goals(onNext: nextScreen, step: step, totalSteps: _introTotalSteps);
 
       case 2:
-        return Screen3Reasons(onNext: nextScreen);
+        return Screen3Reasons(onNext: nextScreen, step: step, totalSteps: _introTotalSteps);
 
       case 3:
-        return Screen4StartDate(onNext: nextScreen);
+        return Screen4StartDate(onNext: nextScreen, step: step, totalSteps: _introTotalSteps);
 
       case 4:
         return Screen5Duration(onNext: (days) {
           setState(() => durationDays = days);
           nextScreen();
-        });
+        }, step: step, totalSteps: _introTotalSteps);
 
       case 5:
         return Screen6DailyCount(onNext: (value) {
           setState(() => dailyCigarettes = value);
           nextScreen();
-        });
+        }, step: step, totalSteps: _introTotalSteps);
 
       case 6:
         return Screen7PerPack(onNext: (value) {
           setState(() => cigarettesPerPack = value);
           nextScreen();
-        });
+        }, step: step, totalSteps: _introTotalSteps);
 
       case 7:
         return Screen8Price(onNext: (value) {
           setState(() => pricePerPack = value);
           nextScreen();
-        });
+        }, step: step, totalSteps: _introTotalSteps);
 
       case 8:
         return Screen9Summary(
+          step: step,
+          totalSteps: _introTotalSteps,
           onNext: () async {
             final prefs = await SharedPreferences.getInstance();
             await prefs.setBool('isConfigured', true);
@@ -259,9 +272,9 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
   // ✅ 전면광고
   InterstitialAd? _interstitialAd;
 
-  // ✅ 클릭 카운트(10번마다 노출)
+  // ✅ 클릭 카운트(20번마다 노출)
   int _clickCount = 0;
-  static const int _showEvery = 10;
+  static const int _showEvery = 20;
 
   @override
   void initState() {
@@ -306,7 +319,7 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
     // ✅ 디버그 확인용(원하면 삭제)
     debugPrint("menu click=$_clickCount, adLoaded=${_interstitialAd != null}");
 
-    // ✅ 10번마다 광고
+    // ✅ 20번마다 광고
     if (_clickCount % _showEvery == 0 && _interstitialAd != null) {
       _interstitialAd!.fullScreenContentCallback = FullScreenContentCallback(
         onAdDismissedFullScreenContent: (ad) {
@@ -359,19 +372,80 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
 
     return Scaffold(
       body: screens[currentIndex],
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: currentIndex,
-        type: BottomNavigationBarType.fixed,
-        selectedItemColor: Colors.teal,
-        onTap: (index) => _showAdThenNavigate(index), // ✅ 여기만 변경!
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: '메인'),
-          BottomNavigationBarItem(icon: Icon(Icons.videogame_asset), label: '게임'),
-          BottomNavigationBarItem(icon: Icon(Icons.nature), label: '나무 키우기'),
-          BottomNavigationBarItem(icon: Icon(Icons.healing), label: '나의 폐'),
-          BottomNavigationBarItem(icon: Icon(Icons.smoking_rooms), label: '흡연하기'),
-          BottomNavigationBarItem(icon: Icon(Icons.health_and_safety), label: '건강'),
-        ],
+      bottomNavigationBar: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 12,
+              offset: const Offset(0, -2),
+            ),
+          ],
+        ),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _NavItem(icon: Icons.home_rounded, label: '메인', index: 0, current: currentIndex, onTap: _showAdThenNavigate),
+                _NavItem(icon: Icons.sports_esports_rounded, label: '게임', index: 1, current: currentIndex, onTap: _showAdThenNavigate),
+                _NavItem(icon: Icons.eco_rounded, label: '나무', index: 2, current: currentIndex, onTap: _showAdThenNavigate),
+                _NavItem(icon: Icons.favorite_rounded, label: '폐', index: 3, current: currentIndex, onTap: _showAdThenNavigate),
+                _NavItem(icon: Icons.smoking_rooms_rounded, label: '흡연', index: 4, current: currentIndex, onTap: _showAdThenNavigate),
+                _NavItem(icon: Icons.favorite_border_rounded, label: '건강', index: 5, current: currentIndex, onTap: _showAdThenNavigate),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NavItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final int index;
+  final int current;
+  final void Function(int) onTap;
+
+  const _NavItem({
+    required this.icon,
+    required this.label,
+    required this.index,
+    required this.current,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isSelected = current == index;
+    return InkWell(
+      onTap: () => onTap(index),
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 24,
+              color: isSelected ? AppTheme.primary : AppTheme.textMuted,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                color: isSelected ? AppTheme.primary : AppTheme.textMuted,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

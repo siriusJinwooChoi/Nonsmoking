@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../theme/app_theme.dart';
 
 class NonsmokeHelperScreen extends StatelessWidget {
   const NonsmokeHelperScreen({super.key});
@@ -109,52 +110,49 @@ class NonsmokeHelperScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppTheme.surface,
       appBar: AppBar(
         title: const Text('금연 도우미'),
-        backgroundColor: Colors.teal,
       ),
       body: ListView.separated(
         padding: const EdgeInsets.all(16),
         itemCount: tips.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 10),
+        separatorBuilder: (_, __) => const SizedBox(height: 12),
         itemBuilder: (context, index) {
           final tip = tips[index];
           return Container(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.shade200,
-                  blurRadius: 6,
-                  offset: const Offset(0, 3),
-                ),
-              ],
+              color: AppTheme.surfaceCard,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: AppTheme.cardShadowSubtle,
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  tip['icon']!,
-                  style: const TextStyle(fontSize: 28),
+                Container(
+                  width: 48,
+                  height: 48,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: AppTheme.primary.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(tip['icon']!, style: const TextStyle(fontSize: 24)),
                 ),
-                const SizedBox(width: 14),
+                const SizedBox(width: 16),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         tip['title']!,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
+                        style: AppTheme.titleMedium.copyWith(fontSize: 16),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 6),
                       Text(
                         tip['description']!,
-                        style: const TextStyle(fontSize: 14),
+                        style: AppTheme.bodyMedium,
                       ),
                     ],
                   ),

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../theme/app_theme.dart';
 
 class ReasonWhyScreen extends StatefulWidget {
   const ReasonWhyScreen({super.key});
@@ -197,7 +198,7 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('삭제', style: TextStyle(color: Colors.red)),
+            child: const Text('삭제', style: TextStyle(color: AppTheme.error)),
           ),
         ],
       ),
@@ -217,6 +218,7 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
     return showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Text(title),
         content: TextField(
           controller: controller,
@@ -241,76 +243,90 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppTheme.surface,
       appBar: AppBar(
         title: const Text('내가 금연하는 이유'),
-        backgroundColor: Colors.redAccent,
       ),
       body: _reasons.isEmpty
-          ? const Center(
-        child: Text(
-          '아직 작성한 금연 이유가 없습니다.\n오른쪽 아래 + 버튼을 눌러 추가해보세요!',
-          textAlign: TextAlign.center,
-        ),
-      )
-          : ListView.separated(
-        padding: const EdgeInsets.all(12),
-        itemCount: _reasons.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 10),
-        itemBuilder: (context, index) {
-          final item = _reasons[index];
-          final number = _reasons.length - index;
-
-          return Card(
-            elevation: 2,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: ListTile(
-              leading: Icon(
-                item.pinned ? Icons.push_pin : Icons.push_pin_outlined,
-                color: item.pinned ? Colors.amber.shade700 : Colors.grey,
-              ),
-              title: Text(
-                '$number. ${item.text}',
-                style: const TextStyle(fontSize: 16),
-              ),
-              subtitle: item.pinned
-                  ? const Text('중요 이유로 고정됨', style: TextStyle(color: Colors.black54))
-                  : null,
-              trailing: Wrap(
-                spacing: 6,
-                children: [
-                  IconButton(
-                    icon: Icon(
-                      item.pinned ? Icons.star : Icons.star_border,
-                      color: item.pinned ? Colors.amber.shade700 : Colors.grey,
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.edit_note_rounded, size: 64, color: AppTheme.textMuted),
+                    const SizedBox(height: 16),
+                    Text(
+                      '아직 작성한 금연 이유가 없습니다.',
+                      textAlign: TextAlign.center,
+                      style: AppTheme.titleMedium,
                     ),
-                    onPressed: () => _togglePin(index),
-                    tooltip: item.pinned ? '고정 해제' : '중요 이유 고정',
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.edit, color: Colors.blue),
-                    onPressed: () => _editReason(index),
-                    tooltip: '수정',
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.delete, color: Colors.red),
-                    onPressed: () => _confirmDelete(index),
-                    tooltip: '삭제',
-                  ),
-                ],
+                    const SizedBox(height: 8),
+                    Text(
+                      '오른쪽 아래 + 버튼을 눌러 추가해보세요.',
+                      textAlign: TextAlign.center,
+                      style: AppTheme.bodyMedium,
+                    ),
+                  ],
+                ),
               ),
-              contentPadding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            )
+          : ListView.separated(
+              padding: const EdgeInsets.all(16),
+              itemCount: _reasons.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              itemBuilder: (context, index) {
+                final item = _reasons[index];
+                final number = _reasons.length - index;
+                return Container(
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceCard,
+                    borderRadius: BorderRadius.circular(14),
+                    boxShadow: AppTheme.cardShadowSubtle,
+                  ),
+                  child: ListTile(
+                    leading: Icon(
+                      item.pinned ? Icons.push_pin_rounded : Icons.push_pin_outlined,
+                      color: item.pinned ? AppTheme.warning : AppTheme.textMuted,
+                    ),
+                    title: Text(
+                      '$number. ${item.text}',
+                      style: AppTheme.bodyLarge,
+                    ),
+                    subtitle: item.pinned
+                        ? Text('중요 이유로 고정됨', style: AppTheme.labelMedium)
+                        : null,
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: Icon(
+                            item.pinned ? Icons.star_rounded : Icons.star_border_rounded,
+                            color: item.pinned ? AppTheme.warning : AppTheme.textMuted,
+                          ),
+                          onPressed: () => _togglePin(index),
+                          tooltip: item.pinned ? '고정 해제' : '중요 이유 고정',
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.edit_rounded, color: AppTheme.primary),
+                          onPressed: () => _editReason(index),
+                          tooltip: '수정',
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete_rounded, color: AppTheme.error),
+                          onPressed: () => _confirmDelete(index),
+                          tooltip: '삭제',
+                        ),
+                      ],
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  ),
+                );
+              },
             ),
-          );
-        },
-      ),
       floatingActionButton: FloatingActionButton(
         onPressed: _addReason,
-        backgroundColor: Colors.teal,
-        child: const Icon(Icons.add),
-        tooltip: '금연 이유 추가',
+        child: const Icon(Icons.add_rounded),
       ),
     );
   }

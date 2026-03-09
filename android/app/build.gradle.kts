@@ -26,8 +26,8 @@ android {
         applicationId = "com.cjw.nonsmoking"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 3
+        versionName = "1.0.2"
     }
 
     signingConfigs {
@@ -66,6 +66,15 @@ android {
 
     kotlinOptions {
         jvmTarget = JavaVersion.VERSION_11.toString()
+    }
+}
+
+// AGP 8.6.x와 호환되도록 androidx 버전 고정 (8.9.1 요구 버전 회피)
+configurations.all {
+    resolutionStrategy {
+        force("androidx.core:core-ktx:1.15.0")
+        force("androidx.core:core:1.15.0")
+        force("androidx.browser:browser:1.8.0")
     }
 }
 

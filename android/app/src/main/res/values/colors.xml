@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 스플래시 화면 배경 (연한 초록) - windowBackground(drawable) 및 Android 12+ windowSplashScreenBackground 에서 사용 -->
+    <color name="splash_background">#D4EDDA</color>
+</resources>

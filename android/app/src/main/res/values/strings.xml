@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_description">금연 시간을 한눈에 확인하세요</string>
+    <string name="widget_title_text">금연 시간</string>
+    <string name="widget_subtitle_text">금연머니</string>
+    <string name="widget_no_data">설정 후 표시됩니다</string>
+</resources>

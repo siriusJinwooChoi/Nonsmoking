@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
+import '../theme/app_theme.dart';
 
 class HealthStage {
   final String label;
@@ -125,60 +126,85 @@ class _HealthScreenState extends State<HealthScreen> {
     final percent = (progress * 100).toStringAsFixed(1);
 
     return Scaffold(
+      backgroundColor: AppTheme.surface,
       appBar: AppBar(
         title: const Text('건강 개선 현황'),
-        backgroundColor: Colors.deepOrange,
       ),
       body: Column(
         children: [
-          // Progress
           Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '금연 진행률: $percent%',
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  '경과 시간: ${_formatDuration(quitDuration)}',
-                  style: const TextStyle(fontSize: 15, color: Colors.black54),
-                ),
-                const SizedBox(height: 8),
-                LinearProgressIndicator(
-                  value: progress,
-                  minHeight: 14,
-                  backgroundColor: Colors.grey.shade300,
-                  valueColor:
-                  const AlwaysStoppedAnimation<Color>(Colors.green),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ],
+            padding: const EdgeInsets.all(20),
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: AppTheme.surfaceCard,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: AppTheme.cardShadow,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('금연 진행률: $percent%', style: AppTheme.titleMedium),
+                  const SizedBox(height: 6),
+                  Text(
+                    '경과 시간: ${_formatDuration(quitDuration)}',
+                    style: AppTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: 12),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: LinearProgressIndicator(
+                      value: progress,
+                      minHeight: 12,
+                      backgroundColor: AppTheme.textMuted.withOpacity(0.3),
+                      valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.success),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-          const Divider(),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Text('건강 회복 단계', style: AppTheme.titleMedium),
+          ),
+          const SizedBox(height: 8),
           Expanded(
             child: ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               itemCount: healthStages.length,
               itemBuilder: (context, index) {
                 final stage = healthStages[index];
                 final completed = totalMinutes >= stage.minutes;
-
-                return ListTile(
-                  leading: Icon(
-                    completed
-                        ? Icons.check_circle
-                        : Icons.radio_button_unchecked,
-                    color: completed ? Colors.green : Colors.grey,
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceCard,
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: AppTheme.cardShadowSubtle,
                   ),
-                  title: Text(
-                    stage.label,
-                    style: const TextStyle(
-                        fontSize: 18, fontWeight: FontWeight.bold),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        completed ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
+                        color: completed ? AppTheme.success : AppTheme.textMuted,
+                        size: 24,
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(stage.label, style: AppTheme.titleMedium.copyWith(fontSize: 16)),
+                            const SizedBox(height: 4),
+                            Text(stage.description, style: AppTheme.bodyMedium),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                  subtitle: Text(stage.description),
                 );
               },
             ),

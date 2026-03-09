@@ -7,12 +7,16 @@ import 'package:google_mobile_ads/google_mobile_ads.dart';
 
 import 'reason_why_screen.dart';
 import 'nonsmoke_helper_screen.dart';
+import 'settings_screen.dart';
+import '../theme/app_theme.dart';
 
 // ✅ Analytics helper
 import '../analytics/app_analytics.dart';
 
 // ✅ WorkManager 알림(네 프로젝트 구조 기준)
 import '../notifications/daily_reminder_worker.dart';
+// ✅ 홈 화면 위젯 갱신(동기화)
+import '../widget/widget_helper.dart';
 
 class MainScreen extends StatefulWidget {
   final VoidCallback onAlarmTap;
@@ -41,7 +45,7 @@ class MainScreen extends StatefulWidget {
   State<MainScreen> createState() => _MainScreenState();
 }
 
-class _MainScreenState extends State<MainScreen> {
+class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   DateTime? _startTime;
   Duration _elapsed = Duration.zero;
   double _savedMoney = 0;
@@ -57,9 +61,17 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     AppAnalytics.screen('main_screen');
     _loadPersistedData();
     _loadBannerAd();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      syncWidgetData();
+    }
   }
 
   void _loadBannerAd() {
@@ -85,6 +97,7 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _bannerAd?.dispose();
     super.dispose();
@@ -108,6 +121,7 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     _startTimer();
+    await syncWidgetData();
   }
 
   void _startTimer() {
@@ -207,11 +221,24 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  String formatDuration(Duration d) {
-    String twoDigits(int n) => n.toString().padLeft(2, '0');
-    return "${twoDigits(d.inHours)}:"
-        "${twoDigits(d.inMinutes.remainder(60))}:"
-        "${twoDigits(d.inSeconds.remainder(60))}";
+  /// 금연 시간을 년/월/일/시간/분/초로 표시
+  String formatDurationLong(Duration d) {
+    final totalDays = d.inDays;
+    final years = totalDays ~/ 365;
+    final remainderDays = totalDays % 365;
+    final months = remainderDays ~/ 30;
+    final days = remainderDays % 30;
+    final hours = d.inHours.remainder(24);
+    final minutes = d.inMinutes.remainder(60);
+    final seconds = d.inSeconds.remainder(60);
+    final parts = <String>[];
+    if (years > 0) parts.add('${years}년');
+    if (months > 0) parts.add('${months}개월');
+    if (days > 0 || parts.isNotEmpty) parts.add('${days}일');
+    parts.add('${hours}시간');
+    parts.add('${minutes}분');
+    parts.add('${seconds}초');
+    return parts.join(' ');
   }
 
   Future<void> _resetSmokingStatus() async {
@@ -219,7 +246,7 @@ class _MainScreenState extends State<MainScreen> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           title: const Text('⚠️ 금연 리셋'),
           content: const Text('정말로 금연 리셋을 진행하시겠습니까?\n기록이 초기화됩니다.'),
           actions: [
@@ -229,7 +256,7 @@ class _MainScreenState extends State<MainScreen> {
             ),
             ElevatedButton(
               onPressed: () => Navigator.of(context).pop(true),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
               child: const Text('확인'),
             ),
           ],
@@ -243,6 +270,7 @@ class _MainScreenState extends State<MainScreen> {
     final now = DateTime.now();
     await prefs.setInt('startTime', now.millisecondsSinceEpoch);
     setState(() => _startTime = now);
+    await syncWidgetData();
 
     // (기존 로직 유지: 폐 건강 -10)
     final before = prefs.getInt('lungHealth') ?? 100;
@@ -270,7 +298,7 @@ class _MainScreenState extends State<MainScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text('처음 설정으로 돌아가기'),
         content: const Text(
           '처음 설정 화면으로 돌아가시겠습니까?\n\n'
@@ -282,7 +310,7 @@ class _MainScreenState extends State<MainScreen> {
             child: const Text('취소'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('돌아가기'),
           ),
@@ -344,17 +372,25 @@ class _MainScreenState extends State<MainScreen> {
     final savedMoneyStr = _moneyFormatter.format(_savedMoney.round());
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F7F5),
+      backgroundColor: AppTheme.surface,
       appBar: AppBar(
-        backgroundColor: Colors.teal.shade700,
-        title: const Text('금연 현황 🌿', style: TextStyle(fontWeight: FontWeight.bold)),
-        centerTitle: true,
-        elevation: 3,
+        title: const Text('금연 현황'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings),
+            icon: const Icon(Icons.settings_rounded),
             tooltip: '설정',
-            onPressed: _confirmAndGoToFirstSetup, // ✅ 변경
+            onPressed: () async {
+              await Navigator.push<void>(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => SettingsScreen(
+                    reminderTime: _reminderTime,
+                    onReminderUpdated: (t) => setState(() => _reminderTime = t),
+                    onGoToFirstSetup: _confirmAndGoToFirstSetup,
+                  ),
+                ),
+              );
+            },
           ),
         ],
       ),
@@ -363,43 +399,107 @@ class _MainScreenState extends State<MainScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // 상단 카드
+            // 금연 시간 위젯 (한눈에 보이는 영역)
+            Container(
+              margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+              decoration: BoxDecoration(
+                color: AppTheme.surfaceCard,
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: AppTheme.cardShadowSubtle,
+                border: Border.all(color: AppTheme.primary.withOpacity(0.2), width: 1),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.timer_outlined, color: AppTheme.primary, size: 24),
+                      const SizedBox(width: 10),
+                      Text('금연 시간', style: AppTheme.labelMedium.copyWith(color: AppTheme.textSecondary)),
+                    ],
+                  ),
+                  Text(
+                    formatDurationLong(_elapsed),
+                    style: AppTheme.titleLarge.copyWith(color: AppTheme.primary, fontSize: 16, letterSpacing: 0.2),
+                  ),
+                ],
+              ),
+            ),
+            // 상단 요약 카드
             Container(
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Colors.teal.shade400, Colors.teal.shade700],
+                gradient: const LinearGradient(
+                  colors: [AppTheme.primaryLight, AppTheme.primaryDark],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 ),
                 borderRadius: BorderRadius.circular(20),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.teal.withOpacity(0.3),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
+                    color: AppTheme.primary.withOpacity(0.25),
+                    blurRadius: 16,
+                    offset: const Offset(0, 6),
                   ),
                 ],
               ),
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.all(24),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text("📅 시작일: $formattedStart",
-                      style: const TextStyle(color: Colors.white, fontSize: 16)),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('시작일', style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 13)),
+                      Text(formattedStart, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500)),
+                    ],
+                  ),
                   const SizedBox(height: 6),
-                  Text("📈 누적일: ${days}일",
-                      style: const TextStyle(color: Colors.white, fontSize: 16)),
-                  const Divider(height: 24, color: Colors.white70),
-                  Text("⏳ 금연 시간: ${formatDuration(_elapsed)}",
-                      style: const TextStyle(
-                          color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  Text("💰 절약 금액: ₩$savedMoneyStr",
-                      style: const TextStyle(
-                          color: Colors.amberAccent, fontSize: 20, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 8),
-                  Text("🚭 안 핀 담배 수: $_skippedCigarettes개비",
-                      style: const TextStyle(color: Colors.white, fontSize: 18)),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('누적일', style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 13)),
+                      Text('$days일', style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500)),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Container(height: 1, color: Colors.white24),
+                  const SizedBox(height: 16),
+                  Text(formatDurationLong(_elapsed), style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 4),
+                  Text('금연 시간 (년/월/일/시/분/초)', style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 12)),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                          decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(10)),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('절약 금액', style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 12)),
+                              Text('₩$savedMoneyStr', style: const TextStyle(color: Colors.amberAccent, fontSize: 16, fontWeight: FontWeight.w700)),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                          decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(10)),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('안 핀 담배', style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 12)),
+                              Text('$_skippedCigarettes개비', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -411,15 +511,13 @@ class _MainScreenState extends State<MainScreen> {
                 Expanded(
                   child: ElevatedButton.icon(
                     onPressed: _pickReminderTime,
-                    icon: const Icon(Icons.notifications_active),
-                    label: Text(
-                      _reminderTime == null ? '알림 설정' : '⏰ ${_reminderTime!.format(context)}',
-                    ),
+                    icon: const Icon(Icons.notifications_active_rounded, size: 20),
+                    label: Text(_reminderTime == null ? '알림 설정' : _reminderTime!.format(context)),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.indigoAccent,
+                      backgroundColor: const Color(0xFF6366F1),
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
                   ),
                 ),
@@ -427,95 +525,83 @@ class _MainScreenState extends State<MainScreen> {
                 Expanded(
                   child: ElevatedButton.icon(
                     onPressed: widget.onCravingTap,
-                    icon: const Icon(Icons.self_improvement),
+                    icon: const Icon(Icons.self_improvement_rounded, size: 20),
                     label: const Text('욕구 참기'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.deepPurpleAccent,
+                      backgroundColor: const Color(0xFF7C3AED),
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
                   ),
                 ),
               ],
             ),
-
-            // ✅ 알림 끄기 버튼(알림이 설정되어 있을 때만)
             if (_reminderTime != null) ...[
               const SizedBox(height: 10),
               OutlinedButton.icon(
                 onPressed: _turnOffReminder,
-                icon: const Icon(Icons.notifications_off),
+                icon: const Icon(Icons.notifications_off_rounded, size: 18),
                 label: const Text('알림 끄기'),
               ),
             ],
-
             const SizedBox(height: 16),
 
             // 리셋 버튼
             ElevatedButton.icon(
               onPressed: _resetSmokingStatus,
-              icon: const Icon(Icons.refresh),
+              icon: const Icon(Icons.refresh_rounded, size: 20),
               label: const Text('금연 리셋'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.redAccent,
+                backgroundColor: AppTheme.error,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 14),
-                textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
             ),
             const SizedBox(height: 16),
 
-            // 이유 / 도우미 버튼
+            // 이유 / 도우미
             Row(
               children: [
                 Expanded(
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.format_list_bulleted),
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.format_list_bulleted_rounded, size: 20),
                     label: const Text('금연할 이유'),
                     onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const ReasonWhyScreen()),
-                      );
+                      Navigator.push(context, MaterialPageRoute(builder: (_) => const ReasonWhyScreen()));
                     },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.orangeAccent,
-                      foregroundColor: Colors.white,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.warning,
+                      side: const BorderSide(color: AppTheme.warning),
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: ElevatedButton.icon(
-                    icon: const Icon(Icons.volunteer_activism),
+                    icon: const Icon(Icons.volunteer_activism_rounded, size: 20),
                     label: const Text('금연 도우미'),
                     onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const NonsmokeHelperScreen()),
-                      );
+                      Navigator.push(context, MaterialPageRoute(builder: (_) => const NonsmokeHelperScreen()));
                     },
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
+                      backgroundColor: AppTheme.success,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                     ),
                   ),
                 ),
               ],
             ),
 
-            // 광고 영역
             if (_isBannerReady && _bannerAd != null)
               Padding(
-                padding: const EdgeInsets.only(top: 20),
-                child: Align(
-                  alignment: Alignment.center,
+                padding: const EdgeInsets.only(top: 24),
+                child: Center(
                   child: SizedBox(
                     width: _bannerAd!.size.width.toDouble(),
                     height: _bannerAd!.size.height.toDouble(),
