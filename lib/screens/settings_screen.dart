@@ -1,75 +1,35 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../theme/app_theme.dart';
-import '../notifications/daily_reminder_worker.dart';
 import 'app_info_screen.dart';
 import 'help_screen.dart';
 import 'badge_screen.dart';
+import 'reminder_settings_screen.dart';
 
 /// 설정 화면: 알림, 초기 설정으로 돌아가기, 앱 정보
 class SettingsScreen extends StatelessWidget {
-  final TimeOfDay? reminderTime;
-  final void Function(TimeOfDay?) onReminderUpdated;
+  final List<TimeOfDay> reminderTimes;
+  final void Function(List<TimeOfDay>) onReminderUpdated;
   final Future<void> Function() onGoToFirstSetup;
 
   const SettingsScreen({
     super.key,
-    required this.reminderTime,
+    required this.reminderTimes,
     required this.onReminderUpdated,
     required this.onGoToFirstSetup,
   });
 
-  Future<void> _pickReminderTime(BuildContext context) async {
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: reminderTime ?? TimeOfDay.now(),
-    );
-    if (picked == null) return;
-
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('reminderHour', picked.hour);
-    await prefs.setInt('reminderMinute', picked.minute);
-    await enableDailyReminder(picked);
-    onReminderUpdated(picked);
-
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('매일 ${picked.format(context)}에 알림이 설정되었습니다.')),
-      );
-    }
-  }
-
-  Future<void> _turnOffReminder(BuildContext context) async {
-    if (reminderTime == null) return;
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('알림 끄기'),
-        content: const Text('매일 리마인더 알림을 끄시겠습니까?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('끄기'),
-          ),
-        ],
+  Future<void> _openReminderSettings(BuildContext context) async {
+    final updated = await Navigator.push<List<TimeOfDay>>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ReminderSettingsScreen(
+          initialTimes: List.from(reminderTimes),
+          onUpdated: onReminderUpdated,
+        ),
       ),
     );
-    if (confirmed != true) return;
-
-    await disableDailyReminder();
-    onReminderUpdated(null);
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('알림이 꺼졌습니다.')),
-      );
-    }
+    if (updated != null) onReminderUpdated(updated);
   }
 
   Future<void> _confirmGoToFirstSetup(BuildContext context) async {
@@ -164,19 +124,11 @@ class SettingsScreen extends StatelessWidget {
             context,
             icon: Icons.notifications_rounded,
             title: '알림',
-            subtitle: reminderTime != null
-                ? '매일 ${reminderTime!.format(context)}'
-                : '알림 없음',
-            onTap: () => _pickReminderTime(context),
+            subtitle: reminderTimes.isEmpty
+                ? '알림 없음'
+                : '${reminderTimes.length}개 설정됨',
+            onTap: () => _openReminderSettings(context),
           ),
-          if (reminderTime != null)
-            _settingsTile(
-              context,
-              icon: Icons.notifications_off_rounded,
-              title: '알림 끄기',
-              subtitle: '리마인더 알림 해제',
-              onTap: () => _turnOffReminder(context),
-            ),
           const SizedBox(height: 24),
           _sectionTitle('데이터'),
           _settingsTile(

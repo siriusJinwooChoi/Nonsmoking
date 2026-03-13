@@ -20,6 +20,7 @@ class _TreeScreenState extends State<TreeScreen>
   int water = 0;         // 누적 물(성장용)
   int growthStage = 1;   // 성장 단계
   int currentWater = 0;  // 보유 물(ml)
+  int savedTreesCount = 0; // 키운 나무 수 (5단계 후 보관 시 +1)
 
   bool _isWatering = false;
   Timer? _waterTimer;
@@ -34,7 +35,8 @@ class _TreeScreenState extends State<TreeScreen>
   static const String _kGrowthStage = 'growthStage';
   static const String _kWater = 'water';
   static const String _kCurrentWater = 'currentWater';
-  static const String _kLastWaterUpdateTime = 'lastWaterUpdateTime'; // ✅ 새 키
+  static const String _kLastWaterUpdateTime = 'lastWaterUpdateTime';
+  static const String _kSavedTreesCount = 'savedTreesCount';
 
   final Map<int, int> stageGoal = {
     1: 1000,
@@ -88,6 +90,7 @@ class _TreeScreenState extends State<TreeScreen>
       growthStage = prefs.getInt(_kGrowthStage) ?? 1;
       water = prefs.getInt(_kWater) ?? 0;
       currentWater = prefs.getInt(_kCurrentWater) ?? 0;
+      savedTreesCount = prefs.getInt(_kSavedTreesCount) ?? 0;
     });
 
     // ✅ 최초 실행 시 lastWaterUpdateTime이 없으면 지금으로 세팅
@@ -102,6 +105,25 @@ class _TreeScreenState extends State<TreeScreen>
     await prefs.setInt(_kGrowthStage, growthStage);
     await prefs.setInt(_kWater, water);
     await prefs.setInt(_kCurrentWater, currentWater);
+    await prefs.setInt(_kSavedTreesCount, savedTreesCount);
+  }
+
+  /// 5단계 도달 후 나무 보관: 키운 나무 수 +1, 1단계로 리셋
+  Future<void> _storeTree() async {
+    if (growthStage != 5) return;
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      savedTreesCount++;
+      growthStage = 1;
+      water = 0;
+    });
+    await prefs.setInt(_kSavedTreesCount, savedTreesCount);
+    await prefs.setInt(_kGrowthStage, 1);
+    await prefs.setInt(_kWater, 0);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('🌳 나무를 보관했습니다. 새 나무를 키워보세요!'), duration: Duration(seconds: 2)),
+    );
   }
 
   Future<void> _persistLastWaterUpdateTime() async {
@@ -335,6 +357,8 @@ class _TreeScreenState extends State<TreeScreen>
                   Text('현재 단계: $growthStage단계', style: AppTheme.titleMedium),
                   const SizedBox(height: 4),
                   Text('성장률: $percent%', style: AppTheme.bodyLarge.copyWith(color: AppTheme.primary)),
+                  const SizedBox(height: 6),
+                  Text('내가 키운 나무 수: $savedTreesCount그루', style: AppTheme.labelMedium.copyWith(color: AppTheme.primary)),
                 ],
               ),
               const SizedBox(height: 12),
@@ -375,6 +399,21 @@ class _TreeScreenState extends State<TreeScreen>
                 ),
               ),
               const SizedBox(height: 12),
+              if (growthStage >= 5)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: ElevatedButton.icon(
+                    onPressed: _storeTree,
+                    icon: const Icon(Icons.check_circle_outline_rounded, size: 20),
+                    label: const Text('나무 보관하기'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.success,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
               Row(
                 children: [
                   Expanded(

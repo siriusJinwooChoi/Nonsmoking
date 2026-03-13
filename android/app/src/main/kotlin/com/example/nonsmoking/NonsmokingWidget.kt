@@ -87,7 +87,6 @@ class NonsmokingWidget : AppWidgetProvider() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             views.setOnClickPendingIntent(R.id.widget_quittime_root, pending)
-            views.setOnClickPendingIntent(R.id.widget_btn_open, pending)
         }
 
         appWidgetManager.updateAppWidget(appWidgetId, views)

@@ -126,7 +126,7 @@ class QuitSmokingApp extends StatelessWidget {
             final settings = userSnapshot.data!;
             return MaterialApp(
               debugShowCheckedModeBanner: false,
-              title: '금연머니',
+              title: '금연뱅크',
               theme: AppTheme.lightTheme,
               home: MainScreenWrapper(
                 dailyCigarettes: settings['dailyCigarettes']!,

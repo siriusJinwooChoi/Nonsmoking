@@ -7,6 +7,7 @@ import 'package:google_mobile_ads/google_mobile_ads.dart';
 
 import 'reason_why_screen.dart';
 import 'nonsmoke_helper_screen.dart';
+import 'reminder_settings_screen.dart';
 import 'settings_screen.dart';
 import '../theme/app_theme.dart';
 
@@ -50,8 +51,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   Duration _elapsed = Duration.zero;
   double _savedMoney = 0;
   int _skippedCigarettes = 0;
+  int _failureCount = 0;
+  int? _goalDays;
   Timer? _timer;
-  TimeOfDay? _reminderTime;
+  List<TimeOfDay> _reminderTimes = [];
 
   BannerAd? _bannerAd;
   bool _isBannerReady = false;
@@ -103,11 +106,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     super.dispose();
   }
 
+  static const String _failureCountKey = 'failureCount';
+
   Future<void> _loadPersistedData() async {
     final prefs = await SharedPreferences.getInstance();
     final millis = prefs.getInt('startTime');
-    final hour = prefs.getInt('reminderHour');
-    final minute = prefs.getInt('reminderMinute');
+    _failureCount = prefs.getInt(_failureCountKey) ?? 0;
+    final savedGoal = prefs.getInt(kGoalDaysKey);
+    _goalDays = savedGoal != null && savedGoal > 0 ? savedGoal : null;
 
     if (millis != null) {
       _startTime = DateTime.fromMillisecondsSinceEpoch(millis);
@@ -116,8 +122,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       await prefs.setInt('startTime', _startTime!.millisecondsSinceEpoch);
     }
 
-    if (hour != null && minute != null) {
-      _reminderTime = TimeOfDay(hour: hour, minute: minute);
+    _reminderTimes = await getReminderTimes();
+    if (_reminderTimes.isNotEmpty) {
+      await scheduleAllDailyReminders();
+    }
+    final reasonEnabled = prefs.getBool(kReasonNotificationEnabledKey) ?? false;
+    if (reasonEnabled) {
+      await scheduleReasonReminder();
     }
 
     _startTimer();
@@ -146,47 +157,92 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         _savedMoney = money;
         _skippedCigarettes = totalCigs.floor();
       });
+
+      // 목표일 도달 시 축하 알림 (한 번만)
+      final days = diff.inDays;
+      if (_goalDays != null && days >= _goalDays!) {
+        showGoalReachedNotificationIfNeeded(days, _goalDays);
+      }
+
+      // 위젯 데이터도 주기적으로 동기화 (대략 1분마다)
+      if (seconds % 60 == 0) {
+        syncWidgetData();
+      }
     });
   }
 
-  Future<void> _pickReminderTime() async {
-    final picked = await showTimePicker(
+  Future<void> _pickGoalDays() async {
+    final prefs = await SharedPreferences.getInstance();
+    final picked = await showDialog<int>(
       context: context,
-      initialTime: _reminderTime ?? TimeOfDay.now(),
-    );
-
-    if (picked != null) {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setInt('reminderHour', picked.hour);
-      await prefs.setInt('reminderMinute', picked.minute);
-      setState(() => _reminderTime = picked);
-
-      // ✅ WorkManager 기반 알림 ON
-      await enableDailyReminder(picked);
-
-      // ✅ Analytics
-      await AppAnalytics.log('reminder_set', params: {
-        'hour': picked.hour,
-        'minute': picked.minute,
-        'source': 'main_screen',
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('매일 ${picked.format(context)}에 알림이 설정되었습니다.')),
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('목표일 설정'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final d in [7, 14, 30, 60, 90, 365])
+                  ListTile(
+                    title: Text('$d일'),
+                    onTap: () => Navigator.pop(ctx, d),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('취소'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 0),
+              child: const Text('해제'),
+            ),
+          ],
         );
-      }
+      },
+    );
+    if (!mounted) return;
+    if (picked == null) return;
+    if (picked == 0) {
+      await prefs.remove(kGoalDaysKey);
+      await prefs.remove(kGoalCongratulatedDayKey);
+      setState(() => _goalDays = null);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('목표일을 해제했습니다.'), duration: Duration(seconds: 2)),
+      );
+    } else {
+      await prefs.setInt(kGoalDaysKey, picked);
+      await prefs.remove(kGoalCongratulatedDayKey);
+      setState(() => _goalDays = picked);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('목표일을 ${picked}일로 설정했습니다.'), duration: const Duration(seconds: 2)),
+      );
     }
   }
 
+  Future<void> _openReminderSettings() async {
+    final updated = await Navigator.push<List<TimeOfDay>>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ReminderSettingsScreen(
+          initialTimes: List.from(_reminderTimes),
+          onUpdated: (list) => setState(() => _reminderTimes = list),
+        ),
+      ),
+    );
+    if (updated != null && mounted) setState(() => _reminderTimes = updated);
+  }
+
   Future<void> _turnOffReminder() async {
-    if (_reminderTime == null) return;
+    if (_reminderTimes.isEmpty) return;
 
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('알림 끄기'),
-        content: const Text('매일 리마인더 알림을 끄시겠습니까?'),
+        content: const Text('모든 리마인더 알림을 끄시겠습니까?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -202,21 +258,134 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
     if (confirmed != true) return;
 
-    final prev = _reminderTime!;
     await disableDailyReminder();
-
-    setState(() => _reminderTime = null);
-
-    // ✅ Analytics
-    await AppAnalytics.log('reminder_off', params: {
-      'hour': prev.hour,
-      'minute': prev.minute,
-      'source': 'main_screen',
-    });
+    setState(() => _reminderTimes = []);
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('알림이 꺼졌습니다.')),
+        const SnackBar(content: Text('알림이 모두 꺼졌습니다.')),
+      );
+    }
+  }
+
+  /// 흡연 욕구 시 금연시간, 절약금액, 별표(고정)한 금연할 이유, 응원메시지 표시
+  Future<void> _showCravingSheet() async {
+    final prefs = await SharedPreferences.getInstance();
+    final reasonText = prefs.getString('pinnedReasonText');
+    if (!mounted) return;
+    showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (ctx) => Container(
+          padding: EdgeInsets.only(
+            left: 24,
+            right: 24,
+            top: 24,
+            bottom: MediaQuery.of(ctx).padding.bottom + 24,
+          ),
+          decoration: const BoxDecoration(
+            color: AppTheme.surfaceCard,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text('흡연 욕구가 올 때', style: AppTheme.titleLarge),
+                const SizedBox(height: 20),
+                _cravingRow(Icons.timer_outlined, '금연 시간', formatDurationLong(_elapsed)),
+                const SizedBox(height: 12),
+                _cravingRow(Icons.savings_outlined, '절약 금액', '₩${_moneyFormatter.format(_savedMoney.round())}'),
+                if (reasonText != null && reasonText.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _cravingRow(Icons.format_quote_rounded, '금연할 이유', reasonText),
+                ],
+                const SizedBox(height: 20),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primary.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '지금까지 $_skippedCigarettes개의 담배를 참았습니다! 조금만 더 힘내세요.',
+                    style: AppTheme.bodyLarge.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.primary,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+  }
+
+  Widget _cravingRow(IconData icon, String label, String value) {
+    return Row(
+      children: [
+        Icon(icon, color: AppTheme.primary, size: 22),
+        const SizedBox(width: 10),
+        Text('$label: ', style: AppTheme.bodyMedium.copyWith(color: AppTheme.textSecondary)),
+        Expanded(child: Text(value, style: AppTheme.titleMedium)),
+      ],
+    );
+  }
+
+  Future<void> _onSmokedTap() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('담배를 피우셨나요?'),
+        content: const Text(
+          '기록하면 실패 횟수만 올라가고, 금연 일수는 그대로 유지됩니다.\n폐 회복도 10% 감소합니다.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('기록'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    _failureCount = (prefs.getInt(_failureCountKey) ?? 0) + 1;
+    await prefs.setInt(_failureCountKey, _failureCount);
+
+    final before = prefs.getInt('lungHealth') ?? 100;
+    final after = (before - 10).clamp(0, 100);
+    await prefs.setInt('lungHealth', after);
+
+    await syncWidgetData();
+
+    setState(() {});
+
+    if (mounted) {
+      showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text('괜찮습니다'),
+          content: const Text('금연은 다시 시작하면 됩니다. 오늘부터 다시 함께해요.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('확인'),
+            ),
+          ],
+        ),
       );
     }
   }
@@ -384,8 +553,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 context,
                 MaterialPageRoute(
                   builder: (_) => SettingsScreen(
-                    reminderTime: _reminderTime,
-                    onReminderUpdated: (t) => setState(() => _reminderTime = t),
+                    reminderTimes: List.from(_reminderTimes),
+                    onReminderUpdated: (list) => setState(() => _reminderTimes = list),
                     onGoToFirstSetup: _confirmAndGoToFirstSetup,
                   ),
                 ),
@@ -462,12 +631,43 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                       Text('$days일', style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500)),
                     ],
                   ),
+                  const SizedBox(height: 6),
+                  InkWell(
+                    onTap: _pickGoalDays,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text('목표일', style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 13)),
+                          Text(
+                            _goalDays != null ? '$_goalDays일' : '설정',
+                            style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 16),
                   Container(height: 1, color: Colors.white24),
                   const SizedBox(height: 16),
                   Text(formatDurationLong(_elapsed), style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
                   const SizedBox(height: 4),
-                  Text('금연 시간 (년/월/일/시/분/초)', style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 12)),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        '금연 시간 (년/월/일/시/분/초)',
+                        style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 12),
+                      ),
+                      if (_failureCount > 0)
+                        Text(
+                          '실패 $_failureCount회',
+                          style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500),
+                        ),
+                    ],
+                  ),
                   const SizedBox(height: 16),
                   Row(
                     children: [
@@ -505,14 +705,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             ),
             const SizedBox(height: 24),
 
-            // 알림 / 욕구 버튼
+            // 알림 / 흡연 욕구 버튼
             Row(
               children: [
                 Expanded(
                   child: ElevatedButton.icon(
-                    onPressed: _pickReminderTime,
+                    onPressed: _openReminderSettings,
                     icon: const Icon(Icons.notifications_active_rounded, size: 20),
-                    label: Text(_reminderTime == null ? '알림 설정' : _reminderTime!.format(context)),
+                    label: Text(_reminderTimes.isEmpty ? '알림 설정' : '알림 ${_reminderTimes.length}개'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF6366F1),
                       foregroundColor: Colors.white,
@@ -524,9 +724,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 const SizedBox(width: 10),
                 Expanded(
                   child: ElevatedButton.icon(
-                    onPressed: widget.onCravingTap,
+                    onPressed: _showCravingSheet,
                     icon: const Icon(Icons.self_improvement_rounded, size: 20),
-                    label: const Text('욕구 참기'),
+                    label: const Text('흡연 욕구'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF7C3AED),
                       foregroundColor: Colors.white,
@@ -537,27 +737,49 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 ),
               ],
             ),
-            if (_reminderTime != null) ...[
-              const SizedBox(height: 10),
-              OutlinedButton.icon(
-                onPressed: _turnOffReminder,
-                icon: const Icon(Icons.notifications_off_rounded, size: 18),
-                label: const Text('알림 끄기'),
-              ),
-            ],
-            const SizedBox(height: 16),
-
-            // 리셋 버튼
-            ElevatedButton.icon(
-              onPressed: _resetSmokingStatus,
-              icon: const Icon(Icons.refresh_rounded, size: 20),
-              label: const Text('금연 리셋'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.error,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
+            const SizedBox(height: 10),
+            // 전체 알림 끄기 / 담배 피움 / 금연 리셋 한 줄 3등분
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _reminderTimes.isEmpty ? null : _turnOffReminder,
+                    icon: const Icon(Icons.notifications_off_rounded, size: 16),
+                    label: const Text('알림 끄기', style: TextStyle(fontSize: 12)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.primary,
+                      side: const BorderSide(color: AppTheme.primary),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _onSmokedTap,
+                    icon: const Icon(Icons.smoking_rooms_rounded, size: 16),
+                    label: const Text('담배 피움', style: TextStyle(fontSize: 12)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.error,
+                      side: const BorderSide(color: AppTheme.error),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _resetSmokingStatus,
+                    icon: const Icon(Icons.refresh_rounded, size: 16),
+                    label: const Text('리셋', style: TextStyle(fontSize: 12)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.error,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                    ),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 16),
 

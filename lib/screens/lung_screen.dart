@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lottie/lottie.dart';
 import 'dart:async';
 import '../theme/app_theme.dart';
+import '../widget/widget_helper.dart';
 
 // ✅ Analytics helper
 import '../analytics/app_analytics.dart';
@@ -63,6 +64,7 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('lungHealth', lungHealth);
     await prefs.setInt('lastUpdatedTime', DateTime.now().millisecondsSinceEpoch);
+    await syncWidgetData();
   }
 
   void _healLung() {
@@ -102,11 +104,13 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
     );
 
     if (confirmed == true) {
-      _smokeAndDamage();
+      await _smokeAndDamage();
     }
   }
 
-  void _smokeAndDamage() {
+  static const String _failureCountKey = 'failureCount';
+
+  Future<void> _smokeAndDamage() async {
     final before = lungHealth;
     final after = (lungHealth - 10).clamp(0, 100);
 
@@ -117,15 +121,34 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
         duration: const Duration(milliseconds: 500),
       );
     });
-    _saveLungHealth();
+    await _saveLungHealth();
 
-    // ✅ Analytics
+    final prefs = await SharedPreferences.getInstance();
+    final failureCount = (prefs.getInt(_failureCountKey) ?? 0) + 1;
+    await prefs.setInt(_failureCountKey, failureCount);
+
     AppAnalytics.log('lung_smoke', params: {
       'delta': -10,
       'lung_before': before,
       'lung_after': after,
       'source': 'lung_screen',
     });
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('괜찮습니다'),
+        content: const Text('금연은 다시 시작하면 됩니다. 오늘부터 다시 함께해요.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('확인'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
