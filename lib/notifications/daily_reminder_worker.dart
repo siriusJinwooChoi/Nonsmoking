@@ -18,6 +18,14 @@ const String kGoalCongratulatedDayKey = 'goalCongratulatedDay';
 const String kSelectedReasonTextKey = 'selectedReasonText';
 const String kReasonNotificationEnabledKey = 'reasonNotificationEnabled';
 
+const String kInactivityReminderTaskName = 'inactivity_reminder_task';
+const String kInactivityReminderUniqueWork = 'inactivity_reminder_unique';
+const int kInactivityNotificationId = 4001;
+const String kLastAppOpenTimeMsKey = 'lastAppOpenTimeMs';
+const String kInactivityNotificationEnabledKey = 'inactivityNotificationEnabled';
+const int kInactivityDaysThreshold = 3;
+const int kMsPerDay = 24 * 60 * 60 * 1000;
+
 /// ✅ WorkManager 백그라운드 엔트리포인트 (반드시 top-level)
 @pragma('vm:entry-point')
 void callbackDispatcher() {
@@ -28,6 +36,10 @@ void callbackDispatcher() {
 
     if (task == kReasonReminderTaskName) {
       return _handleReasonReminder(inputData);
+    }
+
+    if (task == kInactivityReminderTaskName) {
+      return _handleInactivityReminder(inputData);
     }
 
     if (task != kDailyReminderTaskName) {
@@ -336,4 +348,94 @@ Future<void> showGoalReachedNotificationIfNeeded(int currentDays, int? goalDays)
     ),
   );
   await prefs.setInt(kGoalCongratulatedDayKey, currentDays);
+}
+
+/// 3일 미접속 시 알림: 작업 실행 시 lastOpen 확인 후 알림 표시 및 24시간 후 재예약
+Future<bool> _handleInactivityReminder(Map<String, dynamic>? inputData) async {
+  final prefs = await SharedPreferences.getInstance();
+  final enabled = prefs.getBool(kInactivityNotificationEnabledKey) ?? true;
+  if (!enabled) return true;
+
+  final lastMs = prefs.getInt(kLastAppOpenTimeMsKey);
+  if (lastMs == null) return true;
+  final nowMs = DateTime.now().millisecondsSinceEpoch;
+  final daysSinceOpen = (nowMs - lastMs) / kMsPerDay;
+  if (daysSinceOpen < kInactivityDaysThreshold) return true;
+
+  final plugin = FlutterLocalNotificationsPlugin();
+  const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+  const initSettings = InitializationSettings(android: androidInit);
+  await plugin.initialize(initSettings);
+
+  const channel = AndroidNotificationChannel(
+    'inactivity_channel',
+    '비접속 알림',
+    description: '오랫동안 앱을 열지 않았을 때 알려드립니다.',
+    importance: Importance.high,
+  );
+  final androidImpl = plugin.resolvePlatformSpecificImplementation<
+      AndroidFlutterLocalNotificationsPlugin>();
+  await androidImpl?.createNotificationChannel(channel);
+
+  await plugin.show(
+    kInactivityNotificationId,
+    '금연은 잘 하고 계신가요?',
+    '앱에서 금연현황을 확인해보세요!',
+    const NotificationDetails(
+      android: AndroidNotificationDetails(
+        'inactivity_channel',
+        '비접속 알림',
+        channelDescription: '오랫동안 앱을 열지 않았을 때 알려드립니다.',
+        importance: Importance.high,
+        priority: Priority.high,
+      ),
+    ),
+  );
+
+  await scheduleInactivityReminderOneOff(delayDays: 1);
+  return true;
+}
+
+/// 비접속 알림 1회 예약 (delayDays일 후 실행)
+Future<void> scheduleInactivityReminderOneOff({int delayDays = 3}) async {
+  final delay = Duration(days: delayDays);
+  await Workmanager().registerOneOffTask(
+    kInactivityReminderUniqueWork,
+    kInactivityReminderTaskName,
+    initialDelay: delay,
+    existingWorkPolicy: ExistingWorkPolicy.replace,
+    constraints: Constraints(
+      networkType: NetworkType.not_required,
+      requiresBatteryNotLow: false,
+      requiresCharging: false,
+      requiresDeviceIdle: false,
+      requiresStorageNotLow: false,
+    ),
+    inputData: {},
+  );
+}
+
+/// 앱 열릴 때 호출: 마지막 접속 시간 저장 후 3일 뒤 비접속 알림 예약
+Future<void> updateLastAppOpenAndScheduleInactivity() async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setInt(kLastAppOpenTimeMsKey, DateTime.now().millisecondsSinceEpoch);
+  await Workmanager().cancelByUniqueName(kInactivityReminderUniqueWork);
+  await scheduleInactivityReminderOneOff(delayDays: kInactivityDaysThreshold);
+}
+
+/// 비접속 알림 설정값 저장 (설정 화면에서 호출)
+Future<void> setInactivityNotificationEnabled(bool enabled) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setBool(kInactivityNotificationEnabledKey, enabled);
+  if (!enabled) {
+    await Workmanager().cancelByUniqueName(kInactivityReminderUniqueWork);
+  } else {
+    await scheduleInactivityReminderOneOff(delayDays: kInactivityDaysThreshold);
+  }
+}
+
+/// 비접속 알림 설정값 조회
+Future<bool> getInactivityNotificationEnabled() async {
+  final prefs = await SharedPreferences.getInstance();
+  return prefs.getBool(kInactivityNotificationEnabledKey) ?? true;
 }

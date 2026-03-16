@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lottie/lottie.dart';
 import 'dart:async';
 import '../theme/app_theme.dart';
+import '../ad_manager.dart';
 import '../widget/widget_helper.dart';
 
 // ✅ Analytics helper
@@ -134,21 +135,23 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
       'source': 'lung_screen',
     });
 
-    if (!mounted) return;
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('괜찮습니다'),
-        content: const Text('금연은 다시 시작하면 됩니다. 오늘부터 다시 함께해요.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('확인'),
-          ),
-        ],
-      ),
-    );
+    AdManager.showAd(onAdClosed: () {
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text('괜찮습니다'),
+          content: const Text('금연은 다시 시작하면 됩니다. 오늘부터 다시 함께해요.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('확인'),
+            ),
+          ],
+        ),
+      );
+    });
   }
 
   @override

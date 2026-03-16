@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../theme/app_theme.dart';
+import '../notifications/daily_reminder_worker.dart';
 import 'app_info_screen.dart';
 import 'help_screen.dart';
 import 'badge_screen.dart';
 import 'reminder_settings_screen.dart';
 
 /// 설정 화면: 알림, 초기 설정으로 돌아가기, 앱 정보
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   final List<TimeOfDay> reminderTimes;
   final void Function(List<TimeOfDay>) onReminderUpdated;
   final Future<void> Function() onGoToFirstSetup;
@@ -19,7 +20,64 @@ class SettingsScreen extends StatelessWidget {
     required this.onGoToFirstSetup,
   });
 
-  Future<void> _openReminderSettings(BuildContext context) async {
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  bool _inactivityNotificationEnabled = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadInactivitySetting();
+  }
+
+  Future<void> _loadInactivitySetting() async {
+    final v = await getInactivityNotificationEnabled();
+    if (mounted) setState(() => _inactivityNotificationEnabled = v);
+  }
+
+  Widget _inactivityNotificationTile(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceCard,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: AppTheme.cardShadowSubtle,
+      ),
+      child: ListTile(
+        leading: const Icon(Icons.notifications_active_rounded, color: AppTheme.primary, size: 24),
+        title: Text(
+          '비접속 시 알림',
+          style: AppTheme.titleMedium.copyWith(fontSize: 16, color: AppTheme.textPrimary),
+        ),
+        subtitle: const Text(
+          '3일 이상 앱을 열지 않으면 매일 알림',
+          style: AppTheme.bodyMedium,
+        ),
+        trailing: Switch(
+          value: _inactivityNotificationEnabled,
+          onChanged: (value) async {
+            await setInactivityNotificationEnabled(value);
+            if (mounted) {
+              setState(() => _inactivityNotificationEnabled = value);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(value ? '비접속 시 알림을 켰습니다.' : '비접속 시 알림을 껐습니다.'),
+                  duration: const Duration(seconds: 1),
+                ),
+              );
+            }
+          },
+          activeColor: AppTheme.primary,
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      ),
+    );
+  }
+
+  Future<void> _openReminderSettings(BuildContext context, List<TimeOfDay> reminderTimes, void Function(List<TimeOfDay>) onReminderUpdated) async {
     final updated = await Navigator.push<List<TimeOfDay>>(
       context,
       MaterialPageRoute(
@@ -56,7 +114,7 @@ class SettingsScreen extends StatelessWidget {
       ),
     );
     if (confirmed == true) {
-      await onGoToFirstSetup();
+      await widget.onGoToFirstSetup();
     }
   }
 
@@ -124,11 +182,12 @@ class SettingsScreen extends StatelessWidget {
             context,
             icon: Icons.notifications_rounded,
             title: '알림',
-            subtitle: reminderTimes.isEmpty
+            subtitle: widget.reminderTimes.isEmpty
                 ? '알림 없음'
-                : '${reminderTimes.length}개 설정됨',
-            onTap: () => _openReminderSettings(context),
+                : '${widget.reminderTimes.length}개 설정됨',
+            onTap: () => _openReminderSettings(context, widget.reminderTimes, widget.onReminderUpdated),
           ),
+          _inactivityNotificationTile(context),
           const SizedBox(height: 24),
           _sectionTitle('데이터'),
           _settingsTile(

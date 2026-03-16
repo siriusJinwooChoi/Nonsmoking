@@ -10,6 +10,7 @@ import 'nonsmoke_helper_screen.dart';
 import 'reminder_settings_screen.dart';
 import 'settings_screen.dart';
 import '../theme/app_theme.dart';
+import '../ad_manager.dart';
 
 // ✅ Analytics helper
 import '../analytics/app_analytics.dart';
@@ -131,6 +132,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       await scheduleReasonReminder();
     }
 
+    updateLastAppOpenAndScheduleInactivity();
     _startTimer();
     await syncWidgetData();
   }
@@ -372,22 +374,24 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
     setState(() {});
 
-    if (mounted) {
-      showDialog(
-        context: context,
-        builder: (_) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text('괜찮습니다'),
-          content: const Text('금연은 다시 시작하면 됩니다. 오늘부터 다시 함께해요.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('확인'),
-            ),
-          ],
-        ),
-      );
-    }
+    AdManager.showAd(onAdClosed: () {
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (_) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: const Text('괜찮습니다'),
+            content: const Text('금연은 다시 시작하면 됩니다. 오늘부터 다시 함께해요.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('확인'),
+              ),
+            ],
+          ),
+        );
+      }
+    });
   }
 
   /// 금연 시간을 년/월/일/시간/분/초로 표시

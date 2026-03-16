@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
+import '../ad_manager.dart';
 
 // ✅ Analytics helper
 import '../analytics/app_analytics.dart';
@@ -129,7 +130,9 @@ class _GameScreenState extends State<GameScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(context);
-              resetGame();
+              AdManager.showAd(onAdClosed: () {
+                if (context.mounted) resetGame();
+              });
             },
             child: const Text('다시 도전하기'),
           ),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'theme/app_theme.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'ad_manager.dart';
 import 'package:timezone/data/latest_all.dart' as tzData;
 import 'package:timezone/timezone.dart' as tz;
 
@@ -22,7 +23,7 @@ import 'screens/intro/screen9_summary.dart';
 
 // 주요 앱 화면
 import 'screens/main_screen.dart';
-import 'screens/game_screen.dart';
+import 'screens/game_menu_screen.dart';
 import 'screens/tree_screen.dart';
 import 'screens/lung_screen.dart';
 import 'screens/health_screen.dart';
@@ -53,6 +54,7 @@ void main() async {
   runZonedGuarded(() async {
     // ✅ 광고 초기화
     await MobileAds.instance.initialize();
+    AdManager.loadAd();
 
     // ✅ WorkManager 초기화
     await Workmanager().initialize(
@@ -363,7 +365,7 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
         cigarettesPerPack: widget.cigarettesPerPack,
         pricePerPack: widget.pricePerPack,
       ),
-      const GameScreen(),
+      const GameMenuScreen(),
       const TreeScreen(),
       const LungScreen(),
       const SmokingScreen(),
