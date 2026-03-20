@@ -3,7 +3,7 @@ description: "A new Flutter project."
 
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 
-version: 1.0.0+1
+version: 1.0.3+3
 
 environment:
   sdk: ^3.8.0
@@ -17,6 +17,7 @@ dependencies:
   lottie: ^2.7.0
   shared_preferences: ^2.2.0
   intl: ^0.18.1
+  package_info_plus: ^8.0.0
 
   #19.2.1 버전은 유투브의 http를 사용하기 위함
   #flutter_local_notifications: ^19.2.1
@@ -44,6 +45,7 @@ dev_dependencies:
 flutter:
   assets:
     - assets/
+    - assets/cigarettes/
     - assets/lung_recover.json
     - assets/app_icon.png
     - assets/icons/app_icon.png
@@ -55,6 +57,8 @@ flutter:
     - assets/water_drop.json
     - assets/lottie/Cig.json
     - assets/lottie/water.json
+    - assets/lottie/zippo.json
+    - assets/scoin.png
     #- assets/lottie/water_drop.json
 
 

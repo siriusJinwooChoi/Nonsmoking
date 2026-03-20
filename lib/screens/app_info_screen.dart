@@ -1,13 +1,38 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../theme/app_theme.dart';
 
-/// 앱 정보 화면 (View licenses 없음, 이메일 문의 포함)
-class AppInfoScreen extends StatelessWidget {
+/// 앱 정보 화면 (버전 자동 동기화, 이메일 문의 포함)
+class AppInfoScreen extends StatefulWidget {
   const AppInfoScreen({super.key});
 
+  @override
+  State<AppInfoScreen> createState() => _AppInfoScreenState();
+}
+
+class _AppInfoScreenState extends State<AppInfoScreen> {
+
   static const String _email = 'cjw207207@gmail.com';
-  static const String _version = '1.0.0';
+  String _version = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVersion();
+  }
+
+  Future<void> _loadVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (!mounted) return;
+      setState(() {
+        _version = info.version;
+      });
+    } catch (_) {
+      // 실패 시 빈 문자열 유지
+    }
+  }
 
   Future<void> _launchEmail(BuildContext context) async {
     final uri = Uri.parse('mailto:$_email');
@@ -40,7 +65,10 @@ class AppInfoScreen extends StatelessWidget {
                 const SizedBox(height: 16),
                 Text('금연', style: AppTheme.titleLarge.copyWith(fontSize: 24)),
                 const SizedBox(height: 4),
-                Text('버전 $_version', style: AppTheme.bodyMedium),
+                Text(
+                  _version.isEmpty ? '버전 정보를 불러오는 중입니다...' : '버전 $_version',
+                  style: AppTheme.bodyMedium,
+                ),
               ],
             ),
           ),

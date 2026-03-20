@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import 'game_screen.dart';
 import 'word_game_screen.dart';
+import 'cigarette_catch_game_screen.dart';
+import 'timing_tap_game_screen.dart';
 
-/// 게임 선택: 1-30 숫자 게임 / 단어맞추기
+/// 게임 선택: 1-30 숫자 게임 / 단어맞추기 / 담배맞추기 / 완벽 타이밍
 class GameMenuScreen extends StatelessWidget {
   const GameMenuScreen({super.key});
 
@@ -15,8 +17,8 @@ class GameMenuScreen extends StatelessWidget {
         title: const Text('게임'),
       ),
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -47,6 +49,30 @@ class GameMenuScreen extends StatelessWidget {
                   Navigator.push(
                     context,
                     MaterialPageRoute(builder: (_) => const WordGameScreen()),
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+              _GameCard(
+                icon: Icons.smoking_rooms_rounded,
+                title: '담배맞추기',
+                subtitle: '떨어지는 담배를 맞춰 보세요 (1~100단계)',
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const CigaretteCatchGameScreen()),
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+              _GameCard(
+                icon: Icons.speed_rounded,
+                title: '완벽 타이밍',
+                subtitle: '움직이는 표시가 중앙에 올 때 탭해 보세요',
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const TimingTapGameScreen()),
                   );
                 },
               ),

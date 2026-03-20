@@ -26,16 +26,23 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _inactivityNotificationEnabled = true;
+  bool _attendanceReminderEnabled = true;
 
   @override
   void initState() {
     super.initState();
     _loadInactivitySetting();
+    _loadAttendanceReminderSetting();
   }
 
   Future<void> _loadInactivitySetting() async {
     final v = await getInactivityNotificationEnabled();
     if (mounted) setState(() => _inactivityNotificationEnabled = v);
+  }
+
+  Future<void> _loadAttendanceReminderSetting() async {
+    final v = await getAttendanceReminderEnabled();
+    if (mounted) setState(() => _attendanceReminderEnabled = v);
   }
 
   Widget _inactivityNotificationTile(BuildContext context) {
@@ -65,6 +72,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text(value ? '비접속 시 알림을 켰습니다.' : '비접속 시 알림을 껐습니다.'),
+                  duration: const Duration(seconds: 1),
+                ),
+              );
+            }
+          },
+          activeColor: AppTheme.primary,
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      ),
+    );
+  }
+
+  Widget _attendanceReminderTile(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceCard,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: AppTheme.cardShadowSubtle,
+      ),
+      child: ListTile(
+        leading: const Icon(Icons.today_rounded, color: AppTheme.primary, size: 24),
+        title: Text(
+          '출석 알림',
+          style: AppTheme.titleMedium.copyWith(fontSize: 16, color: AppTheme.textPrimary),
+        ),
+        subtitle: const Text(
+          '저녁 6시까지 미출석 시 10분마다 알림',
+          style: AppTheme.bodyMedium,
+        ),
+        trailing: Switch(
+          value: _attendanceReminderEnabled,
+          onChanged: (value) async {
+            await setAttendanceReminderEnabled(value);
+            if (mounted) {
+              setState(() => _attendanceReminderEnabled = value);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(value ? '출석 알림을 켰습니다.' : '출석 알림을 껐습니다.'),
                   duration: const Duration(seconds: 1),
                 ),
               );
@@ -188,6 +234,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: () => _openReminderSettings(context, widget.reminderTimes, widget.onReminderUpdated),
           ),
           _inactivityNotificationTile(context),
+          _attendanceReminderTile(context),
           const SizedBox(height: 24),
           _sectionTitle('데이터'),
           _settingsTile(

@@ -51,14 +51,14 @@ class _BadgeScreenState extends State<BadgeScreen> {
         children: [
           _sectionTitle('피우지 않은 담배 개수'),
           _badgeGrid(
-            values: const [20, 100, 1000, 10000],
+            values: const [20, 50, 100, 200, 500, 1000, 10000],
             achieved: _skippedCigarettes,
             labelBuilder: (v) => '$v개비',
           ),
           const SizedBox(height: 24),
           _sectionTitle('금연 일수'),
           _badgeGrid(
-            values: const [1, 3, 7, 10, 14, 30, 90, 180, 365],
+            values: const [1, 3, 7, 10, 14, 30, 90, 180, 365, 730],
             achieved: _quitDays,
             labelBuilder: (v) => '${v}일',
           ),

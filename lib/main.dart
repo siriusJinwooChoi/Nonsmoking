@@ -25,9 +25,10 @@ import 'screens/intro/screen9_summary.dart';
 import 'screens/main_screen.dart';
 import 'screens/game_menu_screen.dart';
 import 'screens/tree_screen.dart';
-import 'screens/lung_screen.dart';
+import 'screens/lung_smoking_menu_screen.dart';
+import 'screens/cigarette_collect_screen.dart';
 import 'screens/health_screen.dart';
-import 'screens/smoking_screen.dart';
+import 'screens/attendance_screen.dart';
 
 // firebase
 import 'package:firebase_core/firebase_core.dart';
@@ -130,7 +131,7 @@ class QuitSmokingApp extends StatelessWidget {
               debugShowCheckedModeBanner: false,
               title: '금연뱅크',
               theme: AppTheme.lightTheme,
-              home: MainScreenWrapper(
+              home: AttendanceGate(
                 dailyCigarettes: settings['dailyCigarettes']!,
                 cigarettesPerPack: settings['cigarettesPerPack']!,
                 pricePerPack: settings['pricePerPack']!,
@@ -252,16 +253,82 @@ class _IntroFlowWrapperState extends State<IntroFlowWrapper> {
   Widget build(BuildContext context) => _startFlow();
 }
 
+/// 앱 실행 시 출석 화면을 먼저 띄우고, 닫으면 메인으로.
+class AttendanceGate extends StatefulWidget {
+  final int dailyCigarettes;
+  final int cigarettesPerPack;
+  final int pricePerPack;
+
+  const AttendanceGate({
+    super.key,
+    required this.dailyCigarettes,
+    required this.cigarettesPerPack,
+    required this.pricePerPack,
+  });
+
+  @override
+  State<AttendanceGate> createState() => _AttendanceGateState();
+}
+
+class _AttendanceGateState extends State<AttendanceGate> {
+  bool _showAttendance = true;
+  int _refreshTrigger = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    scheduleAttendanceReminderIfNeeded();
+    scheduleCigaretteCollectionReminders();
+  }
+
+  void _onAttendanceClose() {
+    setState(() {
+      _showAttendance = false;
+      _refreshTrigger++;
+    });
+  }
+
+  void _onMainTabSelected() {
+    setState(() => _refreshTrigger++);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mainScreen = MainScreenWrapper(
+      dailyCigarettes: widget.dailyCigarettes,
+      cigarettesPerPack: widget.cigarettesPerPack,
+      pricePerPack: widget.pricePerPack,
+      refreshTrigger: _refreshTrigger,
+      onMainTabSelected: _onMainTabSelected,
+    );
+    if (!_showAttendance) return mainScreen;
+    return Stack(
+      children: [
+        mainScreen,
+        Positioned.fill(
+          child: AttendanceScreen(
+            onClose: _onAttendanceClose,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class MainScreenWrapper extends StatefulWidget {
   final int dailyCigarettes;
   final int cigarettesPerPack;
   final int pricePerPack;
+  final int refreshTrigger;
+  final VoidCallback? onMainTabSelected;
 
   const MainScreenWrapper({
     super.key,
     required this.dailyCigarettes,
     required this.cigarettesPerPack,
     required this.pricePerPack,
+    this.refreshTrigger = 0,
+    this.onMainTabSelected,
   });
 
   @override
@@ -329,18 +396,21 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
           _interstitialAd = null;
           _loadInterstitialAd();
           setState(() => currentIndex = index);
+          if (index == 0) widget.onMainTabSelected?.call();
         },
         onAdFailedToShowFullScreenContent: (ad, error) {
           ad.dispose();
           _interstitialAd = null;
           _loadInterstitialAd();
           setState(() => currentIndex = index);
+          if (index == 0) widget.onMainTabSelected?.call();
         },
       );
 
       _interstitialAd!.show();
     } else {
       setState(() => currentIndex = index);
+      if (index == 0) widget.onMainTabSelected?.call();
       // 다음을 위해 계속 로드
       if (_interstitialAd == null) _loadInterstitialAd();
     }
@@ -361,14 +431,15 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
         onResetTap: () => _showAdThenNavigate(0),
         onReasonTap: () => _showAdThenNavigate(0),
         onHelperTap: () => _showAdThenNavigate(0),
+        refreshTrigger: widget.refreshTrigger,
         dailyCigarettes: widget.dailyCigarettes,
         cigarettesPerPack: widget.cigarettesPerPack,
         pricePerPack: widget.pricePerPack,
       ),
       const GameMenuScreen(),
       const TreeScreen(),
-      const LungScreen(),
-      const SmokingScreen(),
+      const LungSmokingMenuScreen(),
+      const CigaretteCollectScreen(),
       const HealthScreen(),
     ];
 
@@ -394,8 +465,8 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
                 _NavItem(icon: Icons.home_rounded, label: '메인', index: 0, current: currentIndex, onTap: _showAdThenNavigate),
                 _NavItem(icon: Icons.sports_esports_rounded, label: '게임', index: 1, current: currentIndex, onTap: _showAdThenNavigate),
                 _NavItem(icon: Icons.eco_rounded, label: '나무', index: 2, current: currentIndex, onTap: _showAdThenNavigate),
-                _NavItem(icon: Icons.favorite_rounded, label: '폐', index: 3, current: currentIndex, onTap: _showAdThenNavigate),
-                _NavItem(icon: Icons.smoking_rooms_rounded, label: '흡연', index: 4, current: currentIndex, onTap: _showAdThenNavigate),
+                _NavItem(icon: Icons.favorite_rounded, label: '폐/흡연', index: 3, current: currentIndex, onTap: _showAdThenNavigate),
+                _NavItem(icon: Icons.inventory_2_rounded, label: '담배 컬렉션', index: 4, current: currentIndex, onTap: _showAdThenNavigate),
                 _NavItem(icon: Icons.favorite_border_rounded, label: '건강', index: 5, current: currentIndex, onTap: _showAdThenNavigate),
               ],
             ),

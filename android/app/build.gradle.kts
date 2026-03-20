@@ -19,15 +19,15 @@ if (keystorePropertiesFile.exists()) {
 
 android {
     namespace = "com.cjw.nonsmoking"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36
     ndkVersion = "27.0.12077973"
 
     defaultConfig {
         applicationId = "com.cjw.nonsmoking"
         minSdk = 24
-        targetSdk = 35
-        versionCode = 4
-        versionName = "1.0.3"
+        targetSdk = 36
+        versionCode = 5
+        versionName = "1.0.4"
     }
 
     signingConfigs {

@@ -9,6 +9,7 @@ import 'reason_why_screen.dart';
 import 'nonsmoke_helper_screen.dart';
 import 'reminder_settings_screen.dart';
 import 'settings_screen.dart';
+import 'attendance_screen.dart';
 import '../theme/app_theme.dart';
 import '../ad_manager.dart';
 
@@ -26,6 +27,7 @@ class MainScreen extends StatefulWidget {
   final VoidCallback onResetTap;
   final VoidCallback onReasonTap;
   final VoidCallback onHelperTap;
+  final int? refreshTrigger;
 
   final int dailyCigarettes;
   final int cigarettesPerPack;
@@ -38,6 +40,7 @@ class MainScreen extends StatefulWidget {
     required this.onResetTap,
     required this.onReasonTap,
     required this.onHelperTap,
+    this.refreshTrigger,
     required this.dailyCigarettes,
     required this.cigarettesPerPack,
     required this.pricePerPack,
@@ -54,6 +57,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   int _skippedCigarettes = 0;
   int _failureCount = 0;
   int? _goalDays;
+  int _goldenCoins = 0;
   Timer? _timer;
   List<TimeOfDay> _reminderTimes = [];
 
@@ -100,6 +104,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   @override
+  void didUpdateWidget(covariant MainScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.refreshTrigger != widget.refreshTrigger) _loadGoldenCoins();
+  }
+
+  @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
@@ -109,10 +119,53 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   static const String _failureCountKey = 'failureCount';
 
+  Future<void> _loadGoldenCoins() async {
+    final coins = await getGoldenCoins();
+    if (mounted) setState(() => _goldenCoins = coins);
+  }
+
+  /// 실패 횟수 1회 차감 (금연코인 5개 소모) 다이얼로그
+  Future<void> _showReduceFailureCountDialog() async {
+    final coins = await getGoldenCoins();
+    final canReduce = coins >= 5 && _failureCount > 0;
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('실패 횟수 차감'),
+        content: Text(
+          canReduce
+              ? '금연코인 5개를 사용하여 실패 횟수를 1개 차감하시겠습니까?'
+              : '금연코인이 부족합니다. (5코인 필요)\n현재 보유: ${coins}코인',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('취소'),
+          ),
+          if (canReduce)
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('확인'),
+            ),
+        ],
+      ),
+    );
+    if (confirmed != true || !canReduce) return;
+    await setGoldenCoins(coins - 5);
+    final prefs = await SharedPreferences.getInstance();
+    _failureCount = (_failureCount - 1).clamp(0, 0x7fffffff);
+    await prefs.setInt(_failureCountKey, _failureCount);
+    await _loadGoldenCoins();
+    if (mounted) setState(() {});
+  }
+
   Future<void> _loadPersistedData() async {
     final prefs = await SharedPreferences.getInstance();
     final millis = prefs.getInt('startTime');
     _failureCount = prefs.getInt(_failureCountKey) ?? 0;
+    _goldenCoins = prefs.getInt(kGoldenCoinsKey) ?? 0;
     final savedGoal = prefs.getInt(kGoalDaysKey);
     _goalDays = savedGoal != null && savedGoal > 0 ? savedGoal : null;
 
@@ -549,6 +602,31 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       appBar: AppBar(
         title: const Text('금연 현황'),
         actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 8, top: 8, bottom: 8),
+            child: Center(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Image.asset(
+                    'assets/scoin.png',
+                    width: 24,
+                    height: 24,
+                    errorBuilder: (_, __, ___) => const Icon(Icons.monetization_on_rounded, color: Colors.amber, size: 24),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    '$_goldenCoins',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.settings_rounded),
             tooltip: '설정',
@@ -645,9 +723,20 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text('목표일', style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 13)),
-                          Text(
-                            _goalDays != null ? '$_goalDays일' : '설정',
-                            style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                _goalDays != null ? '$_goalDays일' : '설정',
+                                style: const TextStyle(
+                                  color: Colors.amberAccent,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Icon(Icons.touch_app_rounded, size: 14, color: Colors.white.withOpacity(0.7)),
+                            ],
                           ),
                         ],
                       ),
@@ -666,9 +755,23 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                         style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 12),
                       ),
                       if (_failureCount > 0)
-                        Text(
-                          '실패 $_failureCount회',
-                          style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500),
+                        GestureDetector(
+                          onTap: _showReduceFailureCountDialog,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                '실패 $_failureCount회',
+                                style: const TextStyle(
+                                  color: Colors.amberAccent,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Icon(Icons.touch_app_rounded, size: 12, color: Colors.white.withOpacity(0.7)),
+                            ],
+                          ),
                         ),
                     ],
                   ),

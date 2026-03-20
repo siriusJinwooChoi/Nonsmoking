@@ -26,6 +26,17 @@ const String kInactivityNotificationEnabledKey = 'inactivityNotificationEnabled'
 const int kInactivityDaysThreshold = 3;
 const int kMsPerDay = 24 * 60 * 60 * 1000;
 
+const String kAttendanceReminderTaskName = 'attendance_reminder_task';
+const String kAttendanceReminderUniqueWork = 'attendance_reminder_unique';
+const int kAttendanceReminderNotificationId = 5001;
+const String kAttendanceLastDateKey = 'attendance_last_date';
+const String kAttendanceReminderEnabledKey = 'attendanceReminderEnabled';
+
+const String kCigaretteCollectionReminderTaskName = 'cigarette_collection_reminder_task';
+const String kCigaretteCollectionReminderUniqueWorkPrefix = 'cigarette_collection_reminder_';
+const int kCigaretteCollectionReminderNotificationIdBase = 6001;
+const List<int> _cigaretteCollectionHours = [9, 12, 18, 22];
+
 /// ✅ WorkManager 백그라운드 엔트리포인트 (반드시 top-level)
 @pragma('vm:entry-point')
 void callbackDispatcher() {
@@ -40,6 +51,14 @@ void callbackDispatcher() {
 
     if (task == kInactivityReminderTaskName) {
       return _handleInactivityReminder(inputData);
+    }
+
+    if (task == kAttendanceReminderTaskName) {
+      return _handleAttendanceReminder(inputData);
+    }
+
+    if (task == kCigaretteCollectionReminderTaskName) {
+      return _handleCigaretteCollectionReminder(inputData);
     }
 
     if (task != kDailyReminderTaskName) {
@@ -438,4 +457,182 @@ Future<void> setInactivityNotificationEnabled(bool enabled) async {
 Future<bool> getInactivityNotificationEnabled() async {
   final prefs = await SharedPreferences.getInstance();
   return prefs.getBool(kInactivityNotificationEnabledKey) ?? true;
+}
+
+// ─── 출석체크 알림 (저녁 6시 이후 미출석 시 10분마다) ───────────────────────
+
+String _todayString() {
+  final n = DateTime.now();
+  return '${n.year}-${n.month.toString().padLeft(2, '0')}-${n.day.toString().padLeft(2, '0')}';
+}
+
+Future<bool> _handleAttendanceReminder(Map<String, dynamic>? inputData) async {
+  final prefs = await SharedPreferences.getInstance();
+  final enabled = prefs.getBool(kAttendanceReminderEnabledKey) ?? true;
+  if (!enabled) return true;
+
+  final lastDate = prefs.getString(kAttendanceLastDateKey);
+  final today = _todayString();
+  if (lastDate == today) return true;
+
+  final now = DateTime.now();
+  if (now.hour < 18) return true;
+
+  final plugin = FlutterLocalNotificationsPlugin();
+  const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+  const initSettings = InitializationSettings(android: androidInit);
+  await plugin.initialize(initSettings);
+
+  const channel = AndroidNotificationChannel(
+    'attendance_reminder_channel',
+    '출석 알림',
+    description: '금연코인 획득을 위한 출석 알림',
+    importance: Importance.high,
+  );
+  final androidImpl = plugin.resolvePlatformSpecificImplementation<
+      AndroidFlutterLocalNotificationsPlugin>();
+  await androidImpl?.createNotificationChannel(channel);
+
+  await plugin.show(
+    kAttendanceReminderNotificationId,
+    '금연뱅크 출석',
+    '금연코인 획득을 위해 금연뱅크에 출석하셔야 합니다.',
+    const NotificationDetails(
+      android: AndroidNotificationDetails(
+        'attendance_reminder_channel',
+        '출석 알림',
+        channelDescription: '금연코인 획득을 위한 출석 알림',
+        importance: Importance.high,
+        priority: Priority.high,
+      ),
+    ),
+  );
+
+  await scheduleAttendanceReminderOnce();
+  return true;
+}
+
+/// 10분 후 출석 알림 1회 예약 (작업 실행 시 다시 10분 후 예약하여 반복)
+Future<void> scheduleAttendanceReminderOnce() async {
+  const delay = Duration(minutes: 10);
+  await Workmanager().registerOneOffTask(
+    kAttendanceReminderUniqueWork,
+    kAttendanceReminderTaskName,
+    initialDelay: delay,
+    existingWorkPolicy: ExistingWorkPolicy.replace,
+    constraints: Constraints(
+      networkType: NetworkType.not_required,
+      requiresBatteryNotLow: false,
+      requiresCharging: false,
+      requiresDeviceIdle: false,
+      requiresStorageNotLow: false,
+    ),
+    inputData: {},
+  );
+}
+
+/// 출석 시 알림 해제
+Future<void> cancelAttendanceReminder() async {
+  await Workmanager().cancelByUniqueName(kAttendanceReminderUniqueWork);
+  final plugin = FlutterLocalNotificationsPlugin();
+  await plugin.cancel(kAttendanceReminderNotificationId);
+}
+
+/// 출석 알림 설정값 저장
+Future<void> setAttendanceReminderEnabled(bool enabled) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setBool(kAttendanceReminderEnabledKey, enabled);
+  if (!enabled) await cancelAttendanceReminder();
+}
+
+/// 출석 알림 설정값 조회
+Future<bool> getAttendanceReminderEnabled() async {
+  final prefs = await SharedPreferences.getInstance();
+  return prefs.getBool(kAttendanceReminderEnabledKey) ?? true;
+}
+
+/// 앱 열릴 때: 18시 이후이고 오늘 미출석이면 10분 후 출석 알림 예약
+Future<void> scheduleAttendanceReminderIfNeeded() async {
+  final enabled = await getAttendanceReminderEnabled();
+  if (!enabled) return;
+  final prefs = await SharedPreferences.getInstance();
+  if (prefs.getString(kAttendanceLastDateKey) == _todayString()) return;
+  final now = DateTime.now();
+  if (now.hour >= 18) await scheduleAttendanceReminderOnce();
+}
+
+// ─── 담배 수집 가능 시간 알림 (09:00, 12:00, 18:00, 22:00 정각) ─────────────────
+
+Future<bool> _handleCigaretteCollectionReminder(Map<String, dynamic>? inputData) async {
+  final hour = inputData?['hour'] as int? ?? 9;
+  final plugin = FlutterLocalNotificationsPlugin();
+  const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+  const initSettings = InitializationSettings(android: androidInit);
+  await plugin.initialize(initSettings);
+
+  const channel = AndroidNotificationChannel(
+    'cigarette_collection_reminder_channel',
+    '담배 수집 알림',
+    description: '담배 수집 가능 시간 알림',
+    importance: Importance.high,
+  );
+  final androidImpl = plugin.resolvePlatformSpecificImplementation<
+      AndroidFlutterLocalNotificationsPlugin>();
+  await androidImpl?.createNotificationChannel(channel);
+
+  await plugin.show(
+    kCigaretteCollectionReminderNotificationIdBase + hour,
+    '담배 수집',
+    '지금부터 20분간 담배를 수집할 수 있는 시간입니다!',
+    const NotificationDetails(
+      android: AndroidNotificationDetails(
+        'cigarette_collection_reminder_channel',
+        '담배 수집 알림',
+        channelDescription: '담배 수집 가능 시간 알림',
+        importance: Importance.high,
+        priority: Priority.high,
+      ),
+    ),
+  );
+
+  await scheduleCigaretteCollectionReminderForHour(hour);
+  return true;
+}
+
+/// 지정 시각(정각) 다음 발생까지 딜레이
+Duration _delayUntilNextHour(int hour) {
+  final now = DateTime.now();
+  var next = DateTime(now.year, now.month, now.day, hour, 0);
+  if (!next.isAfter(now)) {
+    next = next.add(const Duration(days: 1));
+  }
+  final diff = next.difference(now);
+  return Duration(seconds: max(diff.inSeconds, 60));
+}
+
+/// 특정 시각(09/12/18/22)에 담배 수집 알림 1회 예약
+Future<void> scheduleCigaretteCollectionReminderForHour(int hour) async {
+  final delay = _delayUntilNextHour(hour);
+  final uniqueName = '$kCigaretteCollectionReminderUniqueWorkPrefix$hour';
+  await Workmanager().registerOneOffTask(
+    uniqueName,
+    kCigaretteCollectionReminderTaskName,
+    initialDelay: delay,
+    existingWorkPolicy: ExistingWorkPolicy.replace,
+    constraints: Constraints(
+      networkType: NetworkType.not_required,
+      requiresBatteryNotLow: false,
+      requiresCharging: false,
+      requiresDeviceIdle: false,
+      requiresStorageNotLow: false,
+    ),
+    inputData: {'hour': hour},
+  );
+}
+
+/// 앱 실행 시 09:00, 12:00, 18:00, 22:00 담배 수집 알림 예약
+Future<void> scheduleCigaretteCollectionReminders() async {
+  for (final hour in _cigaretteCollectionHours) {
+    await scheduleCigaretteCollectionReminderForHour(hour);
+  }
 }

@@ -21,6 +21,10 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
   late AnimationController _controller;
   Timer? _healTimer;
 
+  // 0% → 100% 완전 회복까지 약 30일 (30 * 24h)
+  // 30일 / 100% = 0.3일 ≒ 7.2시간당 1% 회복
+  static const int _perPercentMs = 30 * 24 * 60 * 60 * 1000 ~/ 100;
+
   @override
   void initState() {
     super.initState();
@@ -33,7 +37,7 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
 
     _initializeLungHealth();
 
-    // ✅ 1시간마다 1%씩 회복
+    // ✅ 주기적으로 경과 시간을 확인해 1개월 기준으로 회복량 계산
     _healTimer = Timer.periodic(const Duration(hours: 1), (_) => _healLung());
   }
 
@@ -43,10 +47,10 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
     final savedHealth = prefs.getInt('lungHealth') ?? 0;
 
     int recoveredHealth = 0;
+    final now = DateTime.now().millisecondsSinceEpoch;
     if (lastTimestamp != null) {
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final diffHours = ((now - lastTimestamp) / 3600000).floor();
-      recoveredHealth = diffHours;
+      final diffMs = now - lastTimestamp;
+      recoveredHealth = (diffMs ~/ _perPercentMs);
     }
 
     lungHealth = (savedHealth + recoveredHealth).clamp(0, 100);
@@ -68,19 +72,28 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
     await syncWidgetData();
   }
 
-  void _healLung() {
-    if (lungHealth < 100) {
-      setState(() {
-        lungHealth++;
-        _controller.animateTo(
-          lungHealth / 100,
-          duration: const Duration(milliseconds: 500),
-        );
-      });
-      _saveLungHealth();
-    } else {
+  Future<void> _healLung() async {
+    if (lungHealth >= 100) {
       _healTimer?.cancel();
+      return;
     }
+
+    final prefs = await SharedPreferences.getInstance();
+    final lastTimestamp = prefs.getInt('lastUpdatedTime') ?? DateTime.now().millisecondsSinceEpoch;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final diffMs = now - lastTimestamp;
+
+    final additional = (diffMs ~/ _perPercentMs);
+    if (additional <= 0) return;
+
+    setState(() {
+      lungHealth = (lungHealth + additional).clamp(0, 100);
+      _controller.animateTo(
+        lungHealth / 100,
+        duration: const Duration(milliseconds: 500),
+      );
+    });
+    await _saveLungHealth();
   }
 
   Future<void> _confirmSmokeAndDamage() async {
@@ -179,11 +192,11 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
       appBar: AppBar(
         title: const Text('나의 폐 건강'),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Center(
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Container(
                 padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 20),
@@ -200,14 +213,14 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      '흡연 시 건강도가 감소하지만, 금연을 유지하면 다시 회복됩니다.',
+                      '흡연 시 건강도가 감소하지만, 금연을 유지하면 다시 회복됩니다.\n약 7시간마다 폐 회복 상태가 1%씩 증가하며, 0%에서 100%까지 약 1개월이 걸립니다.',
                       textAlign: TextAlign.center,
                       style: AppTheme.bodyMedium,
                     ),
                   ],
                 ),
               ),
-
+              const SizedBox(height: 24),
               SizedBox(
                 height: 230,
                 child: Lottie.asset(
@@ -220,7 +233,7 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
                   fit: BoxFit.contain,
                 ),
               ),
-
+              const SizedBox(height: 24),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
                 decoration: BoxDecoration(
@@ -259,22 +272,23 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
                   ],
                 ),
               ),
-
-              ElevatedButton.icon(
-                onPressed: _confirmSmokeAndDamage,
-                icon: const Icon(Icons.smoking_rooms_rounded, size: 20),
-                label: const Text('흡연 (-10%)'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.error,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 28),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+              const SizedBox(height: 24),
+              Center(
+                child: ElevatedButton.icon(
+                  onPressed: _confirmSmokeAndDamage,
+                  icon: const Icon(Icons.smoking_rooms_rounded, size: 20),
+                  label: const Text('흡연 (-10%)'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.error,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 28),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                 ),
               ),
-
-              const SizedBox(height: 10),
+              const SizedBox(height: 16),
             ],
           ),
         ),
