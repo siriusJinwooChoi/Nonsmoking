@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
+import '../ad_manager.dart';
 
 /// 완벽 타이밍: 움직이는 표시가 중앙에 올 때 탭하는 타이밍 게임
 class TimingTapGameScreen extends StatefulWidget {
@@ -24,6 +25,8 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
   int _score = 0;
   int _bestScore = 0;
   String _lastResult = '중앙에 가까울수록 높은 점수!';
+  bool _isBackAdShowing = false;
+  bool _isFailDialogShowing = false;
 
   @override
   void initState() {
@@ -85,8 +88,42 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
     _running = false;
     _timer?.cancel();
     setState(() {
-      _lastResult = '시간 초과! 조금만 더 빨리 눌러 보세요.';
+      _lastResult = '시간 초과! 실패했습니다.';
       _position = 1.0;
+    });
+    _showFailDialog();
+  }
+
+  void _showFailDialog() {
+    if (_isFailDialogShowing) return;
+    _isFailDialogShowing = true;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('게임 실패'),
+        content: const Text(
+          '시간이 초과되어 실패했습니다.\n레벨 1부터 다시 시작합니다.',
+          textAlign: TextAlign.center,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              if (!mounted) return;
+              _resetGame();
+              setState(() {
+                _lastResult = '실패 후 재시작! 다시 도전해보세요.';
+              });
+              _isFailDialogShowing = false;
+            },
+            child: const Text('확인'),
+          ),
+        ],
+      ),
+    ).then((_) {
+      _isFailDialogShowing = false;
     });
   }
 
@@ -138,6 +175,14 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
     });
   }
 
+  void _onBackPressed() {
+    if (_isBackAdShowing) return;
+    _isBackAdShowing = true;
+    AdManager.showAd(onAdClosed: () {
+      if (mounted) Navigator.pop(context);
+    });
+  }
+
   @override
   void dispose() {
     _timer?.cancel();
@@ -146,23 +191,28 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppTheme.surface,
-      appBar: AppBar(
-        title: const Text('완벽 타이밍'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_rounded),
-          onPressed: () => Navigator.pop(context),
-        ),
-        actions: [
-          IconButton(
-            tooltip: '리셋',
-            icon: const Icon(Icons.refresh_rounded),
-            onPressed: _resetGame,
+    return WillPopScope(
+      onWillPop: () async {
+        _onBackPressed();
+        return false;
+      },
+      child: Scaffold(
+        backgroundColor: AppTheme.surface,
+        appBar: AppBar(
+          title: const Text('완벽 타이밍'),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_rounded),
+            onPressed: _onBackPressed,
           ),
-        ],
-      ),
-      body: SafeArea(
+          actions: [
+            IconButton(
+              tooltip: '리셋',
+              icon: const Icon(Icons.refresh_rounded),
+              onPressed: _resetGame,
+            ),
+          ],
+        ),
+        body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -335,6 +385,7 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
           ),
         ),
       ),
+    ),
     );
   }
 

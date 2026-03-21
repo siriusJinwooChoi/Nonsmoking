@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:math';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
+import '../ad_manager.dart';
 
 /// 담배맞추기: 떨어지는 담배 2개를 시간차로 맞추는 게임. 1~100단계, 단계별 속도 증가, 점수·최종단계 기록.
 class CigaretteCatchGameScreen extends StatefulWidget {
@@ -26,11 +28,12 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
 
   double _gameAreaWidth = 300;
   double _gameAreaHeight = 500;
-  static const double _cigaretteWidth = 40;
-  static const double _cigaretteHeight = 24;
+  static const double _cigaretteWidth = 42;
+  static const double _cigaretteHeight = 58;
   static const double _hitZoneHeight = 100;
 
   final List<_FallingCigarette> _cigarettes = [];
+  List<String> _cigaretteAssets = const [];
   int _spawned = 0;
   static const int _cigarettesPerRound = 2;
   double _nextSpawnY = 0;
@@ -39,11 +42,34 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
   static const double _speedPerStage = 0.15;
   int _spawnDelayMs = 800;
   bool _roundInProgress = false;
+  bool _isGameOverAdShowing = false;
 
   @override
   void initState() {
     super.initState();
     _loadBest();
+    _loadCigaretteAssets();
+  }
+
+  Future<void> _loadCigaretteAssets() async {
+    try {
+      final manifestJson = await rootBundle.loadString('AssetManifest.json');
+      final Map<String, dynamic> manifest = json.decode(manifestJson) as Map<String, dynamic>;
+      final assets = manifest.keys
+          .where((k) {
+            if (!k.startsWith('assets/cigarettes/')) return false;
+            final lower = k.toLowerCase();
+            return lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg');
+          })
+          .toList()
+        ..sort();
+      if (!mounted) return;
+      setState(() {
+        _cigaretteAssets = assets;
+      });
+    } catch (_) {
+      // 에셋 로드 실패 시 기존 fallback painter 사용
+    }
   }
 
   Future<void> _loadBest() async {
@@ -69,6 +95,7 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
       _roundInProgress = true;
       _fallSpeed = _baseSpeed + (_stage - 1) * _speedPerStage;
       _spawnDelayMs = (800 - (_stage - 1) * 6).clamp(200, 800);
+      _isGameOverAdShowing = false;
     });
     _spawnNext();
     _startLoop();
@@ -114,7 +141,10 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
       return;
     }
     final x = 20 + _random.nextDouble() * (_gameAreaWidth - 40 - _cigaretteWidth);
-    _cigarettes.add(_FallingCigarette(x: x, y: -_cigaretteHeight));
+    final assetPath = _cigaretteAssets.isEmpty
+        ? null
+        : _cigaretteAssets[_random.nextInt(_cigaretteAssets.length)];
+    _cigarettes.add(_FallingCigarette(x: x, y: -_cigaretteHeight, assetPath: assetPath));
     _spawned++;
     if (_spawned < _cigarettesPerRound) {
       Future.delayed(Duration(milliseconds: _spawnDelayMs), _spawnNext);
@@ -156,7 +186,11 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
   void _endGame() async {
     _timer?.cancel();
     await _saveBest();
-    if (mounted) setState(() => _gameOver = true);
+    if (!mounted) return;
+    setState(() => _gameOver = true);
+    if (_isGameOverAdShowing) return;
+    _isGameOverAdShowing = true;
+    AdManager.showAd(onAdClosed: () {});
   }
 
   @override
@@ -261,7 +295,7 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
                                       top: c.y,
                                       width: _cigaretteWidth,
                                       height: _cigaretteHeight,
-                                      child: _buildCigarette(),
+                                      child: _buildCigarette(c.assetPath),
                                     ),
                                 ],
                               ),
@@ -340,17 +374,31 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
     );
   }
 
-  Widget _buildCigarette() {
-    return CustomPaint(
-      size: const Size(_cigaretteWidth, _cigaretteHeight),
-      painter: _CigarettePainter(),
+  Widget _buildCigarette(String? assetPath) {
+    if (assetPath == null) {
+      return CustomPaint(
+        size: const Size(_cigaretteWidth, _cigaretteHeight),
+        painter: _CigarettePainter(),
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(4),
+      child: Image.asset(
+        assetPath,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => CustomPaint(
+          size: const Size(_cigaretteWidth, _cigaretteHeight),
+          painter: _CigarettePainter(),
+        ),
+      ),
     );
   }
 }
 
 class _FallingCigarette {
   double x, y;
-  _FallingCigarette({required this.x, required this.y});
+  String? assetPath;
+  _FallingCigarette({required this.x, required this.y, this.assetPath});
 }
 
 class _CigarettePainter extends CustomPainter {

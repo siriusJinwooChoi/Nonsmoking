@@ -108,6 +108,7 @@ class _WordGameScreenState extends State<WordGameScreen> {
   List<List<List<int>>> _foundPaths = []; // 맞춘 단어별 경로 → 그리드에 표시 유지
   List<List<String>> _grid = [];
   List<List<int>> _selectedPath = [];
+  bool _isLevelAdShowing = false;
 
   @override
   void initState() {
@@ -330,8 +331,11 @@ class _WordGameScreenState extends State<WordGameScreen> {
   void _goToNextLevel() {
     final shouldShowAd = _level % 5 == 0;
     if (shouldShowAd) {
+      if (_isLevelAdShowing) return;
+      _isLevelAdShowing = true;
       AdManager.showAd(onAdClosed: () {
         if (!mounted) return;
+        _isLevelAdShowing = false;
         setState(() => _level = (_level + 1).clamp(1, 100));
         _saveLevel();
         _buildPuzzle();

@@ -213,9 +213,18 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      '흡연 시 건강도가 감소하지만, 금연을 유지하면 다시 회복됩니다.\n약 7시간마다 폐 회복 상태가 1%씩 증가하며, 0%에서 100%까지 약 1개월이 걸립니다.',
+                      '흡연 시 건강도가 감소하지만, 금연을 유지하면 다시 회복됩니다.',
                       textAlign: TextAlign.center,
                       style: AppTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      '(※ 본 앱의 폐 건강 수치는 가상/참고용이며 의학적 진단이 아닙니다.)',
+                      textAlign: TextAlign.center,
+                      style: AppTheme.labelMedium.copyWith(
+                        fontSize: 12,
+                        color: AppTheme.textMuted.withOpacity(0.9),
+                      ),
                     ),
                   ],
                 ),

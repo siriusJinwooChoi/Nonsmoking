@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import '../notifications/daily_reminder_worker.dart';
+import '../ad_manager.dart';
 
 /// 출석체크 1~28일, 7x4 그리드. 금연코인 10/20(7,14,21,28일).
 const String kAttendanceStreakDayKey = 'attendance_streak_day';
@@ -63,6 +64,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   bool _loading = true;
   int? _justEarnedCoins;
   int? _justEarnedDay;
+  bool _attendedThisSession = false;
+  bool _isClosingWithAd = false;
 
   @override
   void initState() {
@@ -119,6 +122,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       _coins = newCoins;
       _justEarnedCoins = coinsToAdd;
       _justEarnedDay = day;
+      _attendedThisSession = true;
     });
     Future.delayed(const Duration(milliseconds: 1800), () {
       if (!mounted) return;
@@ -174,7 +178,17 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                       ),
                       IconButton(
                         icon: const Icon(Icons.close_rounded, color: Colors.white, size: 28),
-                        onPressed: widget.onClose,
+                        onPressed: () {
+                          if (_attendedThisSession) {
+                            if (_isClosingWithAd) return;
+                            _isClosingWithAd = true;
+                            AdManager.showAd(onAdClosed: () {
+                              if (mounted) widget.onClose();
+                            });
+                          } else {
+                            widget.onClose();
+                          }
+                        },
                       ),
                     ],
                   ),

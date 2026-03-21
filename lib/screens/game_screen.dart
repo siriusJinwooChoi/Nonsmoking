@@ -24,6 +24,7 @@ class _GameScreenState extends State<GameScreen> {
   int? lastTapped;
 
   bool _loggedStart = false;
+  bool _isShowingClearAd = false;
 
   @override
   void initState() {
@@ -129,12 +130,17 @@ class _GameScreenState extends State<GameScreen> {
         actions: [
           TextButton(
             onPressed: () {
+              if (_isShowingClearAd) return;
+              _isShowingClearAd = true;
               Navigator.pop(context);
               AdManager.showAd(onAdClosed: () {
-                if (context.mounted) resetGame();
+                if (context.mounted) {
+                  _isShowingClearAd = false;
+                  resetGame();
+                }
               });
             },
-            child: const Text('다시 도전하기'),
+            child: const Text('확인'),
           ),
         ],
       ),

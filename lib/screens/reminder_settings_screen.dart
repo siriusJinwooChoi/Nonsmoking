@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../notifications/daily_reminder_worker.dart';
 import '../theme/app_theme.dart';
+import '../ad_manager.dart';
 
 /// 알림을 여러 개 추가/삭제할 수 있는 화면
 class ReminderSettingsScreen extends StatefulWidget {
@@ -20,6 +21,7 @@ class ReminderSettingsScreen extends StatefulWidget {
 
 class _ReminderSettingsScreenState extends State<ReminderSettingsScreen> {
   late List<TimeOfDay> _times;
+  bool _isLeaving = false;
 
   @override
   void initState() {
@@ -87,14 +89,41 @@ class _ReminderSettingsScreenState extends State<ReminderSettingsScreen> {
     }
   }
 
+  void _leaveWithAd() {
+    if (_isLeaving) return;
+    _isLeaving = true;
+    AdManager.showAd(onAdClosed: () {
+      if (!mounted) return;
+      Navigator.pop(context);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppTheme.surface,
-      appBar: AppBar(
-        title: const Text('알림 설정'),
-      ),
-      body: ListView(
+    return WillPopScope(
+      onWillPop: () async {
+        if (_times.isNotEmpty) {
+          _leaveWithAd();
+          return false;
+        }
+        return true;
+      },
+      child: Scaffold(
+        backgroundColor: AppTheme.surface,
+        appBar: AppBar(
+          title: const Text('알림 설정'),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_rounded),
+            onPressed: () {
+              if (_times.isNotEmpty) {
+                _leaveWithAd();
+              } else {
+                Navigator.pop(context);
+              }
+            },
+          ),
+        ),
+        body: ListView(
         padding: EdgeInsets.only(
           left: 16,
           right: 16,
@@ -151,10 +180,11 @@ class _ReminderSettingsScreenState extends State<ReminderSettingsScreen> {
             }),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _addReminder,
-        child: const Icon(Icons.add_rounded),
-        tooltip: '알림 추가',
+        floatingActionButton: FloatingActionButton(
+          onPressed: _addReminder,
+          child: const Icon(Icons.add_rounded),
+          tooltip: '알림 추가',
+        ),
       ),
     );
   }
