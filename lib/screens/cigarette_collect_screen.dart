@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import 'cigarette_catalog_screen.dart';
 import 'attendance_screen.dart';
+import '../supabase/supabase_sync_service.dart';
 
 /// 담배 수집 게임 화면
 class CigaretteCollectScreen extends StatefulWidget {
@@ -259,6 +260,7 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
     final list = prefs.getStringList(_collectedKey) ?? <String>[];
     final set = list.toSet()..add(asset);
     await prefs.setStringList(_collectedKey, set.toList()..sort());
+    await SupabaseSyncService.pushLocalToRemoteIfEligible();
   }
 
   /// 이번 수집 구간 사용 완료 처리 (성공 또는 5번 실패 시)
@@ -417,6 +419,7 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
               const SizedBox(height: 16),
               Expanded(
                 child: Stack(
+                  clipBehavior: Clip.none,
                   children: [
                     Container(
                       width: double.infinity,
@@ -445,12 +448,7 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
                           width: 1,
                         ),
                       ),
-                      padding: EdgeInsets.fromLTRB(
-                        20,
-                        28,
-                        20,
-                        (_isInCollectionWindow && !_hasUsedCurrentWindow) ? 172 : 24,
-                      ),
+                      padding: const EdgeInsets.fromLTRB(20, 28, 20, 20),
                       child: Column(
                         children: [
                           Expanded(
@@ -559,135 +557,135 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
                                         ),
                             ),
                           ),
+                          if (!_caught && !_disappeared && _isInCollectionWindow && !_hasUsedCurrentWindow)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 10),
+                              child: GestureDetector(
+                                onTapDown: (_) => _onPressStart(),
+                                onTapUp: (_) => _onPressEnd(),
+                                onTapCancel: _onPressEnd,
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      _status,
+                                      textAlign: TextAlign.center,
+                                      style: AppTheme.bodyMedium,
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      _caught
+                                          ? '다음 기회에 또 도전해보세요.'
+                                          : _disappeared
+                                              ? ''
+                                              : '남은 시도: ${_maxAttempts - _attempts}회',
+                                      textAlign: TextAlign.center,
+                                      style: AppTheme.bodyMedium.copyWith(
+                                        color: _caught
+                                            ? AppTheme.success
+                                            : _disappeared
+                                                ? AppTheme.textMuted
+                                                : AppTheme.primary,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 12),
+                                    if (_pressingButton) ...[
+                                      Text(
+                                        '수집중...',
+                                        style: AppTheme.bodyMedium.copyWith(
+                                          fontSize: 13,
+                                          color: AppTheme.primary,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      SizedBox(
+                                        width: 120,
+                                        child: ClipRRect(
+                                          borderRadius: BorderRadius.circular(4),
+                                          child: LinearProgressIndicator(
+                                            value: _pressProgress,
+                                            minHeight: 4,
+                                            backgroundColor: AppTheme.textMuted.withOpacity(0.2),
+                                            valueColor: AlwaysStoppedAnimation<Color>(
+                                              AppTheme.primary,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 10),
+                                    ],
+                                    AnimatedScale(
+                                      scale: _pressingButton ? 0.94 : 1.0,
+                                      duration: const Duration(milliseconds: 120),
+                                      child: Lottie.asset(
+                                        'assets/lottie/zippo.json',
+                                        width: 128,
+                                        height: 128,
+                                        fit: BoxFit.contain,
+                                        repeat: true,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
                         ],
                       ),
                     ),
                     if (_showEffect)
-                      FadeTransition(
-                        opacity:
-                            Tween<double>(begin: 0.0, end: 1.0).animate(_effectController),
-                        child: Center(
-                          child: Container(
-                            width: 260,
-                            height: 260,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              gradient: RadialGradient(
-                                colors: _effectSuccess
-                                    ? [
-                                        AppTheme.success.withOpacity(0.35),
-                                        AppTheme.success.withOpacity(0.05),
-                                        Colors.transparent,
-                                      ]
-                                    : [
-                                        AppTheme.error.withOpacity(0.3),
-                                        AppTheme.error.withOpacity(0.05),
-                                        Colors.transparent,
-                                      ],
-                                stops: const [0.0, 0.55, 1.0],
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: FadeTransition(
+                            opacity:
+                                Tween<double>(begin: 0.0, end: 1.0).animate(_effectController),
+                            child: Center(
+                              child: Container(
+                                width: 260,
+                                height: 260,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  gradient: RadialGradient(
+                                    colors: _effectSuccess
+                                        ? [
+                                            AppTheme.success.withOpacity(0.35),
+                                            AppTheme.success.withOpacity(0.05),
+                                            Colors.transparent,
+                                          ]
+                                        : [
+                                            AppTheme.error.withOpacity(0.3),
+                                            AppTheme.error.withOpacity(0.05),
+                                            Colors.transparent,
+                                          ],
+                                    stops: const [0.0, 0.55, 1.0],
+                                  ),
+                                ),
+                                child: _effectSuccess
+                                    ? Center(
+                                        child: ScaleTransition(
+                                          scale: Tween<double>(begin: 0.8, end: 1.1)
+                                              .animate(CurvedAnimation(
+                                            parent: _effectController,
+                                            curve: Curves.elasticOut,
+                                          )),
+                                          child: Container(
+                                            width: 80,
+                                            height: 80,
+                                            decoration: const BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              color: Colors.white,
+                                            ),
+                                            child: Icon(
+                                              Icons.emoji_events_rounded,
+                                              color: AppTheme.success,
+                                              size: 42,
+                                            ),
+                                          ),
+                                        ),
+                                      )
+                                    : const SizedBox.shrink(),
                               ),
-                            ),
-                            child: _effectSuccess
-                                ? Center(
-                                    child: ScaleTransition(
-                                      scale: Tween<double>(begin: 0.8, end: 1.1)
-                                          .animate(CurvedAnimation(
-                                        parent: _effectController,
-                                        curve: Curves.elasticOut,
-                                      )),
-                                      child: Container(
-                                        width: 80,
-                                        height: 80,
-                                        decoration: const BoxDecoration(
-                                          shape: BoxShape.circle,
-                                          color: Colors.white,
-                                        ),
-                                        child: Icon(
-                                          Icons.emoji_events_rounded,
-                                          color: AppTheme.success,
-                                          size: 42,
-                                        ),
-                                      ),
-                                    ),
-                                  )
-                                : const SizedBox.shrink(),
-                          ),
-                        ),
-                      ),
-                    // 하단: 상태 문구 + 남은 시도 + (누르는 중일 때) 누르는 중/게이지 + 라이터 (한 Column으로 배치해 겹침 방지)
-                    if (!_caught && !_disappeared && _isInCollectionWindow && !_hasUsedCurrentWindow)
-                      Align(
-                        alignment: Alignment.bottomCenter,
-                        child: Padding(
-                          padding: const EdgeInsets.only(bottom: 6, left: 20, right: 20),
-                          child: GestureDetector(
-                            onTapDown: (_) => _onPressStart(),
-                            onTapUp: (_) => _onPressEnd(),
-                            onTapCancel: _onPressEnd,
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  _status,
-                                  textAlign: TextAlign.center,
-                                  style: AppTheme.bodyMedium,
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  _caught
-                                      ? '다음 기회에 또 도전해보세요.'
-                                      : _disappeared
-                                          ? ''
-                                          : '남은 시도: ${_maxAttempts - _attempts}회',
-                                  textAlign: TextAlign.center,
-                                  style: AppTheme.bodyMedium.copyWith(
-                                    color: _caught
-                                        ? AppTheme.success
-                                        : _disappeared
-                                            ? AppTheme.textMuted
-                                            : AppTheme.primary,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                                if (_pressingButton) ...[
-                                  Text(
-                                    '누르는 중...',
-                                    style: AppTheme.bodyMedium.copyWith(
-                                      fontSize: 13,
-                                      color: AppTheme.primary,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  SizedBox(
-                                    width: 120,
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(4),
-                                      child: LinearProgressIndicator(
-                                        value: _pressProgress,
-                                        minHeight: 4,
-                                        backgroundColor: AppTheme.textMuted.withOpacity(0.2),
-                                        valueColor: AlwaysStoppedAnimation<Color>(
-                                          AppTheme.primary,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 10),
-                                ],
-                                AnimatedScale(
-                                  scale: _pressingButton ? 0.94 : 1.0,
-                                  duration: const Duration(milliseconds: 120),
-                                  child: Lottie.asset(
-                                    'assets/lottie/zippo.json',
-                                    width: 148,
-                                    height: 148,
-                                    fit: BoxFit.contain,
-                                    repeat: true,
-                                  ),
-                                ),
-                              ],
                             ),
                           ),
                         ),

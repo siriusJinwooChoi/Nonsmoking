@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:math';
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -43,7 +44,9 @@ void callbackDispatcher() {
   Workmanager().executeTask((task, inputData) async {
     WidgetsFlutterBinding.ensureInitialized();
 
-    debugPrint("✅ WorkManager fired: task=$task, input=$inputData");
+    if (kDebugMode) {
+      debugPrint('WorkManager fired: task=$task, input=$inputData');
+    }
 
     if (task == kReasonReminderTaskName) {
       return _handleReasonReminder(inputData);

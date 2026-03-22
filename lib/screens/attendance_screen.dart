@@ -8,6 +8,8 @@ import '../ad_manager.dart';
 const String kAttendanceStreakDayKey = 'attendance_streak_day';
 const String kAttendanceLastDateKey = 'attendance_last_date';
 const String kGoldenCoinsKey = 'golden_coins';
+/// 이 날짜(yyyy-MM-dd)에 "오늘 하루 출석 화면 안 보기"를 선택한 경우, 당일 재실행 시 출석 오버레이 생략
+const String kAttendanceSkipOverlayDateKey = 'attendance_skip_overlay_date';
 const int kAttendanceDays = 28;
 const int kCoinsPerDay = 10;
 const int kCoinsMilestone = 20;
@@ -45,11 +47,23 @@ Future<bool> hasAttendedToday() async {
   return last == _todayString();
 }
 
+/// 당일 "출석 화면 안 보기"를 선택한 경우 true (메인에서 오버레이 생략)
+Future<bool> shouldSkipAttendanceOverlayToday() async {
+  final prefs = await SharedPreferences.getInstance();
+  return prefs.getString(kAttendanceSkipOverlayDateKey) == _todayString();
+}
+
 /// 출석 모달: 앱 실행 시 메인 전에 표시. 7x4 그리드, 순차 출석, 금연코인.
 class AttendanceScreen extends StatefulWidget {
   final VoidCallback onClose;
+  /// 출석 저장 직후 호출(예: Supabase push). 순환 import 방지용 콜백.
+  final Future<void> Function()? onAttendanceRecorded;
 
-  const AttendanceScreen({super.key, required this.onClose});
+  const AttendanceScreen({
+    super.key,
+    required this.onClose,
+    this.onAttendanceRecorded,
+  });
 
   @override
   State<AttendanceScreen> createState() => _AttendanceScreenState();
@@ -66,6 +80,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   int? _justEarnedDay;
   bool _attendedThisSession = false;
   bool _isClosingWithAd = false;
+  /// 출석 처리 후 당일 다시 출석창을 띄우지 않기 (닫을 때 prefs 저장)
+  bool _hideOverlayRestOfDay = false;
 
   @override
   void initState() {
@@ -115,6 +131,9 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
     await cancelAttendanceReminder();
 
+    final sync = widget.onAttendanceRecorded;
+    if (sync != null) await sync();
+
     if (!mounted) return;
     setState(() {
       _streakDay = day == 28 ? 1 : day + 1;
@@ -123,6 +142,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       _justEarnedCoins = coinsToAdd;
       _justEarnedDay = day;
       _attendedThisSession = true;
+      _hideOverlayRestOfDay = false;
     });
     Future.delayed(const Duration(milliseconds: 1800), () {
       if (!mounted) return;
@@ -138,6 +158,22 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         backgroundColor: AppTheme.primary,
       ),
     );
+  }
+
+  Future<void> _closeAttendance() async {
+    if (_hideOverlayRestOfDay) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(kAttendanceSkipOverlayDateKey, _todayString());
+    }
+    if (_attendedThisSession) {
+      if (_isClosingWithAd) return;
+      _isClosingWithAd = true;
+      AdManager.showAd(onAdClosed: () {
+        if (mounted) widget.onClose();
+      });
+    } else {
+      widget.onClose();
+    }
   }
 
   @override
@@ -178,17 +214,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                       ),
                       IconButton(
                         icon: const Icon(Icons.close_rounded, color: Colors.white, size: 28),
-                        onPressed: () {
-                          if (_attendedThisSession) {
-                            if (_isClosingWithAd) return;
-                            _isClosingWithAd = true;
-                            AdManager.showAd(onAdClosed: () {
-                              if (mounted) widget.onClose();
-                            });
-                          } else {
-                            widget.onClose();
-                          }
-                        },
+                        onPressed: () => _closeAttendance(),
                       ),
                     ],
                   ),
@@ -238,14 +264,56 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                     },
                   ),
                 ),
-                if (alreadyToday)
+                if (alreadyToday || _attendedThisSession)
                   Padding(
-                    padding: const EdgeInsets.only(bottom: 24),
-                    child: Text(
-                      '오늘 출석을 완료했어요!',
-                      style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 13),
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                    child: Column(
+                      children: [
+                        if (alreadyToday)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 10),
+                            child: Text(
+                              '오늘 출석을 완료했어요!',
+                              style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 13),
+                            ),
+                          ),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: Checkbox(
+                                value: _hideOverlayRestOfDay,
+                                onChanged: (v) {
+                                  setState(() => _hideOverlayRestOfDay = v ?? false);
+                                },
+                                activeColor: const Color(0xFF5FC3E8),
+                                side: const BorderSide(color: Colors.white54, width: 1.5),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: () => setState(() {
+                                  _hideOverlayRestOfDay = !_hideOverlayRestOfDay;
+                                }),
+                                child: Text(
+                                  '하루 동안 출석체크 화면 보지 않기',
+                                  style: TextStyle(
+                                    color: Colors.white.withOpacity(0.92),
+                                    fontSize: 13,
+                                    height: 1.35,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
+                const SizedBox(height: 8),
               ],
             ),
             if (_justEarnedCoins != null && _justEarnedDay != null)

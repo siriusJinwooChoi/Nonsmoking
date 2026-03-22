@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'theme/app_theme.dart';
@@ -35,9 +36,15 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'firebase_options.dart';
-import '../analytics/app_analytics.dart';
+import 'analytics/app_analytics.dart';
 
 import 'dart:async';
+
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import 'auth/auth_gate.dart';
+import 'supabase/supabase_config.dart';
+import 'supabase/supabase_sync_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -66,15 +73,32 @@ void main() async {
     tzData.initializeTimeZones();
     tz.setLocalLocation(tz.getLocation('Asia/Seoul'));
 
+    if (SupabaseConfig.isConfigured) {
+      await Supabase.initialize(
+        url: SupabaseConfig.url,
+        anonKey: SupabaseConfig.anonKey,
+        authOptions: const FlutterAuthClientOptions(
+          authFlowType: AuthFlowType.pkce,
+        ),
+      );
+    }
+    await SupabaseSyncService.runStartupPushOnlyIfEligible();
+
     runApp(const QuitSmokingApp());
   }, (error, stack) {
     FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
   });
 }
 
-class QuitSmokingApp extends StatelessWidget {
+class QuitSmokingApp extends StatefulWidget {
   const QuitSmokingApp({super.key});
 
+  @override
+  State<QuitSmokingApp> createState() => _QuitSmokingAppState();
+}
+
+class _QuitSmokingAppState extends State<QuitSmokingApp>
+    with WidgetsBindingObserver {
   Future<bool> checkIfConfigured() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool('isConfigured') ?? false;
@@ -90,59 +114,68 @@ class QuitSmokingApp extends StatelessWidget {
   }
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) {
+      unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return FutureBuilder<bool>(
-      future: checkIfConfigured(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return MaterialApp(
-            debugShowCheckedModeBanner: false,
-            theme: AppTheme.lightTheme,
-            home: const Scaffold(
-              body: Center(child: CircularProgressIndicator()),
-            ),
-          );
-        }
-
-        final isConfigured = snapshot.data!;
-        if (!isConfigured) {
-          return MaterialApp(
-            debugShowCheckedModeBanner: false,
-            theme: AppTheme.lightTheme,
-            home: const IntroFlowWrapper(),
-          );
-        }
-
-        return FutureBuilder<Map<String, int>>(
-          future: loadUserSettings(),
-          builder: (context, userSnapshot) {
-            if (!userSnapshot.hasData) {
-              return MaterialApp(
-                debugShowCheckedModeBanner: false,
-                theme: AppTheme.lightTheme,
-                home: const Scaffold(
-                  body: Center(child: CircularProgressIndicator()),
-                ),
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: '금연뱅크',
+      theme: AppTheme.lightTheme,
+      navigatorObservers: [
+        FirebaseAnalyticsObserver(analytics: FirebaseAnalytics.instance),
+      ],
+      home: AuthGate(
+        child: FutureBuilder<bool>(
+          future: checkIfConfigured(),
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) {
+              return const Scaffold(
+                body: Center(child: CircularProgressIndicator()),
               );
             }
 
-            final settings = userSnapshot.data!;
-            return MaterialApp(
-              debugShowCheckedModeBanner: false,
-              title: '금연뱅크',
-              theme: AppTheme.lightTheme,
-              home: AttendanceGate(
-                dailyCigarettes: settings['dailyCigarettes']!,
-                cigarettesPerPack: settings['cigarettesPerPack']!,
-                pricePerPack: settings['pricePerPack']!,
-              ),
-              navigatorObservers: [
-                FirebaseAnalyticsObserver(analytics: FirebaseAnalytics.instance),
-              ],
+            final isConfigured = snapshot.data!;
+            if (!isConfigured) {
+              return const IntroFlowWrapper();
+            }
+
+            return FutureBuilder<Map<String, int>>(
+              future: loadUserSettings(),
+              builder: (context, userSnapshot) {
+                if (!userSnapshot.hasData) {
+                  return const Scaffold(
+                    body: Center(child: CircularProgressIndicator()),
+                  );
+                }
+
+                final settings = userSnapshot.data!;
+                return AttendanceGate(
+                  dailyCigarettes: settings['dailyCigarettes']!,
+                  cigarettesPerPack: settings['cigarettesPerPack']!,
+                  pricePerPack: settings['pricePerPack']!,
+                );
+              },
             );
           },
-        );
-      },
+        ),
+      ),
     );
   }
 }
@@ -222,6 +255,9 @@ class _IntroFlowWrapperState extends State<IntroFlowWrapper> {
             await prefs.setInt('dailyCigarettes', dailyCigarettes);
             await prefs.setInt('cigarettesPerPack', cigarettesPerPack);
             await prefs.setInt('pricePerPack', pricePerPack);
+            await prefs.setInt('duration_days', durationDays);
+
+            unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
 
             if (!mounted) return;
 
@@ -277,8 +313,15 @@ class _AttendanceGateState extends State<AttendanceGate> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _applySkipOverlayFlag());
     scheduleAttendanceReminderIfNeeded();
     scheduleCigaretteCollectionReminders();
+  }
+
+  Future<void> _applySkipOverlayFlag() async {
+    final skip = await shouldSkipAttendanceOverlayToday();
+    if (!mounted) return;
+    if (skip) setState(() => _showAttendance = false);
   }
 
   void _onAttendanceClose() {
@@ -308,6 +351,7 @@ class _AttendanceGateState extends State<AttendanceGate> {
         Positioned.fill(
           child: AttendanceScreen(
             onClose: _onAttendanceClose,
+            onAttendanceRecorded: SupabaseSyncService.pushLocalToRemoteIfEligible,
           ),
         ),
       ],
@@ -375,7 +419,9 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
         },
         onAdFailedToLoad: (error) {
           _interstitialAd = null;
-          debugPrint("Interstitial failed to load: $error");
+          if (kDebugMode) {
+            debugPrint('Interstitial failed to load: $error');
+          }
         },
       ),
     );
@@ -385,8 +431,9 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
     _clickCount++;
     await _saveClickCount();
 
-    // ✅ 디버그 확인용(원하면 삭제)
-    debugPrint("menu click=$_clickCount, adLoaded=${_interstitialAd != null}");
+    if (kDebugMode) {
+      debugPrint('menu click=$_clickCount, adLoaded=${_interstitialAd != null}');
+    }
 
     // ✅ 20번마다 광고
     if (_clickCount % _showEvery == 0 && _interstitialAd != null) {

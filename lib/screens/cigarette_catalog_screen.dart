@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../theme/app_theme.dart';
+import '../supabase/supabase_sync_service.dart';
 
 class CigaretteCatalogScreen extends StatefulWidget {
   const CigaretteCatalogScreen({super.key});
@@ -80,6 +81,7 @@ class _CigaretteCatalogScreenState extends State<CigaretteCatalogScreen> {
     if (confirmed != true) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_collectedKey);
+    await SupabaseSyncService.pushLocalToRemoteIfEligible();
     if (!mounted) return;
     setState(() {
       _collected = {};

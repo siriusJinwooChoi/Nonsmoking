@@ -1,5 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+import '../auth/auth_service.dart';
+import '../supabase/supabase_config.dart';
+import '../supabase/supabase_sync_service.dart';
 import '../theme/app_theme.dart';
 import '../notifications/daily_reminder_worker.dart';
 import 'app_info_screen.dart';
@@ -285,10 +291,50 @@ class _SettingsScreenState extends State<SettingsScreen> {
             subtitle: '서비스 이용약관 보기',
             onTap: () => _openTermsOfService(context),
           ),
+          if (SupabaseConfig.isConfigured) ...[
+            const SizedBox(height: 24),
+            _sectionTitle('계정'),
+            _settingsTile(
+              context,
+              icon: Icons.logout_rounded,
+              title: '로그아웃',
+              subtitle: '이 기기에서 로그아웃 합니다.',
+              titleColor: AppTheme.error,
+              onTap: () => _confirmSignOut(context),
+            ),
+          ],
         ],
       ),
     );
   }
+
+  Future<void> _confirmSignOut(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('로그아웃'),
+        content: const Text('로그아웃하면 이 계정으로 동기화된 데이터는 다음 로그인 때 다시 불러올 수 있습니다.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('로그아웃'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
+    await AuthService.signOut();
+    if (!context.mounted) return;
+    // 설정 화면이 스택에 남아 로그인 화면이 가려지는 것을 방지 (AuthGate는 세션만 없애고 라우트는 유지될 수 있음)
+    Navigator.of(context).popUntil((route) => route.isFirst);
+}
 
   Widget _sectionTitle(String text) {
     return Padding(

@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import '../ad_manager.dart';
+import '../supabase/supabase_sync_service.dart';
 
 /// 담배맞추기: 떨어지는 담배 2개를 시간차로 맞추는 게임. 1~100단계, 단계별 속도 증가, 점수·최종단계 기록.
 class CigaretteCatchGameScreen extends StatefulWidget {
@@ -186,6 +187,7 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
   void _endGame() async {
     _timer?.cancel();
     await _saveBest();
+    await SupabaseSyncService.pushLocalToRemoteIfEligible();
     if (!mounted) return;
     setState(() => _gameOver = true);
     if (_isGameOverAdShowing) return;
