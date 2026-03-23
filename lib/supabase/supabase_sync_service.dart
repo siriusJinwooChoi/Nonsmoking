@@ -155,18 +155,29 @@ abstract final class SupabaseSyncService {
     return row['is_configured'] as bool? ?? false;
   }
 
+  /// 한 테이블 upsert 실패 시 전체가 중단되면 코인 등 뒤쪽 테이블이 영원히 안 올라갈 수 있어 분리 처리.
   static Future<void> _pushAll(SharedPreferences prefs) async {
     final uid = Supabase.instance.client.auth.currentUser!.id;
     final client = Supabase.instance.client;
 
-    await _upsertUserSettings(client, uid, prefs);
-    await _upsertQuitProgress(client, uid, prefs);
-    await _upsertReasons(client, uid, prefs);
-    await _upsertNotificationSettings(client, uid, prefs);
-    await _upsertCoinsAndAttendance(client, uid, prefs);
-    await _upsertTreeProgress(client, uid, prefs);
-    await _upsertCigaretteCollection(client, uid, prefs);
-    await _upsertGameStats(client, uid, prefs);
+    Future<void> run(String label, Future<void> Function() op) async {
+      try {
+        await op();
+      } catch (e, st) {
+        if (kDebugMode) {
+          debugPrint('SupabaseSyncService._pushAll[$label]: $e\n$st');
+        }
+      }
+    }
+
+    await run('user_settings', () => _upsertUserSettings(client, uid, prefs));
+    await run('quit_progress', () => _upsertQuitProgress(client, uid, prefs));
+    await run('reasons', () => _upsertReasons(client, uid, prefs));
+    await run('notification_settings', () => _upsertNotificationSettings(client, uid, prefs));
+    await run('coins_and_attendance', () => _upsertCoinsAndAttendance(client, uid, prefs));
+    await run('tree_progress', () => _upsertTreeProgress(client, uid, prefs));
+    await run('cigarette_collection', () => _upsertCigaretteCollection(client, uid, prefs));
+    await run('game_stats', () => _upsertGameStats(client, uid, prefs));
   }
 
   static Future<void> _pullAll(SharedPreferences prefs) async {

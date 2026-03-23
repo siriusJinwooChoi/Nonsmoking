@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../supabase/supabase_config.dart';
 import '../theme/app_theme.dart';
+import 'terms_detail_actions.dart';
 
 /// 서비스 이용 필수 동의 (참고 UI: 체크리스트 + 하단 검정 버튼).
 class TermsAcceptanceScreen extends StatefulWidget {
@@ -108,10 +109,30 @@ class _TermsAcceptanceScreenState extends State<TermsAcceptanceScreen> {
                       child: ListView(
                         padding: const EdgeInsets.symmetric(horizontal: 16),
                         children: [
-                          _tile('이용 약관 동의', _t1, (v) => setState(() => _t1 = v)),
-                          _tile('개인정보 수집 및 이용 동의', _t2, (v) => setState(() => _t2 = v)),
-                          _tile('민감정보 수집 및 이용 동의', _t3, (v) => setState(() => _t3 = v)),
-                          _tile('만 14세 이상입니다', _t4, (v) => setState(() => _t4 = v)),
+                          _tile(
+                            '이용 약관 동의',
+                            _t1,
+                            (v) => setState(() => _t1 = v),
+                            TermsDetailActions.openTermsOfService,
+                          ),
+                          _tile(
+                            '개인정보 수집 및 이용 동의',
+                            _t2,
+                            (v) => setState(() => _t2 = v),
+                            TermsDetailActions.openPrivacyPolicy,
+                          ),
+                          _tile(
+                            '민감정보 수집 및 이용 동의',
+                            _t3,
+                            (v) => setState(() => _t3 = v),
+                            TermsDetailActions.openSensitiveInfoNotice,
+                          ),
+                          _tile(
+                            '만 14세 이상입니다',
+                            _t4,
+                            (v) => setState(() => _t4 = v),
+                            TermsDetailActions.openAgeNotice,
+                          ),
                         ],
                       ),
                     ),
@@ -164,39 +185,59 @@ class _TermsAcceptanceScreenState extends State<TermsAcceptanceScreen> {
     );
   }
 
-  Widget _tile(String label, bool value, ValueChanged<bool> onChanged) {
+  Widget _tile(
+    String label,
+    bool value,
+    ValueChanged<bool> onChanged,
+    Future<void> Function(BuildContext context) onOpenDetail,
+  ) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Material(
         color: const Color(0xFFF9FAFB),
         borderRadius: BorderRadius.circular(14),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: () => onChanged(!value),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-            child: Row(
-              children: [
-                Icon(
-                  value ? Icons.check_circle : Icons.circle_outlined,
-                  color: value ? AppTheme.primary : AppTheme.textMuted,
-                  size: 26,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    label,
-                    style: GoogleFonts.notoSansKr(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w500,
-                      color: AppTheme.textPrimary,
-                    ),
+        child: Row(
+          children: [
+            Expanded(
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: () => onChanged(!value),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                  child: Row(
+                    children: [
+                      Icon(
+                        value ? Icons.check_circle : Icons.circle_outlined,
+                        color: value ? AppTheme.primary : AppTheme.textMuted,
+                        size: 26,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          label,
+                          style: GoogleFonts.notoSansKr(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500,
+                            color: AppTheme.textPrimary,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                Icon(Icons.chevron_right_rounded, color: Colors.grey.shade400),
-              ],
+              ),
             ),
-          ),
+            IconButton(
+              tooltip: '내용 보기',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => onOpenDetail(context),
+              icon: Icon(
+                Icons.chevron_right_rounded,
+                color: Colors.grey.shade400,
+              ),
+            ),
+          ],
         ),
       ),
     );

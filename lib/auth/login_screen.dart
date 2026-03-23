@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../theme/app_theme.dart';
 import 'auth_service.dart';
 import 'email_auth_bottom_sheet.dart';
+import 'terms_detail_actions.dart';
 
 /// 소셜 로그인 + 아이디·비밀번호 (참고 UI: 상단 브랜딩 + 하단 화이트 시트).
 class LoginScreen extends StatefulWidget {
@@ -225,10 +226,30 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      _termRow('이용 약관 동의 (필수)', _t1, (v) => setState(() => _t1 = v)),
-                      _termRow('개인정보 수집·이용 동의 (필수)', _t2, (v) => setState(() => _t2 = v)),
-                      _termRow('민감정보 수집·이용 동의 (필수)', _t3, (v) => setState(() => _t3 = v)),
-                      _termRow('만 14세 이상입니다 (필수)', _t4, (v) => setState(() => _t4 = v)),
+                      _termRow(
+                        '이용 약관 동의 (필수)',
+                        _t1,
+                        (v) => setState(() => _t1 = v),
+                        TermsDetailActions.openTermsOfService,
+                      ),
+                      _termRow(
+                        '개인정보 수집·이용 동의 (필수)',
+                        _t2,
+                        (v) => setState(() => _t2 = v),
+                        TermsDetailActions.openPrivacyPolicy,
+                      ),
+                      _termRow(
+                        '민감정보 수집·이용 동의 (필수)',
+                        _t3,
+                        (v) => setState(() => _t3 = v),
+                        TermsDetailActions.openSensitiveInfoNotice,
+                      ),
+                      _termRow(
+                        '만 14세 이상입니다 (필수)',
+                        _t4,
+                        (v) => setState(() => _t4 = v),
+                        TermsDetailActions.openAgeNotice,
+                      ),
                       const SizedBox(height: 10),
                       _pill(
                         bg: const Color(0xFFFEE500),
@@ -494,33 +515,58 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Widget _termRow(String label, bool value, ValueChanged<bool> onChanged) {
+  Widget _termRow(
+    String label,
+    bool value,
+    ValueChanged<bool> onChanged,
+    Future<void> Function(BuildContext context) onOpenDetail,
+  ) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
-      child: InkWell(
-        onTap: () => onChanged(!value),
-        borderRadius: BorderRadius.circular(10),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Row(
-            children: [
-              Icon(
-                value ? Icons.check_circle : Icons.circle_outlined,
-                size: 22,
-                color: value ? AppTheme.primary : AppTheme.textMuted,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  label,
-                  style: GoogleFonts.notoSansKr(
-                    fontSize: 13,
-                    color: AppTheme.textSecondary,
+      child: Material(
+        color: const Color(0xFFF3F4F6),
+        borderRadius: BorderRadius.circular(12),
+        child: Row(
+          children: [
+            Expanded(
+              child: InkWell(
+                onTap: () => onChanged(!value),
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  child: Row(
+                    children: [
+                      Icon(
+                        value ? Icons.check_circle : Icons.circle_outlined,
+                        size: 22,
+                        color: value ? AppTheme.primary : AppTheme.textMuted,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          label,
+                          style: GoogleFonts.notoSansKr(
+                            fontSize: 13,
+                            color: AppTheme.textSecondary,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-            ],
-          ),
+            ),
+            IconButton(
+              tooltip: '내용 보기',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => onOpenDetail(context),
+              icon: Icon(
+                Icons.chevron_right_rounded,
+                color: Colors.grey.shade500,
+              ),
+            ),
+          ],
         ),
       ),
     );

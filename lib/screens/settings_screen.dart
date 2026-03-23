@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../auth/auth_service.dart';
+import '../auth/legal_urls.dart';
 import '../supabase/supabase_config.dart';
 import '../supabase/supabase_sync_service.dart';
 import '../theme/app_theme.dart';
@@ -170,11 +171,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  static const String _privacyPolicyUrl = 'https://www.notion.so/29f5de29af9680c0b7a1d2b2762777e8';
-  static const String _termsOfServiceUrl = 'https://www.notion.so/31e5de29af9680d6aa8af96ef24a4410';
-
   Future<void> _openPrivacyPolicy(BuildContext context) async {
-    final uri = Uri.parse(_privacyPolicyUrl);
+    final uri = Uri.parse(LegalUrls.privacyPolicy);
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     } else {
@@ -187,7 +185,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _openTermsOfService(BuildContext context) async {
-    final uri = Uri.parse(_termsOfServiceUrl);
+    final uri = Uri.parse(LegalUrls.termsOfService);
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     } else {

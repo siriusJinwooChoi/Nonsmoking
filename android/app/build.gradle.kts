@@ -26,8 +26,9 @@ android {
         applicationId = "com.cjw.nonsmoking"
         minSdk = 24
         targetSdk = 36
-        versionCode = 6
-        versionName = "1.0.5"
+        // pubspec.yaml 의 version: 이름+코드 (예: 1.0.7+7) — 여기서 하드코딩하면 무시됨
+        versionCode = flutter.versionCode
+        versionName = flutter.versionName
     }
 
     signingConfigs {
