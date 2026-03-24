@@ -89,6 +89,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       request: const AdRequest(),
       listener: BannerAdListener(
         onAdLoaded: (ad) {
+          if (!mounted) {
+            ad.dispose();
+            return;
+          }
           setState(() {
             _bannerAd = ad as BannerAd;
             _isBannerReady = true;
@@ -96,6 +100,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         },
         onAdFailedToLoad: (ad, error) {
           ad.dispose();
+          if (!mounted) return;
           setState(() => _isBannerReady = false);
         },
       ),
@@ -165,6 +170,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   Future<void> _loadPersistedData() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     final millis = prefs.getInt('startTime');
     _failureCount = prefs.getInt(_failureCountKey) ?? 0;
     _goldenCoins = prefs.getInt(kGoldenCoinsKey) ?? 0;
@@ -179,12 +185,15 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
 
     _reminderTimes = await getReminderTimes();
+    if (!mounted) return;
     if (_reminderTimes.isNotEmpty) {
       await scheduleAllDailyReminders();
+      if (!mounted) return;
     }
     final reasonEnabled = prefs.getBool(kReasonNotificationEnabledKey) ?? false;
     if (reasonEnabled) {
       await scheduleReasonReminder();
+      if (!mounted) return;
     }
 
     unawaited(bootstrapCoreReminderSchedulesOnAppOpen());
@@ -196,6 +205,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (_startTime == null) return;
+      if (!mounted) {
+        _timer?.cancel();
+        return;
+      }
 
       final now = DateTime.now();
       final diff = now.difference(_startTime!);
