@@ -223,7 +223,7 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
                       textAlign: TextAlign.center,
                       style: AppTheme.labelMedium.copyWith(
                         fontSize: 12,
-                        color: AppTheme.textMuted.withOpacity(0.9),
+                        color: AppTheme.textMuted.withValues(alpha: 0.9),
                       ),
                     ),
                   ],
@@ -266,7 +266,7 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
                       child: LinearProgressIndicator(
                         value: progress,
                         minHeight: 12,
-                        backgroundColor: AppTheme.textMuted.withOpacity(0.3),
+                        backgroundColor: AppTheme.textMuted.withValues(alpha: 0.3),
                         valueColor: AlwaysStoppedAnimation<Color>(healthColor),
                       ),
                     ),

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import '../ad_manager.dart';
+import '../widgets/banner_ad_bar.dart';
 
 /// 7x8 그리드에 들어갈 수 있는 단어만 사용 (최대 길이 7)
 class _WordPool {
@@ -525,7 +526,9 @@ class _WordGameScreenState extends State<WordGameScreen> {
               '손가락으로 드래그해서 알파벳을 연결하세요',
               style: AppTheme.bodyMedium.copyWith(color: AppTheme.textMuted, fontSize: 12),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
+            const BannerAdBar(),
+            const SizedBox(height: 8),
           ],
         ),
       ),

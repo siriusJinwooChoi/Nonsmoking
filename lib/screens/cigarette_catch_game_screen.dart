@@ -16,14 +16,17 @@ class CigaretteCatchGameScreen extends StatefulWidget {
   State<CigaretteCatchGameScreen> createState() => _CigaretteCatchGameScreenState();
 }
 
-class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
+class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
+    with SingleTickerProviderStateMixin {
   static const String _bestStageKey = 'cigarette_catch_best_stage';
+  static const String _bestScoreKey = 'cigarette_catch_best_score';
 
   final Random _random = Random();
   Timer? _timer;
   int _stage = 1;
   int _score = 0;
   int _bestStage = 0;
+  int _bestScore = 0;
   bool _gameOver = false;
   bool _waitingStart = true;
 
@@ -37,17 +40,27 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
   List<String> _cigaretteAssets = const [];
   int _spawned = 0;
   static const int _cigarettesPerRound = 2;
-  double _nextSpawnY = 0;
   double _fallSpeed = 2;
   static const double _baseSpeed = 2;
   static const double _speedPerStage = 0.15;
   int _spawnDelayMs = 800;
-  bool _roundInProgress = false;
   bool _isGameOverAdShowing = false;
+
+  /// 맞춤 성공 시 탭 위치에 짧은 이펙트
+  late AnimationController _hitFxController;
+  Offset? _hitFxLocal;
 
   @override
   void initState() {
     super.initState();
+    _hitFxController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 420),
+    )..addStatusListener((status) {
+        if (status == AnimationStatus.completed && mounted) {
+          setState(() => _hitFxLocal = null);
+        }
+      });
     _loadBest();
     _loadCigaretteAssets();
   }
@@ -75,7 +88,12 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
 
   Future<void> _loadBest() async {
     final prefs = await SharedPreferences.getInstance();
-    if (mounted) setState(() => _bestStage = prefs.getInt(_bestStageKey) ?? 0);
+    if (mounted) {
+      setState(() {
+        _bestStage = prefs.getInt(_bestStageKey) ?? 0;
+        _bestScore = prefs.getInt(_bestScoreKey) ?? 0;
+      });
+    }
   }
 
   Future<void> _saveBest() async {
@@ -83,6 +101,14 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_bestStageKey, _stage - 1);
     if (mounted) setState(() => _bestStage = _stage - 1);
+  }
+
+  Future<void> _saveBestScore() async {
+    if (_score <= _bestScore) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_bestScoreKey, _score);
+    if (mounted) setState(() => _bestScore = _score);
+    unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
   }
 
   void _startGame() {
@@ -93,7 +119,6 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
       _score = 0;
       _cigarettes.clear();
       _spawned = 0;
-      _roundInProgress = true;
       _fallSpeed = _baseSpeed + (_stage - 1) * _speedPerStage;
       _spawnDelayMs = (800 - (_stage - 1) * 6).clamp(200, 800);
       _isGameOverAdShowing = false;
@@ -111,7 +136,6 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
   }
 
   void _update() {
-    final hitZoneTop = _gameAreaHeight - _hitZoneHeight;
     for (var i = _cigarettes.length - 1; i >= 0; i--) {
       final c = _cigarettes[i];
       c.y += _fallSpeed;
@@ -128,14 +152,12 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
     if (!mounted || _gameOver) return;
     if (_spawned >= _cigarettesPerRound) {
       _spawned = 0;
-      _roundInProgress = false;
       Future.delayed(const Duration(milliseconds: 400), () {
         if (!mounted || _gameOver) return;
         setState(() {
           _stage = (_stage + 1).clamp(1, 100);
           _fallSpeed = _baseSpeed + (_stage - 1) * _speedPerStage;
           _spawnDelayMs = (800 - (_stage - 1) * 6).clamp(200, 800);
-          _roundInProgress = true;
         });
         _spawnNext();
       });
@@ -164,9 +186,13 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
       if ((local.dx - cx).abs() < 35 && (local.dy - cy).abs() < 35) {
         HapticFeedback.lightImpact();
         _cigarettes.removeAt(i);
-        setState(() => _score += 10 + _stage);
+        setState(() {
+          _score += 10 + _stage;
+          _hitFxLocal = local;
+        });
+        _hitFxController.forward(from: 0);
+        unawaited(_saveBestScore());
         if (_cigarettes.isEmpty && _spawned >= _cigarettesPerRound) {
-          _roundInProgress = false;
           Future.delayed(const Duration(milliseconds: 400), () {
             if (!mounted || _gameOver) return;
             setState(() {
@@ -174,7 +200,6 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
               _stage = (_stage + 1).clamp(1, 100);
               _fallSpeed = _baseSpeed + (_stage - 1) * _speedPerStage;
               _spawnDelayMs = (800 - (_stage - 1) * 6).clamp(200, 800);
-              _roundInProgress = true;
             });
             _spawnNext();
           });
@@ -187,6 +212,7 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
   void _endGame() async {
     _timer?.cancel();
     await _saveBest();
+    await _saveBestScore();
     await SupabaseSyncService.pushLocalToRemoteIfEligible();
     if (!mounted) return;
     setState(() => _gameOver = true);
@@ -198,6 +224,7 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
   @override
   void dispose() {
     _timer?.cancel();
+    _hitFxController.dispose();
     super.dispose();
   }
 
@@ -223,11 +250,14 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.spaceBetween,
                   children: [
                     _infoChip('단계', '$_stage'),
                     _infoChip('점수', '$_score'),
+                    _infoChip('최고 점수', '$_bestScore'),
                     _infoChip('최고 단계', '$_bestStage'),
                   ],
                 ),
@@ -260,7 +290,7 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
                               decoration: BoxDecoration(
                                 color: Colors.white,
                                 borderRadius: BorderRadius.circular(20),
-                                border: Border.all(color: AppTheme.primary.withOpacity(0.25)),
+                                border: Border.all(color: AppTheme.primary.withValues(alpha: 0.25)),
                               ),
                               child: Stack(
                                 children: [
@@ -275,8 +305,8 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
                                           begin: Alignment.topCenter,
                                           end: Alignment.bottomCenter,
                                           colors: [
-                                            AppTheme.primary.withOpacity(0.06),
-                                            AppTheme.primary.withOpacity(0.16),
+                                            AppTheme.primary.withValues(alpha: 0.06),
+                                            AppTheme.primary.withValues(alpha: 0.16),
                                           ],
                                         ),
                                         borderRadius: const BorderRadius.vertical(bottom: Radius.circular(20)),
@@ -298,6 +328,19 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen> {
                                       width: _cigaretteWidth,
                                       height: _cigaretteHeight,
                                       child: _buildCigarette(c.assetPath),
+                                    ),
+                                  if (_hitFxLocal != null)
+                                    Positioned(
+                                      left: _hitFxLocal!.dx - 44,
+                                      top: _hitFxLocal!.dy - 44,
+                                      child: IgnorePointer(
+                                        child: AnimatedBuilder(
+                                          animation: _hitFxController,
+                                          builder: (context, _) => _HitTapBurst(
+                                            progress: _hitFxController.value,
+                                          ),
+                                        ),
+                                      ),
                                     ),
                                 ],
                               ),
@@ -401,6 +444,66 @@ class _FallingCigarette {
   double x, y;
   String? assetPath;
   _FallingCigarette({required this.x, required this.y, this.assetPath});
+}
+
+/// 맞춤 순간 탭 위 펄스 + 볼트 아이콘
+class _HitTapBurst extends StatelessWidget {
+  const _HitTapBurst({required this.progress});
+
+  final double progress;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Curves.easeOut.transform(progress.clamp(0.0, 1.0));
+    final fade = 1.0 - t;
+    final scale = 0.45 + t * 0.95;
+    return Opacity(
+      opacity: fade,
+      child: Transform.scale(
+        scale: scale,
+        alignment: Alignment.center,
+        child: SizedBox(
+          width: 88,
+          height: 88,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppTheme.primary.withValues(alpha: 0.45 * fade),
+                      blurRadius: 18,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                width: 64 + 24 * t,
+                height: 64 + 24 * t,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: AppTheme.primary.withValues(alpha: 0.5 * fade * (1 - t * 0.7)),
+                    width: 2,
+                  ),
+                ),
+              ),
+              Icon(
+                Icons.bolt_rounded,
+                size: 42,
+                color: AppTheme.primary.withValues(alpha: 0.85 + 0.15 * fade),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _CigarettePainter extends CustomPainter {

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../../theme/app_theme.dart';
 import '../../theme/onboarding_theme.dart';
 
 /// 금연을 시작한 사용자를 응원하는 첫 번째 온보딩 화면

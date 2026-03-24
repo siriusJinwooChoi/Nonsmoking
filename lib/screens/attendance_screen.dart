@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import '../notifications/daily_reminder_worker.dart';
-import '../ad_manager.dart';
-
 /// 출석체크 1~28일, 7x4 그리드. 금연코인 10/20(7,14,21,28일).
 const String kAttendanceStreakDayKey = 'attendance_streak_day';
 const String kAttendanceLastDateKey = 'attendance_last_date';
@@ -79,7 +77,6 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   int? _justEarnedCoins;
   int? _justEarnedDay;
   bool _attendedThisSession = false;
-  bool _isClosingWithAd = false;
   /// 출석 처리 후 당일 다시 출석창을 띄우지 않기 (닫을 때 prefs 저장)
   bool _hideOverlayRestOfDay = false;
 
@@ -165,15 +162,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(kAttendanceSkipOverlayDateKey, _todayString());
     }
-    if (_attendedThisSession) {
-      if (_isClosingWithAd) return;
-      _isClosingWithAd = true;
-      AdManager.showAd(onAdClosed: () {
-        if (mounted) widget.onClose();
-      });
-    } else {
-      widget.onClose();
-    }
+    widget.onClose();
   }
 
   @override

@@ -269,6 +269,18 @@ Future<bool> requestNotificationPermissionIfNeeded() async {
   return granted ?? false;
 }
 
+Future<bool> _ensureNotificationPermissionGranted() async {
+  final plugin = FlutterLocalNotificationsPlugin();
+  final androidImpl = plugin.resolvePlatformSpecificImplementation<
+      AndroidFlutterLocalNotificationsPlugin>();
+  if (androidImpl == null) return true;
+  try {
+    final enabled = await androidImpl.areNotificationsEnabled();
+    if (enabled == true) return true;
+  } catch (_) {}
+  return requestNotificationPermissionIfNeeded();
+}
+
 /// ✅ 알림 시간 목록 불러오기
 Future<List<TimeOfDay>> getReminderTimes() async {
   final prefs = await SharedPreferences.getInstance();
@@ -420,6 +432,8 @@ Future<bool> _handleInactivityReminder(Map<String, dynamic>? inputData) async {
 
 /// 비접속 알림 1회 예약 (delayDays일 후 실행)
 Future<void> scheduleInactivityReminderOneOff({int delayDays = 3}) async {
+  final granted = await _ensureNotificationPermissionGranted();
+  if (!granted) return;
   final delay = Duration(days: delayDays);
   await Workmanager().registerOneOffTask(
     kInactivityReminderUniqueWork,
@@ -452,6 +466,8 @@ Future<void> setInactivityNotificationEnabled(bool enabled) async {
   if (!enabled) {
     await Workmanager().cancelByUniqueName(kInactivityReminderUniqueWork);
   } else {
+    final granted = await _ensureNotificationPermissionGranted();
+    if (!granted) return;
     await scheduleInactivityReminderOneOff(delayDays: kInactivityDaysThreshold);
   }
 }
@@ -556,6 +572,8 @@ Future<bool> getAttendanceReminderEnabled() async {
 
 /// 앱 열릴 때: 18시 이후이고 오늘 미출석이면 10분 후 출석 알림 예약
 Future<void> scheduleAttendanceReminderIfNeeded() async {
+  final granted = await _ensureNotificationPermissionGranted();
+  if (!granted) return;
   final enabled = await getAttendanceReminderEnabled();
   if (!enabled) return;
   final prefs = await SharedPreferences.getInstance();
@@ -635,7 +653,18 @@ Future<void> scheduleCigaretteCollectionReminderForHour(int hour) async {
 
 /// 앱 실행 시 09:00, 12:00, 18:00, 22:00 담배 수집 알림 예약
 Future<void> scheduleCigaretteCollectionReminders() async {
+  final granted = await _ensureNotificationPermissionGranted();
+  if (!granted) return;
   for (final hour in _cigaretteCollectionHours) {
     await scheduleCigaretteCollectionReminderForHour(hour);
   }
+}
+
+/// 앱 실행 시 알림 권한 확인 + 핵심 스케줄(비접속/출석/담배수집) 재설정
+Future<void> bootstrapCoreReminderSchedulesOnAppOpen() async {
+  final granted = await _ensureNotificationPermissionGranted();
+  if (!granted) return;
+  await updateLastAppOpenAndScheduleInactivity();
+  await scheduleAttendanceReminderIfNeeded();
+  await scheduleCigaretteCollectionReminders();
 }

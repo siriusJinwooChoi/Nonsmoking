@@ -60,7 +60,7 @@ class _BadgeScreenState extends State<BadgeScreen> {
           _badgeGrid(
             values: const [1, 3, 7, 10, 14, 30, 90, 180, 365, 730],
             achieved: _quitDays,
-            labelBuilder: (v) => '${v}일',
+            labelBuilder: (v) => '$v일',
           ),
         ],
       ),
@@ -133,7 +133,7 @@ class _BadgeChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         boxShadow: AppTheme.cardShadowSubtle,
         border: Border.all(
-          color: unlocked ? AppTheme.primary.withOpacity(0.4) : AppTheme.textMuted.withOpacity(0.3),
+          color: unlocked ? AppTheme.primary.withValues(alpha: 0.4) : AppTheme.textMuted.withValues(alpha: 0.3),
           width: 1.5,
         ),
       ),

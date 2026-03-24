@@ -36,6 +36,7 @@ abstract final class _PrefsKeys {
   static const wordGameLevel = 'word_game_level';
   static const timingTapBestScore = 'timing_tap_best_score';
   static const cigaretteCatchBestStage = 'cigarette_catch_best_stage';
+  static const cigaretteCatchBestScore = 'cigarette_catch_best_score';
   /// 로그아웃 후 다음 로그인 시 원격에서 복원(pull) 필요
   static const pullPendingAfterLogin = 'supabase_pull_pending_after_login';
 }
@@ -380,6 +381,8 @@ abstract final class SupabaseSyncService {
       'timing_tap_best_score': prefs.getInt(_PrefsKeys.timingTapBestScore) ?? 0,
       'cigarette_catch_best_stage':
           prefs.getInt(_PrefsKeys.cigaretteCatchBestStage) ?? 0,
+      'cigarette_catch_best_score':
+          prefs.getInt(_PrefsKeys.cigaretteCatchBestScore) ?? 0,
     }, onConflict: 'user_id');
   }
 
@@ -632,5 +635,12 @@ abstract final class SupabaseSyncService {
     final mergedCatch =
         remoteCatch > localCatch ? remoteCatch : localCatch;
     await prefs.setInt(_PrefsKeys.cigaretteCatchBestStage, mergedCatch);
+    final remoteCatchScore =
+        (row['cigarette_catch_best_score'] as num?)?.toInt() ?? 0;
+    final localCatchScore =
+        prefs.getInt(_PrefsKeys.cigaretteCatchBestScore) ?? 0;
+    final mergedCatchScore =
+        remoteCatchScore > localCatchScore ? remoteCatchScore : localCatchScore;
+    await prefs.setInt(_PrefsKeys.cigaretteCatchBestScore, mergedCatchScore);
   }
 }

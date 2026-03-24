@@ -4,10 +4,11 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
-import '../ad_manager.dart';
+import '../widgets/banner_ad_bar.dart';
 
 // ✅ Analytics helper
 import '../analytics/app_analytics.dart';
+import '../ad_manager.dart';
 
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key});
@@ -254,6 +255,8 @@ class _GameScreenState extends State<GameScreen> {
                     ),
                   ),
 
+                  const SizedBox(height: 6),
+                  const BannerAdBar(),
                   const SizedBox(height: 6),
 
                   // 하단 버튼

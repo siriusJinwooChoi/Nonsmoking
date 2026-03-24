@@ -72,9 +72,9 @@ class _Screen4StartDateState extends State<Screen4StartDate> {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                         decoration: BoxDecoration(
-                          color: AppTheme.primary.withOpacity(0.08),
+                          color: AppTheme.primary.withValues(alpha: 0.08),
                           borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: AppTheme.primary.withOpacity(0.3)),
+                          border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
                         ),
                         child: Text(
                           '${selectedDate!.year}.${selectedDate!.month.toString().padLeft(2, '0')}.${selectedDate!.day.toString().padLeft(2, '0')}',
@@ -95,7 +95,7 @@ class _Screen4StartDateState extends State<Screen4StartDate> {
                   onPressed: selectedDate != null ? widget.onNext : null,
                   style: FilledButton.styleFrom(
                     backgroundColor: AppTheme.primary,
-                    disabledBackgroundColor: AppTheme.textMuted.withOpacity(0.3),
+                    disabledBackgroundColor: AppTheme.textMuted.withValues(alpha: 0.3),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     elevation: 0,
                   ),

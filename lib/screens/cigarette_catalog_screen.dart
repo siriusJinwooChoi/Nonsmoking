@@ -127,7 +127,7 @@ class _CigaretteCatalogScreenState extends State<CigaretteCatalogScreen> {
                             height: 44,
                             alignment: Alignment.center,
                             decoration: BoxDecoration(
-                              color: AppTheme.primary.withOpacity(0.12),
+                              color: AppTheme.primary.withValues(alpha: 0.12),
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: const Icon(Icons.collections_bookmark_rounded,
@@ -192,7 +192,7 @@ class _CigaretteCatalogScreenState extends State<CigaretteCatalogScreen> {
                         label: const Text('담배갑 수집 초기화'),
                         style: OutlinedButton.styleFrom(
                           foregroundColor: AppTheme.error,
-                          side: BorderSide(color: AppTheme.error.withOpacity(0.5)),
+                          side: BorderSide(color: AppTheme.error.withValues(alpha: 0.5)),
                           padding: const EdgeInsets.symmetric(vertical: 14),
                         ),
                       ),
@@ -252,7 +252,7 @@ class _CatalogTile extends StatelessWidget {
                 padding:
                     const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.45),
+                  color: Colors.black.withValues(alpha: 0.45),
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(

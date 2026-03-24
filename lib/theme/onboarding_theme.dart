@@ -90,7 +90,7 @@ class OnboardingTheme {
   /// 선택 카드 (라디오/리스트용)
   static BoxDecoration optionCardDecoration({bool selected = false}) {
     return BoxDecoration(
-      color: selected ? AppTheme.primary.withOpacity(0.08) : Colors.white,
+      color: selected ? AppTheme.primary.withValues(alpha: 0.08) : Colors.white,
       borderRadius: BorderRadius.circular(14),
       border: Border.all(
         color: selected ? AppTheme.primary : const Color(0xFFE5E7EB),
@@ -98,7 +98,7 @@ class OnboardingTheme {
       ),
       boxShadow: [
         BoxShadow(
-          color: Colors.black.withOpacity(0.04),
+          color: Colors.black.withValues(alpha: 0.04),
           blurRadius: 8,
           offset: const Offset(0, 2),
         ),

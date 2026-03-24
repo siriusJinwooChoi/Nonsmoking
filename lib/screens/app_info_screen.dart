@@ -14,7 +14,8 @@ class AppInfoScreen extends StatefulWidget {
 class _AppInfoScreenState extends State<AppInfoScreen> {
 
   static const String _email = 'cjw207207@gmail.com';
-  String _version = '';
+  /// `PackageInfo.version` (사용자에게 보이는 버전 이름만 표시)
+  String _versionLine = '';
 
   @override
   void initState() {
@@ -27,7 +28,7 @@ class _AppInfoScreenState extends State<AppInfoScreen> {
       final info = await PackageInfo.fromPlatform();
       if (!mounted) return;
       setState(() {
-        _version = info.version;
+        _versionLine = '버전 ${info.version}';
       });
     } catch (_) {
       // 실패 시 빈 문자열 유지
@@ -63,10 +64,10 @@ class _AppInfoScreenState extends State<AppInfoScreen> {
               children: [
                 Icon(Icons.eco_rounded, size: 72, color: AppTheme.primary),
                 const SizedBox(height: 16),
-                Text('금연', style: AppTheme.titleLarge.copyWith(fontSize: 24)),
+                Text('금연뱅크', style: AppTheme.titleLarge.copyWith(fontSize: 24)),
                 const SizedBox(height: 4),
                 Text(
-                  _version.isEmpty ? '버전 정보를 불러오는 중입니다...' : '버전 $_version',
+                  _versionLine.isEmpty ? '버전 정보를 불러오는 중입니다...' : _versionLine,
                   style: AppTheme.bodyMedium,
                 ),
               ],

@@ -96,10 +96,10 @@ class _SmokingScreenState extends State<SmokingScreen>
                       width: 240,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: Colors.grey.withOpacity(0.15),
+                        color: Colors.grey.withValues(alpha: 0.15),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.grey.withOpacity(0.3),
+                            color: Colors.grey.withValues(alpha: 0.3),
                             blurRadius: 40,
                             spreadRadius: 10,
                           ),
@@ -143,7 +143,7 @@ class _SmokingScreenState extends State<SmokingScreen>
                   borderRadius: BorderRadius.circular(16),
                   boxShadow: [
                     BoxShadow(
-                      color: (_isSmoking ? AppTheme.error : const Color(0xFF57534E)).withOpacity(0.3),
+                      color: (_isSmoking ? AppTheme.error : const Color(0xFF57534E)).withValues(alpha: 0.3),
                       blurRadius: 12,
                       offset: const Offset(0, 4),
                     ),

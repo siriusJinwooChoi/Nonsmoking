@@ -54,7 +54,7 @@ class Screen2Goals extends StatelessWidget {
                         border: Border.all(color: const Color(0xFFE5E7EB)),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.04),
+                            color: Colors.black.withValues(alpha: 0.04),
                             blurRadius: 6,
                             offset: const Offset(0, 2),
                           ),
@@ -77,7 +77,7 @@ class Screen2Goals extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          Icon(g.icon, size: 22, color: AppTheme.primary.withOpacity(0.8)),
+                          Icon(g.icon, size: 22, color: AppTheme.primary.withValues(alpha: 0.8)),
                         ],
                       ),
                     ),

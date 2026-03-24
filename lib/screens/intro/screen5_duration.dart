@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../../theme/app_theme.dart';
 import '../../theme/onboarding_theme.dart';
 
 /// 흡연 기간(년/월/일)을 입력받는 화면
@@ -105,7 +104,7 @@ class _Screen5DurationState extends State<Screen5Duration> {
         border: Border.all(color: const Color(0xFFE5E7EB)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),

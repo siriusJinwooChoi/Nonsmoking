@@ -115,7 +115,7 @@ class _HealthScreenState extends State<HealthScreen> {
     if (hours > 0) {
       return '$hours시간 $minutes분';
     }
-    return '${minutes}분';
+    return '$minutes분';
   }
 
   @override
@@ -156,7 +156,7 @@ class _HealthScreenState extends State<HealthScreen> {
                     child: LinearProgressIndicator(
                       value: progress,
                       minHeight: 12,
-                      backgroundColor: AppTheme.textMuted.withOpacity(0.3),
+                      backgroundColor: AppTheme.textMuted.withValues(alpha: 0.3),
                       valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.success),
                     ),
                   ),

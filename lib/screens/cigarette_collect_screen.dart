@@ -220,12 +220,21 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
     if (success) {
       setState(() {
         _caught = true;
-        _status = '축하드립니다!';
+        _status = '수집에 성공했습니다!';
         _effectSuccess = true;
         _showEffect = true;
       });
       _persistCollected();
       _markWindowUsed();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('수집에 성공했습니다!'),
+          duration: const Duration(seconds: 2),
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: AppTheme.primaryDark,
+        ),
+      );
     } else {
       if (_attempts >= _maxAttempts) {
         setState(() {
@@ -237,7 +246,7 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
         _markWindowUsed();
       } else {
         setState(() {
-          _status = '수집에 실패했습니다. 다시 한 번 시도해 보세요. (${_attempts}/$_maxAttempts)';
+          _status = '수집에 실패했습니다. 다시 한 번 시도해 보세요. ($_attempts/$_maxAttempts)';
           _effectSuccess = false;
           _showEffect = true;
         });

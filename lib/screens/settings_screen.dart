@@ -74,17 +74,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
           value: _inactivityNotificationEnabled,
           onChanged: (value) async {
             await setInactivityNotificationEnabled(value);
-            if (mounted) {
-              setState(() => _inactivityNotificationEnabled = value);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(value ? '비접속 시 알림을 켰습니다.' : '비접속 시 알림을 껐습니다.'),
-                  duration: const Duration(seconds: 1),
-                ),
-              );
-            }
+            if (!context.mounted) return;
+            setState(() => _inactivityNotificationEnabled = value);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(value ? '비접속 시 알림을 켰습니다.' : '비접속 시 알림을 껐습니다.'),
+                duration: const Duration(seconds: 1),
+              ),
+            );
           },
-          activeColor: AppTheme.primary,
+          activeThumbColor: AppTheme.primary,
         ),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       ),
@@ -113,17 +112,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
           value: _attendanceReminderEnabled,
           onChanged: (value) async {
             await setAttendanceReminderEnabled(value);
-            if (mounted) {
-              setState(() => _attendanceReminderEnabled = value);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(value ? '출석 알림을 켰습니다.' : '출석 알림을 껐습니다.'),
-                  duration: const Duration(seconds: 1),
-                ),
-              );
-            }
+            if (!context.mounted) return;
+            setState(() => _attendanceReminderEnabled = value);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(value ? '출석 알림을 켰습니다.' : '출석 알림을 껐습니다.'),
+                duration: const Duration(seconds: 1),
+              ),
+            );
           },
-          activeColor: AppTheme.primary,
+          activeThumbColor: AppTheme.primary,
         ),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       ),

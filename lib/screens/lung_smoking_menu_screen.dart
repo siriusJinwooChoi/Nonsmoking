@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import '../widgets/banner_ad_bar.dart';
 import 'lung_screen.dart';
 import 'smoking_screen.dart';
 
@@ -15,45 +16,53 @@ class LungSmokingMenuScreen extends StatelessWidget {
         title: const Text('폐 / 흡연'),
       ),
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const SizedBox(height: 16),
-              Text(
-                '확인할 화면을 선택하세요',
-                style: AppTheme.titleMedium.copyWith(color: AppTheme.textMuted),
-                textAlign: TextAlign.center,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const SizedBox(height: 16),
+                    Text(
+                      '확인할 화면을 선택하세요',
+                      style: AppTheme.titleMedium.copyWith(color: AppTheme.textMuted),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 24),
+                    _MenuCard(
+                      icon: Icons.favorite_rounded,
+                      title: '나의 폐 건강',
+                      subtitle: '폐 회복 상태와 회복 속도를 확인합니다.',
+                      color: AppTheme.success,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const LungScreen()),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    _MenuCard(
+                      icon: Icons.smoking_rooms_rounded,
+                      title: '흡연 애니메이션',
+                      subtitle: '흡연 습관을 시각적으로 되돌아볼 수 있는 화면입니다.',
+                      color: AppTheme.error,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const SmokingScreen()),
+                        );
+                      },
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 24),
-              _MenuCard(
-                icon: Icons.favorite_rounded,
-                title: '나의 폐 건강',
-                subtitle: '폐 회복 상태와 회복 속도를 확인합니다.',
-                color: AppTheme.success,
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const LungScreen()),
-                  );
-                },
-              ),
-              const SizedBox(height: 16),
-              _MenuCard(
-                icon: Icons.smoking_rooms_rounded,
-                title: '흡연 애니메이션',
-                subtitle: '흡연 습관을 시각적으로 되돌아볼 수 있는 화면입니다.',
-                color: AppTheme.error,
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const SmokingScreen()),
-                  );
-                },
-              ),
-            ],
-          ),
+            ),
+            const BannerAdBar(),
+          ],
         ),
       ),
     );

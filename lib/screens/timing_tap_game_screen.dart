@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../supabase/supabase_sync_service.dart';
 import '../theme/app_theme.dart';
-import '../ad_manager.dart';
+import '../widgets/banner_ad_bar.dart';
 
 /// 완벽 타이밍: 움직이는 표시가 중앙에 올 때 탭하는 타이밍 게임
 class TimingTapGameScreen extends StatefulWidget {
@@ -25,7 +26,6 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
   int _score = 0;
   int _bestScore = 0;
   String _lastResult = '중앙에 가까울수록 높은 점수!';
-  bool _isBackAdShowing = false;
   bool _isFailDialogShowing = false;
 
   @override
@@ -39,16 +39,6 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
     if (!mounted) return;
     setState(() {
       _bestScore = prefs.getInt(_bestScoreKey) ?? 0;
-    });
-  }
-
-  Future<void> _saveBestScore() async {
-    if (_score <= _bestScore) return;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_bestScoreKey, _score);
-    if (!mounted) return;
-    setState(() {
-      _bestScore = _score;
     });
   }
 
@@ -94,17 +84,19 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
     _showFailDialog();
   }
 
-  void _showFailDialog() {
+  void _showFailDialog({String? message}) {
     if (_isFailDialogShowing) return;
     _isFailDialogShowing = true;
+    final text = message ??
+        '시간이 초과되어 실패했습니다.\n레벨 1부터 다시 시작합니다.';
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (_) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text('게임 실패'),
-        content: const Text(
-          '시간이 초과되어 실패했습니다.\n레벨 1부터 다시 시작합니다.',
+        content: Text(
+          text,
           textAlign: TextAlign.center,
         ),
         actions: [
@@ -133,21 +125,26 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
     _timer?.cancel();
 
     final diff = (_position - _targetCenter).abs();
+    final maxDiff = _targetWidth / 2;
+    if (diff > maxDiff) {
+      setState(() {
+        _lastResult = '중앙 밖에서 멈췄습니다. 실패!';
+      });
+      _showFailDialog(
+        message: '중앙에 표시된 영역 밖에서 멈췄습니다.\n레벨 1부터 다시 시작합니다.',
+      );
+      return;
+    }
+
     int deltaScore;
     String message;
 
     if (diff <= _targetWidth * 0.25) {
       deltaScore = 150 + _level * 5;
       message = '완벽한 타이밍!';
-    } else if (diff <= _targetWidth * 0.5) {
+    } else {
       deltaScore = 90 + _level * 4;
       message = '아주 좋아요!';
-    } else if (diff <= _targetWidth * 0.8) {
-      deltaScore = 40 + _level * 3;
-      message = '나쁘지 않아요.';
-    } else {
-      deltaScore = 10 + _level * 2;
-      message = '조금 더 중앙에 가깝게!';
     }
 
     setState(() {
@@ -155,13 +152,25 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
       _lastResult = '$message (+$deltaScore점)';
       _level = (_level + 1).clamp(1, _maxLevel);
     });
-    _saveBestScore();
+    unawaited(_saveBestScoreAndSync());
 
     // 다음 라운드를 약간 쉬었다 시작
     Future.delayed(const Duration(milliseconds: 700), () {
       if (!mounted) return;
       _startRound();
     });
+  }
+
+  Future<void> _saveBestScoreAndSync() async {
+    final prefs = await SharedPreferences.getInstance();
+    final prev = prefs.getInt(_bestScoreKey) ?? 0;
+    if (_score <= prev) return;
+    await prefs.setInt(_bestScoreKey, _score);
+    if (!mounted) return;
+    setState(() {
+      _bestScore = _score;
+    });
+    unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
   }
 
   void _resetGame() {
@@ -176,11 +185,7 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
   }
 
   void _onBackPressed() {
-    if (_isBackAdShowing) return;
-    _isBackAdShowing = true;
-    AdManager.showAd(onAdClosed: () {
-      if (mounted) Navigator.pop(context);
-    });
+    Navigator.pop(context);
   }
 
   @override
@@ -191,12 +196,7 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async {
-        _onBackPressed();
-        return false;
-      },
-      child: Scaffold(
+    return Scaffold(
         backgroundColor: AppTheme.surface,
         appBar: AppBar(
           title: const Text('완벽 타이밍'),
@@ -204,13 +204,6 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
             icon: const Icon(Icons.arrow_back_rounded),
             onPressed: _onBackPressed,
           ),
-          actions: [
-            IconButton(
-              tooltip: '리셋',
-              icon: const Icon(Icons.refresh_rounded),
-              onPressed: _resetGame,
-            ),
-          ],
         ),
         body: SafeArea(
         child: Padding(
@@ -360,7 +353,9 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
                           ),
                         ),
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 8),
+                      const BannerAdBar(),
+                      const SizedBox(height: 12),
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
@@ -385,7 +380,6 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
           ),
         ),
       ),
-    ),
     );
   }
 

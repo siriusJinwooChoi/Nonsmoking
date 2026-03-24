@@ -94,7 +94,7 @@ class _Screen3ReasonsState extends State<Screen3Reasons> {
                   style: FilledButton.styleFrom(
                     backgroundColor: AppTheme.primary,
                     foregroundColor: Colors.white,
-                    disabledBackgroundColor: AppTheme.textMuted.withOpacity(0.3),
+                    disabledBackgroundColor: AppTheme.textMuted.withValues(alpha: 0.3),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                     elevation: 0,
                   ),

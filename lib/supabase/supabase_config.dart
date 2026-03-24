@@ -1,3 +1,5 @@
+import 'supabase_secrets.dart';
+
 /// Supabase 연결 정보.
 ///
 /// 빌드 시 `--dart-define`으로 주입하는 것을 권장합니다.
@@ -18,15 +20,19 @@
 ///
 /// **이메일(아이디) 로그인 (`email_provider_disabled`)**
 /// - 대시보드 **Authentication → Providers → Email** 에서 제공자 **활성화(Enable)** 필수. (SQL로는 켤 수 없음)
+///
+/// **배포 빌드**: `--dart-define` 없이 빌드하면 [kEmbeddedSupabaseUrl] / [kEmbeddedSupabaseAnonKey]가 쓰입니다.
+/// 비어 있으면 Supabase 미설정으로 간주되어 로그인·동기화 UI가 나오지 않습니다.
+
 abstract final class SupabaseConfig {
   static const String url = String.fromEnvironment(
     'SUPABASE_URL',
-    defaultValue: '',
+    defaultValue: kEmbeddedSupabaseUrl,
   );
 
   static const String anonKey = String.fromEnvironment(
     'SUPABASE_ANON_KEY',
-    defaultValue: '',
+    defaultValue: kEmbeddedSupabaseAnonKey,
   );
 
   static bool get isConfigured => url.isNotEmpty && anonKey.isNotEmpty;

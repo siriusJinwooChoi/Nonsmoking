@@ -217,7 +217,7 @@ class _TreeScreenState extends State<TreeScreen>
   void _showResetConfirmationDialog() {
     showDialog(
       context: context,
-      builder: (BuildContext context) {
+      builder: (BuildContext dialogContext) {
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           title: const Text('나무 초기화'),
@@ -225,12 +225,13 @@ class _TreeScreenState extends State<TreeScreen>
           actions: [
             TextButton(
               child: const Text('취소'),
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () => Navigator.of(dialogContext).pop(),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
               child: const Text('초기화'),
               onPressed: () async {
+                final rootContext = context;
                 final prefs = await SharedPreferences.getInstance();
                 await prefs.setInt(_kGrowthStage, 1);
                 await prefs.setInt(_kWater, 0);
@@ -240,14 +241,16 @@ class _TreeScreenState extends State<TreeScreen>
                   DateTime.now().millisecondsSinceEpoch,
                 );
 
+                if (!rootContext.mounted) return;
                 setState(() {
                   growthStage = 1;
                   water = 0;
                   currentWater = 0;
                 });
 
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
+                Navigator.of(dialogContext).pop();
+                if (!rootContext.mounted) return;
+                ScaffoldMessenger.of(rootContext).showSnackBar(
                   const SnackBar(content: Text('🌳 나무가 초기화되었습니다.')),
                 );
               },
@@ -387,7 +390,7 @@ class _TreeScreenState extends State<TreeScreen>
                             ? (water / stageGoal[growthStage]!).clamp(0.0, 1.0)
                             : 1.0,
                         minHeight: 10,
-                        backgroundColor: AppTheme.textMuted.withOpacity(0.3),
+                        backgroundColor: AppTheme.textMuted.withValues(alpha: 0.3),
                         valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF0EA5E9)),
                       ),
                     ),

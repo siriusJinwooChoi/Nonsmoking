@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../../theme/app_theme.dart';
 import '../../theme/onboarding_theme.dart';
 
 /// 담배 1갑 가격을 입력받는 화면

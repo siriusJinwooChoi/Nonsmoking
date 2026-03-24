@@ -136,7 +136,7 @@ class NonsmokeHelperScreen extends StatelessWidget {
                     height: 48,
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
-                      color: AppTheme.primary.withOpacity(0.1),
+                      color: AppTheme.primary.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(tip['icon']!, style: const TextStyle(fontSize: 24)),

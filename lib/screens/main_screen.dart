@@ -126,18 +126,19 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   /// 실패 횟수 1회 차감 (금연코인 5개 소모) 다이얼로그
   Future<void> _showReduceFailureCountDialog() async {
+    final ctx = context;
     final coins = await getGoldenCoins();
     final canReduce = coins >= 5 && _failureCount > 0;
-    if (!mounted) return;
+    if (!ctx.mounted) return;
     final confirmed = await showDialog<bool>(
-      context: context,
+      context: ctx,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text('실패 횟수 차감'),
         content: Text(
           canReduce
               ? '금연코인 5개를 사용하여 실패 횟수를 1개 차감하시겠습니까?'
-              : '금연코인이 부족합니다. (5코인 필요)\n현재 보유: ${coins}코인',
+              : '금연코인이 부족합니다. (5코인 필요)\n현재 보유: $coins코인',
         ),
         actions: [
           TextButton(
@@ -158,7 +159,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _failureCount = (_failureCount - 1).clamp(0, 0x7fffffff);
     await prefs.setInt(_failureCountKey, _failureCount);
     await _loadGoldenCoins();
-    if (mounted) setState(() {});
+    if (!ctx.mounted) return;
+    setState(() {});
   }
 
   Future<void> _loadPersistedData() async {
@@ -185,7 +187,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       await scheduleReasonReminder();
     }
 
-    updateLastAppOpenAndScheduleInactivity();
+    unawaited(bootstrapCoreReminderSchedulesOnAppOpen());
     _startTimer();
     await syncWidgetData();
   }
@@ -227,9 +229,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _pickGoalDays() async {
+    final ctx = context;
     final prefs = await SharedPreferences.getInstance();
+    if (!ctx.mounted) return;
     final picked = await showDialog<int>(
-      context: context,
+      context: ctx,
       builder: (ctx) {
         return AlertDialog(
           title: const Text('목표일 설정'),
@@ -258,20 +262,22 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         );
       },
     );
-    if (!mounted) return;
+    if (!ctx.mounted) return;
     if (picked == null) return;
     if (picked == 0) {
       await prefs.remove(kGoalDaysKey);
       await prefs.remove(kGoalCongratulatedDayKey);
+      if (!ctx.mounted) return;
       setState(() => _goalDays = null);
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(ctx).showSnackBar(
         const SnackBar(content: Text('목표일을 해제했습니다.'), duration: Duration(seconds: 2)),
       );
     } else {
       await prefs.setInt(kGoalDaysKey, picked);
       await prefs.remove(kGoalCongratulatedDayKey);
+      if (!ctx.mounted) return;
       setState(() => _goalDays = picked);
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(ctx).showSnackBar(
         SnackBar(content: Text('목표일을 ${picked}일로 설정했습니다.'), duration: const Duration(seconds: 2)),
       );
     }
@@ -361,7 +367,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    color: AppTheme.primary.withOpacity(0.1),
+                    color: AppTheme.primary.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
@@ -658,7 +664,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 color: AppTheme.surfaceCard,
                 borderRadius: BorderRadius.circular(14),
                 boxShadow: AppTheme.cardShadowSubtle,
-                border: Border.all(color: AppTheme.primary.withOpacity(0.2), width: 1),
+                border: Border.all(color: AppTheme.primary.withValues(alpha: 0.2), width: 1),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -688,7 +694,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 borderRadius: BorderRadius.circular(20),
                 boxShadow: [
                   BoxShadow(
-                    color: AppTheme.primary.withOpacity(0.25),
+                    color: AppTheme.primary.withValues(alpha: 0.25),
                     blurRadius: 16,
                     offset: const Offset(0, 6),
                   ),
@@ -701,7 +707,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text('시작일', style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 13)),
+                      Text('시작일', style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 13)),
                       Text(formattedStart, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500)),
                     ],
                   ),
@@ -709,7 +715,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text('누적일', style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 13)),
+                      Text('누적일', style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 13)),
                       Text('$days일', style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500)),
                     ],
                   ),
@@ -722,7 +728,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text('목표일', style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 13)),
+                          Text('목표일', style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 13)),
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -735,7 +741,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                                 ),
                               ),
                               const SizedBox(width: 4),
-                              Icon(Icons.touch_app_rounded, size: 14, color: Colors.white.withOpacity(0.7)),
+                              Icon(Icons.touch_app_rounded, size: 14, color: Colors.white.withValues(alpha: 0.7)),
                             ],
                           ),
                         ],
@@ -752,7 +758,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                     children: [
                       Text(
                         '금연 시간 (년/월/일/시/분/초)',
-                        style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 12),
+                        style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 12),
                       ),
                       if (_failureCount > 0)
                         GestureDetector(
@@ -769,7 +775,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                                 ),
                               ),
                               const SizedBox(width: 4),
-                              Icon(Icons.touch_app_rounded, size: 12, color: Colors.white.withOpacity(0.7)),
+                              Icon(Icons.touch_app_rounded, size: 12, color: Colors.white.withValues(alpha: 0.7)),
                             ],
                           ),
                         ),
@@ -781,11 +787,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                       Expanded(
                         child: Container(
                           padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-                          decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(10)),
+                          decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(10)),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('절약 금액', style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 12)),
+                              Text('절약 금액', style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 12)),
                               Text('₩$savedMoneyStr', style: const TextStyle(color: Colors.amberAccent, fontSize: 16, fontWeight: FontWeight.w700)),
                             ],
                           ),
@@ -795,11 +801,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                       Expanded(
                         child: Container(
                           padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-                          decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(10)),
+                          decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(10)),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('안 핀 담배', style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 12)),
+                              Text('안 핀 담배', style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 12)),
                               Text('$_skippedCigarettes개비', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
                             ],
                           ),

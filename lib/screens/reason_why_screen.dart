@@ -93,8 +93,11 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
           var foundFirst = false;
           for (final r in loaded) {
             if (r.pinned) {
-              if (foundFirst) r.pinned = false;
-              else foundFirst = true;
+              if (foundFirst) {
+                r.pinned = false;
+              } else {
+                foundFirst = true;
+              }
             }
           }
         }
@@ -349,7 +352,7 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
-                color: AppTheme.primary.withOpacity(0.1),
+                color: AppTheme.primary.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Row(
@@ -451,9 +454,9 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
                         // 2x2 아이콘 그리드 (종, 별 / 연필, 휴지통)
                         Container(
                           decoration: BoxDecoration(
-                            color: AppTheme.surface.withOpacity(0.5),
+                            color: AppTheme.surface.withValues(alpha: 0.5),
                             borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: AppTheme.textMuted.withOpacity(0.3)),
+                            border: Border.all(color: AppTheme.textMuted.withValues(alpha: 0.3)),
                           ),
                           padding: const EdgeInsets.all(4),
                           child: Column(

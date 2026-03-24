@@ -1,10 +1,11 @@
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'theme/app_theme.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'ad_manager.dart';
-import 'package:timezone/data/latest_all.dart' as tzData;
+import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
 // ✅ WorkManager
@@ -48,6 +49,8 @@ import 'supabase/supabase_sync_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Android 15+ edge-to-edge와 맞춤 (상·하단 시스템 영역까지 그리기)
+  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
 
   // ✅ Firebase 먼저 초기화
   await Firebase.initializeApp(
@@ -70,7 +73,7 @@ void main() async {
       isInDebugMode: false,
     );
 
-    tzData.initializeTimeZones();
+    tz_data.initializeTimeZones();
     tz.setLocalLocation(tz.getLocation('Asia/Seoul'));
 
     if (SupabaseConfig.isConfigured) {
@@ -314,8 +317,7 @@ class _AttendanceGateState extends State<AttendanceGate> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _applySkipOverlayFlag());
-    scheduleAttendanceReminderIfNeeded();
-    scheduleCigaretteCollectionReminders();
+    unawaited(bootstrapCoreReminderSchedulesOnAppOpen());
   }
 
   Future<void> _applySkipOverlayFlag() async {
@@ -497,7 +499,7 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
           color: Colors.white,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.06),
+              color: Colors.black.withValues(alpha: 0.06),
               blurRadius: 12,
               offset: const Offset(0, -2),
             ),

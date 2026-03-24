@@ -4,6 +4,7 @@ import 'game_screen.dart';
 import 'word_game_screen.dart';
 import 'cigarette_catch_game_screen.dart';
 import 'timing_tap_game_screen.dart';
+import 'game_ranking_screen.dart';
 
 /// 게임 선택: 1-30 숫자 게임 / 단어맞추기 / 담배맞추기 / 완벽 타이밍
 class GameMenuScreen extends StatelessWidget {
@@ -15,6 +16,18 @@ class GameMenuScreen extends StatelessWidget {
       backgroundColor: AppTheme.surface,
       appBar: AppBar(
         title: const Text('게임'),
+        actions: [
+          TextButton.icon(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const GameRankingScreen()),
+              );
+            },
+            icon: const Icon(Icons.emoji_events_rounded, color: Colors.white, size: 22),
+            label: const Text('랭킹', style: TextStyle(color: Colors.white)),
+          ),
+        ],
       ),
       body: SafeArea(
         child: SingleChildScrollView(
