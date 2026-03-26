@@ -132,8 +132,10 @@ class _GameRankingScreenState extends State<GameRankingScreen> {
           .eq('snapshot_date', snapshotDate)
           .eq('game_kind', kind)
           .lte('rank', 10)
-          .order('rank');
-      return List<Map<String, dynamic>>.from(res as List);
+          .order('rank', ascending: true);
+      final list = List<Map<String, dynamic>>.from(res as List);
+      _sortDailySnapshotByRankAsc(list);
+      return list;
     }
 
     _seqList = await top10('number_sequence');
@@ -213,6 +215,9 @@ class _GameRankingScreenState extends State<GameRankingScreen> {
     _catchList = List<Map<String, dynamic>>.from(catchRes as List);
     _timingList = List<Map<String, dynamic>>.from(timingRes as List);
 
+    // API 정렬이 기대와 다를 수 있어 화면 표시는 항상 1위→10위 순으로 고정
+    _sortLiveGameStatsLists();
+
     final ids = <String>{};
     for (final r in [..._seqList, ..._wordList, ..._catchList, ..._timingList]) {
       final id = r['user_id'] as String?;
@@ -265,6 +270,39 @@ class _GameRankingScreenState extends State<GameRankingScreen> {
     _myCatchRank = catchRank;
     _myTimingRank = timingRank;
     _usingDailySnapshot = false;
+  }
+
+  /// 일일 스냅샷: rank 오름차순(1위가 맨 위)
+  void _sortDailySnapshotByRankAsc(List<Map<String, dynamic>> list) {
+    list.sort((a, b) {
+      final ra = (a['rank'] as num?)?.toInt() ?? 9999;
+      final rb = (b['rank'] as num?)?.toInt() ?? 9999;
+      return ra.compareTo(rb);
+    });
+  }
+
+  /// 실시간 game_stats: 종목별 최고 기록 순(1위가 맨 위)
+  void _sortLiveGameStatsLists() {
+    _seqList.sort((a, b) {
+      final sa = (a['number_sequence_best_seconds'] as num?)?.toDouble() ?? double.infinity;
+      final sb = (b['number_sequence_best_seconds'] as num?)?.toDouble() ?? double.infinity;
+      return sa.compareTo(sb);
+    });
+    _wordList.sort((a, b) {
+      final wa = (a['word_game_level'] as num?)?.toInt() ?? 0;
+      final wb = (b['word_game_level'] as num?)?.toInt() ?? 0;
+      return wb.compareTo(wa);
+    });
+    _catchList.sort((a, b) {
+      final ca = (a['cigarette_catch_best_score'] as num?)?.toInt() ?? 0;
+      final cb = (b['cigarette_catch_best_score'] as num?)?.toInt() ?? 0;
+      return cb.compareTo(ca);
+    });
+    _timingList.sort((a, b) {
+      final ta = (a['timing_tap_best_score'] as num?)?.toInt() ?? 0;
+      final tb = (b['timing_tap_best_score'] as num?)?.toInt() ?? 0;
+      return tb.compareTo(ta);
+    });
   }
 
   bool _inTop10(List<Map<String, dynamic>> list, String? uid) {

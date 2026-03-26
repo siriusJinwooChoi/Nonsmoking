@@ -9,6 +9,7 @@ import '../supabase/supabase_sync_service.dart';
 import 'login_screen.dart';
 import '../screens/nickname_setup_screen.dart';
 import 'terms_acceptance_screen.dart';
+import '../widgets/update_prompt_gate.dart';
 
 /// Supabase가 설정된 경우에만 로그인·약관을 거친 뒤 [child]를 표시합니다.
 class AuthGate extends StatefulWidget {
@@ -67,7 +68,7 @@ class _AuthGateState extends State<AuthGate> {
   @override
   Widget build(BuildContext context) {
     if (!SupabaseConfig.isConfigured) {
-      return widget.child;
+      return UpdatePromptGate(child: widget.child);
     }
 
     final session = Supabase.instance.client.auth.currentSession;
@@ -104,7 +105,7 @@ class _AuthGateState extends State<AuthGate> {
                 onComplete: () => setState(() => _profileGateVersion++),
               );
             }
-            return widget.child;
+            return UpdatePromptGate(child: widget.child);
           },
         );
       },

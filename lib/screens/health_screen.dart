@@ -78,6 +78,7 @@ class _HealthScreenState extends State<HealthScreen> {
 
   Future<void> _loadStartTime() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     final millis = prefs.getInt('startTime');
 
     if (millis != null) {
@@ -91,7 +92,7 @@ class _HealthScreenState extends State<HealthScreen> {
   }
 
   void _updateDuration() {
-    if (_startTime == null) return;
+    if (_startTime == null || !mounted) return;
     final now = DateTime.now();
     setState(() {
       quitDuration = now.difference(_startTime!);

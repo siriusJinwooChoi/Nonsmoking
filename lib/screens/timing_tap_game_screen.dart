@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../supabase/supabase_sync_service.dart';
 import '../theme/app_theme.dart';
+import 'attendance_screen.dart';
 import '../widgets/banner_ad_bar.dart';
 
 /// 완벽 타이밍: 움직이는 표시가 중앙에 올 때 탭하는 타이밍 게임
@@ -58,6 +59,10 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
     });
     const tick = Duration(milliseconds: 16);
     _timer = Timer.periodic(tick, (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
       if (!_running) {
         t.cancel();
         return;
@@ -81,18 +86,23 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
       _lastResult = '시간 초과! 실패했습니다.';
       _position = 1.0;
     });
-    _showFailDialog();
+    unawaited(_showFailDialog(
+      message: '시간이 초과되었습니다.\n코인으로 이어하면 현재 레벨과 점수를 유지할 수 있어요.',
+    ));
   }
 
-  void _showFailDialog({String? message}) {
+  Future<void> _showFailDialog({String? message}) async {
     if (_isFailDialogShowing) return;
+    if (!mounted) return;
     _isFailDialogShowing = true;
     final text = message ??
-        '시간이 초과되어 실패했습니다.\n레벨 1부터 다시 시작합니다.';
-    showDialog(
+        '실패했습니다.\n코인으로 이어하면 현재 레벨과 점수를 유지한 채 다시 도전할 수 있어요.';
+    final coins = await getGoldenCoins();
+    if (!mounted) return;
+    final choice = await showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text('게임 실패'),
         content: Text(
@@ -101,21 +111,31 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              if (!mounted) return;
-              _resetGame();
-              setState(() {
-                _lastResult = '실패 후 재시작! 다시 도전해보세요.';
-              });
-              _isFailDialogShowing = false;
-            },
-            child: const Text('확인'),
+            onPressed: () => Navigator.pop(ctx, 'giveup'),
+            child: const Text('포기'),
           ),
+          if (coins >= 1)
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'revive'),
+              child: const Text('코인 1개로 이어하기'),
+            ),
         ],
       ),
-    ).then((_) {
-      _isFailDialogShowing = false;
+    );
+    if (!mounted) return;
+    _isFailDialogShowing = false;
+    if (choice == 'revive') {
+      await setGoldenCoins(coins - 1);
+      unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
+      setState(() {
+        _lastResult = '중앙에 가까울수록 높은 점수!';
+      });
+      _startRound();
+      return;
+    }
+    _resetGame();
+    setState(() {
+      _lastResult = '실패 후 재시작! 다시 도전해보세요.';
     });
   }
 
@@ -130,9 +150,9 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
       setState(() {
         _lastResult = '중앙 밖에서 멈췄습니다. 실패!';
       });
-      _showFailDialog(
-        message: '중앙에 표시된 영역 밖에서 멈췄습니다.\n레벨 1부터 다시 시작합니다.',
-      );
+      unawaited(_showFailDialog(
+        message: '중앙에 표시된 영역 밖에서 멈췄습니다.\n코인으로 이어하면 현재 레벨과 점수를 유지할 수 있어요.',
+      ));
       return;
     }
 

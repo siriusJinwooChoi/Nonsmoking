@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import '../ad_manager.dart';
 import '../supabase/supabase_sync_service.dart';
+import 'attendance_screen.dart';
 
 /// 담배맞추기: 떨어지는 담배 2개를 시간차로 맞추는 게임. 1~100단계, 단계별 속도 증가, 점수·최종단계 기록.
 class CigaretteCatchGameScreen extends StatefulWidget {
@@ -141,7 +142,7 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
       c.y += _fallSpeed;
       if (c.y > _gameAreaHeight) {
         _cigarettes.removeAt(i);
-        _endGame();
+        _onFallMiss();
         return;
       }
     }
@@ -209,7 +210,53 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
     }
   }
 
-  void _endGame() async {
+  Future<void> _onFallMiss() async {
+    _timer?.cancel();
+    if (!mounted) return;
+    final coins = await getGoldenCoins();
+    if (!mounted) return;
+    final choice = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('게임 오버'),
+        content: Text(
+          coins >= 1
+              ? '코인 1개를 사용하면 같은 단계에서 이어서 플레이할 수 있어요.'
+              : '포기하고 결과를 확인할까요?\n(코인이 부족하면 이어하기를 할 수 없어요.)',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'giveup'),
+            child: const Text('포기'),
+          ),
+          if (coins >= 1)
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'revive'),
+              child: const Text('코인 1개로 이어하기'),
+            ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (choice == 'revive') {
+      await setGoldenCoins(coins - 1);
+      unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
+      setState(() {
+        _gameOver = false;
+        _cigarettes.clear();
+        _spawned = 0;
+        _isGameOverAdShowing = false;
+      });
+      _startLoop();
+      _spawnNext();
+      return;
+    }
+    await _finalizeGameOver();
+  }
+
+  Future<void> _finalizeGameOver() async {
     _timer?.cancel();
     await _saveBest();
     await _saveBestScore();

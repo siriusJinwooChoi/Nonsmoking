@@ -1,3 +1,5 @@
+import 'dart:async' show unawaited;
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
@@ -9,7 +11,7 @@ const String kGoldenCoinsKey = 'golden_coins';
 /// 이 날짜(yyyy-MM-dd)에 "오늘 하루 출석 화면 안 보기"를 선택한 경우, 당일 재실행 시 출석 오버레이 생략
 const String kAttendanceSkipOverlayDateKey = 'attendance_skip_overlay_date';
 const int kAttendanceDays = 28;
-const int kCoinsPerDay = 10;
+const int kCoinsPerDay = 15;
 const int kCoinsMilestone = 20;
 const List<int> kMilestoneDays = [7, 14, 21, 28];
 
@@ -128,9 +130,6 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
     await cancelAttendanceReminder();
 
-    final sync = widget.onAttendanceRecorded;
-    if (sync != null) await sync();
-
     if (!mounted) return;
     setState(() {
       _streakDay = day == 28 ? 1 : day + 1;
@@ -141,6 +140,12 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       _attendedThisSession = true;
       _hideOverlayRestOfDay = false;
     });
+
+    final sync = widget.onAttendanceRecorded;
+    if (sync != null) {
+      unawaited(sync().catchError((Object _) {}));
+    }
+
     Future.delayed(const Duration(milliseconds: 1800), () {
       if (!mounted) return;
       setState(() {

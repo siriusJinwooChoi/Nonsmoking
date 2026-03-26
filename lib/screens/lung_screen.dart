@@ -43,6 +43,7 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
 
   Future<void> _initializeLungHealth() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     final lastTimestamp = prefs.getInt('lastUpdatedTime');
     final savedHealth = prefs.getInt('lungHealth') ?? 0;
 
@@ -62,6 +63,7 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
     );
 
     await _saveLungHealth();
+    if (!mounted) return;
     setState(() {});
   }
 
@@ -73,6 +75,7 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _healLung() async {
+    if (!mounted) return;
     if (lungHealth >= 100) {
       _healTimer?.cancel();
       return;
@@ -86,6 +89,7 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
     final additional = (diffMs ~/ _perPercentMs);
     if (additional <= 0) return;
 
+    if (!mounted) return;
     setState(() {
       lungHealth = (lungHealth + additional).clamp(0, 100);
       _controller.animateTo(

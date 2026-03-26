@@ -86,6 +86,7 @@ class _TreeScreenState extends State<TreeScreen>
 
   Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     setState(() {
       growthStage = prefs.getInt(_kGrowthStage) ?? 1;
       water = prefs.getInt(_kWater) ?? 0;
@@ -192,6 +193,7 @@ class _TreeScreenState extends State<TreeScreen>
     _shakeController.forward(from: 0);
 
     await Future.delayed(const Duration(seconds: 1));
+    if (!mounted) return;
 
     if (growthStage < 5 && water >= stageGoal[growthStage]!) {
       setState(() {
@@ -320,6 +322,40 @@ class _TreeScreenState extends State<TreeScreen>
                 ),
               ),
               const SizedBox(height: 12),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('이번 단계 성장', style: AppTheme.labelMedium.copyWith(color: AppTheme.textSecondary)),
+                        Text(
+                          '$percent%',
+                          style: AppTheme.labelMedium.copyWith(
+                            color: AppTheme.primary,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: LinearProgressIndicator(
+                        value: growthStage < 5
+                            ? (water / stageGoal[growthStage]!).clamp(0.0, 1.0)
+                            : 1.0,
+                        minHeight: 8,
+                        backgroundColor: AppTheme.textMuted.withValues(alpha: 0.3),
+                        valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primary),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
               SizedBox(
                 height: 160,
                 child: Stack(
@@ -386,9 +422,9 @@ class _TreeScreenState extends State<TreeScreen>
                     ClipRRect(
                       borderRadius: BorderRadius.circular(8),
                       child: LinearProgressIndicator(
-                        value: growthStage < 5
-                            ? (water / stageGoal[growthStage]!).clamp(0.0, 1.0)
-                            : 1.0,
+                        value: (_maxCurrentWater > 0)
+                            ? (currentWater / _maxCurrentWater).clamp(0.0, 1.0)
+                            : 0.0,
                         minHeight: 10,
                         backgroundColor: AppTheme.textMuted.withValues(alpha: 0.3),
                         valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF0EA5E9)),

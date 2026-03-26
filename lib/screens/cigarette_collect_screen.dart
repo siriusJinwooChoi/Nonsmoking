@@ -323,6 +323,10 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
       _pressProgress = 0.0;
     });
     _pressTimer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
       if (!_pressingButton) {
         timer.cancel();
         return;

@@ -34,12 +34,14 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _inactivityNotificationEnabled = true;
   bool _attendanceReminderEnabled = true;
+  bool _cigaretteCollectionReminderEnabled = true;
 
   @override
   void initState() {
     super.initState();
     _loadInactivitySetting();
     _loadAttendanceReminderSetting();
+    _loadCigaretteCollectionReminderSetting();
   }
 
   Future<void> _loadInactivitySetting() async {
@@ -50,6 +52,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadAttendanceReminderSetting() async {
     final v = await getAttendanceReminderEnabled();
     if (mounted) setState(() => _attendanceReminderEnabled = v);
+  }
+
+  Future<void> _loadCigaretteCollectionReminderSetting() async {
+    final v = await getCigaretteCollectionReminderEnabled();
+    if (mounted) setState(() => _cigaretteCollectionReminderEnabled = v);
   }
 
   Widget _inactivityNotificationTile(BuildContext context) {
@@ -117,6 +124,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(value ? '출석 알림을 켰습니다.' : '출석 알림을 껐습니다.'),
+                duration: const Duration(seconds: 1),
+              ),
+            );
+          },
+          activeThumbColor: AppTheme.primary,
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      ),
+    );
+  }
+
+  Widget _cigaretteCollectionReminderTile(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceCard,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: AppTheme.cardShadowSubtle,
+      ),
+      child: ListTile(
+        leading: const Icon(Icons.inventory_2_rounded, color: AppTheme.primary, size: 24),
+        title: Text(
+          '담배 수집 알림',
+          style: AppTheme.titleMedium.copyWith(fontSize: 16, color: AppTheme.textPrimary),
+        ),
+        subtitle: const Text(
+          '09:00·12:00·18:00·22:00 정각에 수집 가능 시간 안내',
+          style: AppTheme.bodyMedium,
+        ),
+        trailing: Switch(
+          value: _cigaretteCollectionReminderEnabled,
+          onChanged: (value) async {
+            await setCigaretteCollectionReminderEnabled(value);
+            if (!context.mounted) return;
+            setState(() => _cigaretteCollectionReminderEnabled = value);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(value ? '담배 수집 알림을 켰습니다.' : '담배 수집 알림을 껐습니다.'),
                 duration: const Duration(seconds: 1),
               ),
             );
@@ -237,6 +282,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           _inactivityNotificationTile(context),
           _attendanceReminderTile(context),
+          _cigaretteCollectionReminderTile(context),
           const SizedBox(height: 24),
           _sectionTitle('데이터'),
           _settingsTile(

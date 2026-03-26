@@ -79,6 +79,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
       syncWidgetData();
+    } else if (state == AppLifecycleState.resumed) {
+      _refreshQuitMetricsDisplay();
     }
   }
 
@@ -112,6 +114,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   void didUpdateWidget(covariant MainScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.refreshTrigger != widget.refreshTrigger) _loadGoldenCoins();
+    if (oldWidget.dailyCigarettes != widget.dailyCigarettes ||
+        oldWidget.pricePerPack != widget.pricePerPack ||
+        oldWidget.cigarettesPerPack != widget.cigarettesPerPack) {
+      _refreshQuitMetricsDisplay();
+    }
   }
 
   @override
@@ -184,21 +191,51 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       await prefs.setInt('startTime', _startTime!.millisecondsSinceEpoch);
     }
 
+    // 알림 스케줄이 실패·지연돼도 금연 수치·타이머는 바로 동작하도록 먼저 갱신
+    _refreshQuitMetricsDisplay();
+    _startTimer();
+
     _reminderTimes = await getReminderTimes();
     if (!mounted) return;
-    if (_reminderTimes.isNotEmpty) {
-      await scheduleAllDailyReminders();
-      if (!mounted) return;
-    }
-    final reasonEnabled = prefs.getBool(kReasonNotificationEnabledKey) ?? false;
-    if (reasonEnabled) {
-      await scheduleReasonReminder();
-      if (!mounted) return;
+    try {
+      if (_reminderTimes.isNotEmpty) {
+        await scheduleAllDailyReminders();
+        if (!mounted) return;
+      }
+      final reasonEnabled = prefs.getBool(kReasonNotificationEnabledKey) ?? false;
+      if (reasonEnabled) {
+        await scheduleReasonReminder();
+        if (!mounted) return;
+      }
+    } catch (e, st) {
+      debugPrint('MainScreen: reminder schedule failed: $e\n$st');
     }
 
     unawaited(bootstrapCoreReminderSchedulesOnAppOpen());
-    _startTimer();
     await syncWidgetData();
+  }
+
+  /// 시작 시각 기준 금연 시간·절약·개비 (미래 시각이면 0으로 클램프)
+  void _refreshQuitMetricsDisplay() {
+    if (_startTime == null || !mounted) return;
+    final now = DateTime.now();
+    var diff = now.difference(_startTime!);
+    if (diff.isNegative) diff = Duration.zero;
+    final seconds = diff.inSeconds;
+
+    final totalCigs = (widget.dailyCigarettes / (24 * 60 * 60)) * seconds;
+
+    final costPerCig = widget.cigarettesPerPack > 0
+        ? widget.pricePerPack / widget.cigarettesPerPack
+        : 0.0;
+
+    final money = totalCigs * costPerCig;
+
+    setState(() {
+      _elapsed = diff;
+      _savedMoney = money;
+      _skippedCigarettes = totalCigs.floor();
+    });
   }
 
   void _startTimer() {
@@ -211,7 +248,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       }
 
       final now = DateTime.now();
-      final diff = now.difference(_startTime!);
+      var diff = now.difference(_startTime!);
+      if (diff.isNegative) diff = Duration.zero;
       final seconds = diff.inSeconds;
 
       final totalCigs = (widget.dailyCigarettes / (24 * 60 * 60)) * seconds;
@@ -468,14 +506,15 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   /// 금연 시간을 년/월/일/시간/분/초로 표시
   String formatDurationLong(Duration d) {
-    final totalDays = d.inDays;
+    final dur = d.isNegative ? Duration.zero : d;
+    final totalDays = dur.inDays;
     final years = totalDays ~/ 365;
     final remainderDays = totalDays % 365;
     final months = remainderDays ~/ 30;
     final days = remainderDays % 30;
-    final hours = d.inHours.remainder(24);
-    final minutes = d.inMinutes.remainder(60);
-    final seconds = d.inSeconds.remainder(60);
+    final hours = dur.inHours.remainder(24);
+    final minutes = dur.inMinutes.remainder(60);
+    final seconds = dur.inSeconds.remainder(60);
     final parts = <String>[];
     if (years > 0) parts.add('${years}년');
     if (months > 0) parts.add('${months}개월');
@@ -515,6 +554,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final now = DateTime.now();
     await prefs.setInt('startTime', now.millisecondsSinceEpoch);
     setState(() => _startTime = now);
+    _refreshQuitMetricsDisplay();
     await syncWidgetData();
 
     // (기존 로직 유지: 폐 건강 -10)

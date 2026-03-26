@@ -48,21 +48,20 @@ import 'supabase/supabase_config.dart';
 import 'supabase/supabase_sync_service.dart';
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  // Android 15+ edge-to-edge와 맞춤 (상·하단 시스템 영역까지 그리기)
-  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-
-  // ✅ Firebase 먼저 초기화
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
-
-  // ✅ Crashlytics 설정은 Firebase 초기화 이후에!
-  await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(true);
-
-  FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterFatalError;
-
   runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+    // Android 15+ edge-to-edge와 맞춤 (상·하단 시스템 영역까지 그리기)
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+
+    // ✅ Firebase 먼저 초기화
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+
+    // ✅ Crashlytics 설정은 Firebase 초기화 이후에!
+    await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(true);
+    FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterFatalError;
+
     // ✅ 광고 초기화
     await MobileAds.instance.initialize();
     AdManager.loadAd();
