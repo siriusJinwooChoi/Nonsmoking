@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'reason_why_screen.dart';
 import 'nonsmoke_helper_screen.dart';
@@ -22,6 +23,8 @@ import '../analytics/app_analytics.dart';
 import '../notifications/daily_reminder_worker.dart';
 // ✅ 홈 화면 위젯 갱신(동기화)
 import '../widget/widget_helper.dart';
+import '../supabase/supabase_config.dart';
+import '../api/reasons_api_service.dart';
 
 class MainScreen extends StatefulWidget {
   final VoidCallback onAlarmTap;
@@ -70,6 +73,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   bool _isBannerReady = false;
 
   final _moneyFormatter = NumberFormat.decimalPattern('ko_KR');
+  final ReasonsApiService _reasonsApi = const ReasonsApiService();
 
   @override
   void initState() {
@@ -193,6 +197,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final savedGoal = prefs.getInt(kGoalDaysKey);
     _goalDays = savedGoal != null && savedGoal > 0 ? savedGoal : null;
 
+    // 로컬 우선 표시 후, 로그인 상태면 서버 값으로 동기화(느려도 UI 블로킹 없음)
+    unawaited(_syncMainReasonFromApiIfAvailable());
+
     if (millis != null) {
       _startTime = DateTime.fromMillisecondsSinceEpoch(millis);
     } else {
@@ -222,6 +229,26 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
     unawaited(bootstrapCoreReminderSchedulesOnAppOpen());
     await syncWidgetData();
+  }
+
+  Future<void> _syncMainReasonFromApiIfAvailable() async {
+    if (!SupabaseConfig.isConfigured) return;
+    final session = Supabase.instance.client.auth.currentSession;
+    final token = session?.accessToken;
+    if (token == null || token.isEmpty) return;
+    try {
+      final serverPinned = await _reasonsApi.fetchPinnedReason(accessToken: token);
+      if (serverPinned == null || serverPinned.isEmpty) return;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('pinnedReasonText', serverPinned);
+      if (!mounted) return;
+      setState(() {
+        _mainReason = serverPinned;
+        _reasonController.text = serverPinned;
+      });
+    } catch (_) {
+      // 로컬 우선 정책: 서버 실패 시 조용히 무시
+    }
   }
 
   /// 시작 시각 기준 금연 시간·절약·개비 (미래 시각이면 0으로 클램프)
@@ -517,6 +544,22 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('금연할 이유를 저장했습니다.')),
     );
+
+    // 로컬 반영을 먼저 끝낸 뒤, 서버에 비동기 전송
+    unawaited(_pushMainReasonToApiIfAvailable(text));
+  }
+
+  Future<void> _pushMainReasonToApiIfAvailable(String text) async {
+    if (text.trim().isEmpty) return;
+    if (!SupabaseConfig.isConfigured) return;
+    final session = Supabase.instance.client.auth.currentSession;
+    final token = session?.accessToken;
+    if (token == null || token.isEmpty) return;
+    try {
+      await _reasonsApi.savePinnedReason(accessToken: token, text: text.trim());
+    } catch (_) {
+      // 로컬 우선 정책: 서버 실패 시 조용히 무시
+    }
   }
 
   Future<void> _upsertPinnedReasonInReasonList(SharedPreferences prefs, String text) async {
