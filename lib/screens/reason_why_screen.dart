@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async' show unawaited;
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -123,15 +124,18 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
       await _disableReasonNotification();
       return;
     }
+    // UI는 즉시 반영하고, 예약 작업은 뒤에서 수행해 체감 지연을 줄입니다.
+    if (mounted) {
+      setState(() {
+        _selectedReasonId = item.id;
+        _reasonNotificationEnabled = true;
+      });
+    }
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_selectedReasonIdKey, item.id);
     await prefs.setString(kSelectedReasonTextKey, item.text);
     await prefs.setBool(kReasonNotificationEnabledKey, true);
-    await scheduleReasonReminder();
-    setState(() {
-      _selectedReasonId = item.id;
-      _reasonNotificationEnabled = true;
-    });
+    unawaited(scheduleReasonReminder());
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('매일 12:00에 선택한 이유로 알림이 옵니다.'), duration: Duration(seconds: 2)),
@@ -139,11 +143,13 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
   }
 
   Future<void> _disableReasonNotification() async {
-    await disableReasonReminder();
-    setState(() {
-      _reasonNotificationEnabled = false;
-      _selectedReasonId = null;
-    });
+    if (mounted) {
+      setState(() {
+        _reasonNotificationEnabled = false;
+        _selectedReasonId = null;
+      });
+    }
+    unawaited(disableReasonReminder());
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('금연 이유 알림이 해지되었습니다.'), duration: Duration(seconds: 2)),

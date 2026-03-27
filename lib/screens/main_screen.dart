@@ -3,7 +3,9 @@ import 'package:flutter/services.dart'; // ✅ SystemNavigator.pop
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
+import 'dart:convert';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'reason_why_screen.dart';
 import 'nonsmoke_helper_screen.dart';
@@ -60,6 +62,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   int _goldenCoins = 0;
   Timer? _timer;
   List<TimeOfDay> _reminderTimes = [];
+  String _mainReason = '';
+  bool _showReasonEditor = true;
+  final TextEditingController _reasonController = TextEditingController();
 
   BannerAd? _bannerAd;
   bool _isBannerReady = false;
@@ -126,6 +131,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _bannerAd?.dispose();
+    _reasonController.dispose();
     super.dispose();
   }
 
@@ -181,6 +187,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final millis = prefs.getInt('startTime');
     _failureCount = prefs.getInt(_failureCountKey) ?? 0;
     _goldenCoins = prefs.getInt(kGoldenCoinsKey) ?? 0;
+    _mainReason = prefs.getString('pinnedReasonText') ?? '';
+    _reasonController.text = _mainReason;
+    _showReasonEditor = _mainReason.isEmpty;
     final savedGoal = prefs.getInt(kGoalDaysKey);
     _goalDays = savedGoal != null && savedGoal > 0 ? savedGoal : null;
 
@@ -430,6 +439,49 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                     textAlign: TextAlign.center,
                   ),
                 ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surface.withValues(alpha: 0.6),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppTheme.primary.withValues(alpha: 0.15)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('금연 스트레스 완화 영상', style: AppTheme.titleMedium),
+                      const SizedBox(height: 8),
+                      Text(
+                        '아래 버튼을 누르면 유튜브에서 관련 영상 목록을 바로 볼 수 있어요.',
+                        style: AppTheme.bodyMedium.copyWith(color: AppTheme.textMuted),
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          ActionChip(
+                            label: const Text('금연 스트레스 완화'),
+                            onPressed: () => _openExternalYoutubeSearch('금연 스트레스 완화'),
+                          ),
+                          ActionChip(
+                            label: const Text('금연 불안 호흡'),
+                            onPressed: () => _openExternalYoutubeSearch('금연 불안 호흡 명상'),
+                          ),
+                          ActionChip(
+                            label: const Text('흡연 욕구 참는법'),
+                            onPressed: () => _openExternalYoutubeSearch('흡연 욕구 참는 법'),
+                          ),
+                          ActionChip(
+                            label: const Text('금연하는 방법'),
+                            onPressed: () => _openExternalYoutubeSearch('금연하는 방법'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
@@ -446,6 +498,103 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         Expanded(child: Text(value, style: AppTheme.titleMedium)),
       ],
     );
+  }
+
+  Future<void> _saveMainReasonFromInput() async {
+    final text = _reasonController.text.trim();
+    final prefs = await SharedPreferences.getInstance();
+    if (text.isEmpty) {
+      await prefs.remove('pinnedReasonText');
+    } else {
+      await prefs.setString('pinnedReasonText', text);
+      await _upsertPinnedReasonInReasonList(prefs, text);
+    }
+    if (!mounted) return;
+    setState(() {
+      _mainReason = text;
+      _showReasonEditor = false;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('금연할 이유를 저장했습니다.')),
+    );
+  }
+
+  Future<void> _upsertPinnedReasonInReasonList(SharedPreferences prefs, String text) async {
+    const reasonsKey = 'quitReasons_v1';
+    final raw = prefs.getString(reasonsKey);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final normalized = text.trim();
+    if (normalized.isEmpty) return;
+
+    List<Map<String, dynamic>> items = <Map<String, dynamic>>[];
+    if (raw != null && raw.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          items = decoded
+              .whereType<Map>()
+              .map((m) => Map<String, dynamic>.from(m))
+              .toList();
+        }
+      } catch (_) {
+        items = <Map<String, dynamic>>[];
+      }
+    }
+
+    // 기존 pinned 해제
+    for (final it in items) {
+      it['pinned'] = false;
+    }
+
+    // 동일 문구 있으면 해당 항목 재사용, 없으면 신규 추가
+    Map<String, dynamic>? target;
+    for (final it in items) {
+      final t = (it['text'] as String?)?.trim() ?? '';
+      if (t == normalized) {
+        target = it;
+        break;
+      }
+    }
+
+    if (target == null) {
+      var nextDisplayNumber = 1;
+      for (final it in items) {
+        final n = (it['displayNumber'] as int?) ?? 0;
+        if (n >= nextDisplayNumber) nextDisplayNumber = n + 1;
+      }
+      target = <String, dynamic>{
+        'id': now.toString(),
+        'text': normalized,
+        'pinned': true,
+        'createdAt': now,
+        'displayNumber': nextDisplayNumber,
+      };
+      items.add(target);
+    } else {
+      target['text'] = normalized;
+      target['pinned'] = true;
+      target['createdAt'] = (target['createdAt'] as int?) ?? now;
+      target['displayNumber'] = (target['displayNumber'] as int?) ?? 1;
+    }
+
+    await prefs.setString(reasonsKey, jsonEncode(items));
+  }
+
+  Future<void> _openExternalYoutubeSearch(String keyword) async {
+    final url = 'https://www.youtube.com/results?search_query=${Uri.encodeComponent(keyword)}';
+    final ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('유튜브를 열 수 없습니다.')),
+      );
+    }
+  }
+
+  void _openReasonEditorInline() {
+    setState(() {
+      _showReasonEditor = true;
+      _reasonController.text = _mainReason;
+    });
   }
 
   Future<void> _onSmokedTap() async {
@@ -736,6 +885,46 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 ],
               ),
             ),
+            Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.surfaceCard,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: AppTheme.cardShadowSubtle,
+                border: Border.all(color: AppTheme.primary.withValues(alpha: 0.15), width: 1),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _mainReason.isEmpty
+                          ? '금연할 이유(대표): 아직 입력된 이유가 없습니다.'
+                          : '금연할 이유(대표): $_mainReason',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.bodyMedium.copyWith(
+                        color: AppTheme.textPrimary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  InkWell(
+                    onTap: _openReasonEditorInline,
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(Icons.edit_rounded, size: 14, color: AppTheme.primary),
+                    ),
+                  ),
+                ],
+              ),
+            ),
             // 상단 요약 카드
             Container(
               decoration: BoxDecoration(
@@ -801,9 +990,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 24),
                   Container(height: 1, color: Colors.white24),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 22),
                   Text(formatDurationLong(_elapsed), style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
                   const SizedBox(height: 4),
                   Row(
@@ -870,6 +1059,54 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               ),
             ),
             const SizedBox(height: 24),
+            if (_showReasonEditor)
+              Container(
+                margin: const EdgeInsets.only(bottom: 16),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceCard,
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: AppTheme.cardShadowSubtle,
+                  border: Border.all(color: AppTheme.primary.withValues(alpha: 0.18), width: 1),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.format_quote_rounded, color: AppTheme.primary, size: 22),
+                        const SizedBox(width: 8),
+                        Text('금연할 이유', style: AppTheme.titleMedium),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '힘든 순간에 떠올릴 한 문장을 적어두세요.',
+                      style: AppTheme.bodyMedium.copyWith(color: AppTheme.textMuted),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: _reasonController,
+                      minLines: 2,
+                      maxLines: 3,
+                      textInputAction: TextInputAction.done,
+                      decoration: const InputDecoration(
+                        hintText: '예) 가족과 더 건강하게 오래 살고 싶어요.',
+                      ),
+                      onSubmitted: (_) => _saveMainReasonFromInput(),
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: _saveMainReasonFromInput,
+                        icon: const Icon(Icons.save_rounded, size: 18),
+                        label: const Text('이유 저장'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
 
             // 알림 / 흡연 욕구 버튼
             Row(

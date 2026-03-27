@@ -48,6 +48,7 @@ const String kCigaretteCollectionReminderTaskName = 'cigarette_collection_remind
 const String kCigaretteCollectionReminderUniqueWorkPrefix = 'cigarette_collection_reminder_';
 const int kCigaretteCollectionReminderNotificationIdBase = 6001;
 const String kCigaretteCollectionReminderEnabledKey = 'cigaretteCollectionReminderEnabled';
+const String kCigaretteCollectionLastNotifiedWindowKey = 'cigarette_collection_last_notified_window';
 const int kCigaretteCollectionWindowMinutes = 20;
 const List<int> _cigaretteCollectionHours = [9, 12, 18, 22];
 
@@ -682,6 +683,10 @@ Future<bool> _handleCigaretteCollectionReminder(Map<String, dynamic>? inputData)
     ),
   );
 
+  final windowId =
+      '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}-${hour.toString().padLeft(2, '0')}';
+  await prefs.setString(kCigaretteCollectionLastNotifiedWindowKey, windowId);
+
   await scheduleCigaretteCollectionReminderForHour(hour);
   return true;
 }
@@ -729,7 +734,9 @@ Future<void> scheduleCigaretteCollectionReminderForHour(int hour) async {
         priority: Priority.high,
       ),
     ),
-    androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+    // 제조사/OS 정책에서 exact 알람이 누락되는 경우가 있어,
+    // 담배수집은 20분 윈도우 특성상 inexact가 실사용 안정성이 더 높음.
+    androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
     matchDateTimeComponents: DateTimeComponents.time,
     uiLocalNotificationDateInterpretation:
         UILocalNotificationDateInterpretation.absoluteTime,
@@ -766,7 +773,7 @@ Future<void> scheduleCigaretteCollectionReminders() async {
     await Workmanager().cancelByUniqueName(uniqueName);
   }
 
-  // 기존 알림 예약 정리 후 재등록
+  // 기존 예약 정리 후 정각 예약 재등록 (앱 종료 상태 보장)
   final plugin = FlutterLocalNotificationsPlugin();
   for (final hour in _cigaretteCollectionHours) {
     await plugin.cancel(kCigaretteCollectionReminderNotificationIdBase + hour);
@@ -791,7 +798,70 @@ Future<void> setCigaretteCollectionReminderEnabled(bool enabled) async {
   } else {
     await requestNotificationPermissionIfNeeded();
     await scheduleCigaretteCollectionReminders();
+    await maybeNotifyCigaretteCollectionWindowOpened();
   }
+}
+
+String? _currentCigaretteCollectionWindowId(DateTime now) {
+  for (final hour in _cigaretteCollectionHours) {
+    final start = DateTime(now.year, now.month, now.day, hour, 0);
+    final end = start.add(const Duration(minutes: kCigaretteCollectionWindowMinutes));
+    if (!now.isBefore(start) && now.isBefore(end)) {
+      final hh = hour.toString().padLeft(2, '0');
+      return '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}-$hh';
+    }
+  }
+  return null;
+}
+
+/// 앱 내부 기준: 수집 가능 구간에 "진입한 상태"면 해당 구간에 대해 1회 즉시 알림 발송
+Future<void> maybeNotifyCigaretteCollectionWindowOpened() async {
+  final prefs = await SharedPreferences.getInstance();
+  final enabled = prefs.getBool(kCigaretteCollectionReminderEnabledKey) ?? true;
+  if (!enabled) return;
+
+  final granted = await _ensureNotificationPermissionGranted();
+  if (!granted) return;
+
+  final now = DateTime.now();
+  final windowId = _currentCigaretteCollectionWindowId(now);
+  if (windowId == null) return;
+
+  final lastNotified = prefs.getString(kCigaretteCollectionLastNotifiedWindowKey);
+  if (lastNotified == windowId) return;
+
+  final plugin = FlutterLocalNotificationsPlugin();
+  const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+  const initSettings = InitializationSettings(android: androidInit);
+  await plugin.initialize(initSettings);
+
+  const channel = AndroidNotificationChannel(
+    'cigarette_collection_reminder_channel',
+    '담배 수집 알림',
+    description: '담배 수집 가능 시간 알림',
+    importance: Importance.high,
+  );
+  final androidImpl = plugin.resolvePlatformSpecificImplementation<
+      AndroidFlutterLocalNotificationsPlugin>();
+  await androidImpl?.createNotificationChannel(channel);
+
+  final hour = now.hour;
+  await plugin.show(
+    kCigaretteCollectionReminderNotificationIdBase + hour,
+    '담배 수집',
+    '지금부터 20분간 담배를 수집할 수 있는 시간입니다!',
+    const NotificationDetails(
+      android: AndroidNotificationDetails(
+        'cigarette_collection_reminder_channel',
+        '담배 수집 알림',
+        channelDescription: '담배 수집 가능 시간 알림',
+        importance: Importance.high,
+        priority: Priority.high,
+      ),
+    ),
+  );
+
+  await prefs.setString(kCigaretteCollectionLastNotifiedWindowKey, windowId);
 }
 
 /// 앱 실행 시 알림 권한 확인 + 핵심 스케줄(비접속/출석/담배수집) 재설정
@@ -802,4 +872,5 @@ Future<void> bootstrapCoreReminderSchedulesOnAppOpen() async {
   await updateLastAppOpenAndScheduleInactivity();
   await scheduleAttendanceReminderIfNeeded();
   await scheduleCigaretteCollectionReminders();
+  await maybeNotifyCigaretteCollectionWindowOpened();
 }

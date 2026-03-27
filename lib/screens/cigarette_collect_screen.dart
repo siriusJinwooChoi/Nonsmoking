@@ -10,6 +10,7 @@ import '../theme/app_theme.dart';
 import 'cigarette_catalog_screen.dart';
 import 'attendance_screen.dart';
 import '../supabase/supabase_sync_service.dart';
+import '../notifications/daily_reminder_worker.dart';
 
 /// 담배 수집 게임 화면
 class CigaretteCollectScreen extends StatefulWidget {
@@ -68,9 +69,11 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
       vsync: this,
       duration: const Duration(milliseconds: 500),
     );
+    unawaited(maybeNotifyCigaretteCollectionWindowOpened());
     _loadAssets();
     _windowTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       if (_cigaretteAssets.isNotEmpty) {
+        unawaited(maybeNotifyCigaretteCollectionWindowOpened());
         _loadWindowState(_cigaretteAssets);
       }
     });
