@@ -2,8 +2,11 @@ import 'dart:async' show unawaited;
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../theme/app_theme.dart';
 import '../notifications/daily_reminder_worker.dart';
+import '../supabase/supabase_config.dart';
+import '../api/attendance_api_service.dart';
 /// 출석체크 1~28일, 7x4 그리드. 금연코인 10/20(7,14,21,28일).
 const String kAttendanceStreakDayKey = 'attendance_streak_day';
 const String kAttendanceLastDateKey = 'attendance_last_date';
@@ -72,6 +75,7 @@ class AttendanceScreen extends StatefulWidget {
 const String _coinAsset = 'assets/scoin.png';
 
 class _AttendanceScreenState extends State<AttendanceScreen> {
+  final AttendanceApiService _attendanceApi = const AttendanceApiService();
   int _streakDay = 1;
   String? _lastDate;
   int _coins = 0;
@@ -113,6 +117,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       _coins = prefs.getInt(kGoldenCoinsKey) ?? 0;
       _loading = false;
     });
+    unawaited(_syncAttendanceFromApiIfAvailable());
   }
 
   Future<void> _onTapDay(int day) async {
@@ -145,6 +150,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     if (sync != null) {
       unawaited(sync().catchError((Object _) {}));
     }
+    unawaited(_checkInToApiIfAvailable(day));
 
     Future.delayed(const Duration(milliseconds: 1800), () {
       if (!mounted) return;
@@ -160,6 +166,54 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         backgroundColor: AppTheme.primary,
       ),
     );
+  }
+
+  Future<void> _syncAttendanceFromApiIfAvailable() async {
+    if (!SupabaseConfig.isConfigured) return;
+    final token = Supabase.instance.client.auth.currentSession?.accessToken;
+    if (token == null || token.isEmpty) return;
+    try {
+      final remote = await _attendanceApi.fetchState(accessToken: token);
+      if (remote == null) return;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(kGoldenCoinsKey, remote.coins);
+      await prefs.setInt(kAttendanceStreakDayKey, remote.streakDay);
+      if (remote.lastDate != null && remote.lastDate!.isNotEmpty) {
+        await prefs.setString(kAttendanceLastDateKey, remote.lastDate!);
+      }
+      if (!mounted) return;
+      setState(() {
+        _coins = remote.coins;
+        _streakDay = remote.streakDay;
+        _lastDate = remote.lastDate;
+      });
+    } catch (_) {
+      // 로컬 우선 정책: 실패 시 무시
+    }
+  }
+
+  Future<void> _checkInToApiIfAvailable(int day) async {
+    if (!SupabaseConfig.isConfigured) return;
+    final token = Supabase.instance.client.auth.currentSession?.accessToken;
+    if (token == null || token.isEmpty) return;
+    try {
+      final result = await _attendanceApi.checkIn(accessToken: token, day: day);
+      if (result == null) return;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(kGoldenCoinsKey, result.coins);
+      await prefs.setInt(kAttendanceStreakDayKey, result.streakDay);
+      if (result.lastDate != null && result.lastDate!.isNotEmpty) {
+        await prefs.setString(kAttendanceLastDateKey, result.lastDate!);
+      }
+      if (!mounted) return;
+      setState(() {
+        _coins = result.coins;
+        _streakDay = result.streakDay;
+        _lastDate = result.lastDate;
+      });
+    } catch (_) {
+      // 로컬 우선 정책: 실패 시 무시
+    }
   }
 
   Future<void> _closeAttendance() async {
