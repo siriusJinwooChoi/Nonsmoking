@@ -3,8 +3,11 @@ import 'dart:async' show unawaited;
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../theme/app_theme.dart';
 import '../notifications/daily_reminder_worker.dart';
+import '../supabase/supabase_config.dart';
+import '../api/reasons_api_service.dart';
 
 class ReasonWhyScreen extends StatefulWidget {
   const ReasonWhyScreen({super.key});
@@ -52,6 +55,7 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
   static const String _selectedReasonIdKey = 'selectedReasonId';
 
   final List<_ReasonItem> _reasons = [];
+  final ReasonsApiService _reasonsApi = const ReasonsApiService();
   String? _selectedReasonId;
   bool _reasonNotificationEnabled = false;
 
@@ -70,6 +74,7 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
 
     if (raw == null || raw.trim().isEmpty) {
       setState(() {});
+      unawaited(_syncReasonsFromApiIfAvailable());
       return;
     }
 
@@ -108,12 +113,15 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
             ..addAll(loaded);
           _sortReasons();
         });
-        await _saveReasons();
+        await _saveReasons(syncApi: false);
+        unawaited(_syncReasonsFromApiIfAvailable());
       } else {
         setState(() {});
+        unawaited(_syncReasonsFromApiIfAvailable());
       }
     } catch (_) {
       setState(() {});
+      unawaited(_syncReasonsFromApiIfAvailable());
     }
   }
 
@@ -136,6 +144,7 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
     await prefs.setString(kSelectedReasonTextKey, item.text);
     await prefs.setBool(kReasonNotificationEnabledKey, true);
     unawaited(scheduleReasonReminder());
+    unawaited(_pushReasonsToApiIfAvailable());
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('매일 12:00에 선택한 이유로 알림이 옵니다.'), duration: Duration(seconds: 2)),
@@ -150,6 +159,7 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
       });
     }
     unawaited(disableReasonReminder());
+    unawaited(_pushReasonsToApiIfAvailable());
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('금연 이유 알림이 해지되었습니다.'), duration: Duration(seconds: 2)),
@@ -158,7 +168,7 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
 
   static const String _pinnedReasonTextKey = 'pinnedReasonText';
 
-  Future<void> _saveReasons() async {
+  Future<void> _saveReasons({bool syncApi = true}) async {
     final prefs = await SharedPreferences.getInstance();
     final raw = jsonEncode(_reasons.map((r) => r.toJson()).toList());
     await prefs.setString(_prefsKey, raw);
@@ -168,6 +178,91 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
       await prefs.setString(_pinnedReasonTextKey, pinned.text);
     } else {
       await prefs.remove(_pinnedReasonTextKey);
+    }
+    if (syncApi) {
+      unawaited(_pushReasonsToApiIfAvailable());
+    }
+  }
+
+  List<Map<String, dynamic>> _serializeReasonsForApi() {
+    return _reasons.map((r) => r.toJson()).toList();
+  }
+
+  Future<void> _pushReasonsToApiIfAvailable() async {
+    if (!SupabaseConfig.isConfigured) return;
+    final token = Supabase.instance.client.auth.currentSession?.accessToken;
+    if (token == null || token.isEmpty) return;
+    final pinned = _reasons.where((r) => r.pinned).map((r) => r.text.trim()).firstWhere(
+          (t) => t.isNotEmpty,
+          orElse: () => '',
+        );
+    final selectedText = _reasons
+        .where((r) => r.id == _selectedReasonId)
+        .map((r) => r.text)
+        .cast<String?>()
+        .firstWhere((_) => true, orElse: () => null);
+    try {
+      await _reasonsApi.syncReasonState(
+        accessToken: token,
+        reasons: _serializeReasonsForApi(),
+        pinnedReasonText: pinned,
+        selectedReasonId: _selectedReasonId,
+        selectedReasonText: selectedText,
+      );
+    } catch (_) {
+      // 로컬 우선 정책: 실패 시 무시
+    }
+  }
+
+  Future<void> _syncReasonsFromApiIfAvailable() async {
+    if (!SupabaseConfig.isConfigured) return;
+    final token = Supabase.instance.client.auth.currentSession?.accessToken;
+    if (token == null || token.isEmpty) return;
+    try {
+      final remote = await _reasonsApi.fetchReasonState(accessToken: token);
+      if (remote == null) return;
+      if (remote.reasons.isEmpty && remote.pinnedReasonText.isEmpty) return;
+
+      final loaded = remote.reasons
+          .map((m) => _ReasonItem.fromJson(m))
+          .where((r) => r.text.trim().isNotEmpty)
+          .toList();
+      if (loaded.isEmpty && remote.pinnedReasonText.isNotEmpty) {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        loaded.add(_ReasonItem(
+          id: now.toString(),
+          text: remote.pinnedReasonText,
+          pinned: true,
+          createdAt: now,
+          displayNumber: 1,
+        ));
+      }
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _prefsKey,
+        jsonEncode(loaded.map((e) => e.toJson()).toList()),
+      );
+      if (remote.pinnedReasonText.isNotEmpty) {
+        await prefs.setString(_pinnedReasonTextKey, remote.pinnedReasonText);
+      }
+      if (remote.selectedReasonId != null) {
+        await prefs.setString(_selectedReasonIdKey, remote.selectedReasonId!);
+      }
+      if (remote.selectedReasonText != null) {
+        await prefs.setString(kSelectedReasonTextKey, remote.selectedReasonText!);
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _reasons
+          ..clear()
+          ..addAll(loaded);
+        _selectedReasonId = remote.selectedReasonId ?? _selectedReasonId;
+        _sortReasons();
+      });
+    } catch (_) {
+      // 로컬 우선 정책: 실패 시 무시
     }
   }
 
