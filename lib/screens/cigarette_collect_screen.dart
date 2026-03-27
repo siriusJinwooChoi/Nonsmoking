@@ -202,8 +202,8 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
     if (_attempts >= _maxAttempts) return;
     if (!_isInCollectionWindow || _hasUsedCurrentWindow) return;
 
-    final coins = await getGoldenCoins();
-    if (coins < _coinsPerAttempt) {
+    final remainingCoins = await consumeCoinsIfPossible(_coinsPerAttempt);
+    if (remainingCoins == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -214,7 +214,6 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
       }
       return;
     }
-    await setGoldenCoins(coins - _coinsPerAttempt);
     if (!mounted) return;
 
     setState(() => _attempts++);

@@ -241,7 +241,15 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
     );
     if (!mounted) return;
     if (choice == 'revive') {
-      await setGoldenCoins(coins - 1);
+      final remaining = await consumeCoinsIfPossible(1);
+      if (remaining == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('코인이 부족하여 이어하기를 할 수 없습니다.')),
+        );
+        await _finalizeGameOver();
+        return;
+      }
       unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
       setState(() {
         _gameOver = false;

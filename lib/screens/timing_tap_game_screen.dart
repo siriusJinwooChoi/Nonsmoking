@@ -125,7 +125,14 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
     if (!mounted) return;
     _isFailDialogShowing = false;
     if (choice == 'revive') {
-      await setGoldenCoins(coins - 1);
+      final remaining = await consumeCoinsIfPossible(1);
+      if (remaining == null) {
+        setState(() {
+          _lastResult = '코인이 부족하여 이어하기를 할 수 없습니다.';
+        });
+        _resetGame();
+        return;
+      }
       unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
       setState(() {
         _lastResult = '중앙에 가까울수록 높은 점수!';

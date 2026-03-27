@@ -7,6 +7,7 @@ import '../theme/app_theme.dart';
 import '../notifications/daily_reminder_worker.dart';
 import '../supabase/supabase_config.dart';
 import '../api/attendance_api_service.dart';
+import '../api/coins_api_service.dart';
 /// 출석체크 1~28일, 7x4 그리드. 금연코인 10/20(7,14,21,28일).
 const String kAttendanceStreakDayKey = 'attendance_streak_day';
 const String kAttendanceLastDateKey = 'attendance_last_date';
@@ -36,6 +37,36 @@ Future<int> getGoldenCoins() async {
 Future<void> setGoldenCoins(int value) async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.setInt(kGoldenCoinsKey, value);
+}
+
+const CoinsApiService _coinsApiService = CoinsApiService();
+
+Future<int?> consumeCoinsIfPossible(int amount) async {
+  if (amount <= 0) return await getGoldenCoins();
+  final localCoins = await getGoldenCoins();
+  if (localCoins < amount) return null;
+
+  if (SupabaseConfig.isConfigured) {
+    final token = Supabase.instance.client.auth.currentSession?.accessToken;
+    if (token != null && token.isNotEmpty) {
+      try {
+        final apiCoins = await _coinsApiService.consume(
+          accessToken: token,
+          amount: amount,
+        );
+        if (apiCoins != null) {
+          await setGoldenCoins(apiCoins);
+          return apiCoins;
+        }
+      } catch (_) {
+        // 서버 실패 시 로컬 우선 fallback
+      }
+    }
+  }
+
+  final next = localCoins - amount;
+  await setGoldenCoins(next);
+  return next;
 }
 
 /// 오늘 날짜 문자열 (yyyy-MM-dd)

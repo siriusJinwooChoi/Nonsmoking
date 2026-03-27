@@ -176,7 +176,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       ),
     );
     if (confirmed != true || !canReduce) return;
-    await setGoldenCoins(coins - 5);
+    final remaining = await consumeCoinsIfPossible(5);
+    if (remaining == null) {
+      if (!ctx.mounted) return;
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        const SnackBar(content: Text('금연코인이 부족합니다. (5코인 필요)')),
+      );
+      return;
+    }
     final prefs = await SharedPreferences.getInstance();
     _failureCount = (_failureCount - 1).clamp(0, 0x7fffffff);
     await prefs.setInt(_failureCountKey, _failureCount);
