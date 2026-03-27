@@ -4,6 +4,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../supabase/supabase_config.dart';
 import '../theme/app_theme.dart';
+import '../api/api_config.dart';
+import '../api/games_api_service.dart';
 
 /// 미니게임 4종 랭킹 (상위 10명 + 본인 순위).
 /// DB의 [game_leaderboard_daily] 일일 스냅샷을 우선 사용하고, 없으면 game_stats 실시간 집계로 대체.
@@ -15,6 +17,7 @@ class GameRankingScreen extends StatefulWidget {
 }
 
 class _GameRankingScreenState extends State<GameRankingScreen> {
+  final GamesApiService _gamesApi = const GamesApiService();
   bool _loading = true;
   String? _error;
   bool _usingDailySnapshot = false;
@@ -74,6 +77,45 @@ class _GameRankingScreenState extends State<GameRankingScreen> {
     final snapshotDate = _kstDateString();
 
     try {
+      final token = client.auth.currentSession?.accessToken;
+      if (ApiConfig.isConfigured && token != null && token.isNotEmpty) {
+        final payload = await _gamesApi.fetchRankings(accessToken: token, limit: 10);
+        if (payload != null) {
+          final top = payload['top'] as Map<String, dynamic>? ?? const {};
+          final my = payload['my'] as Map<String, dynamic>? ?? const {};
+
+          _seqList = List<Map<String, dynamic>>.from((top['numberSequence'] as List?) ?? const []);
+          _wordList = List<Map<String, dynamic>>.from((top['wordGame'] as List?) ?? const []);
+          _catchList = List<Map<String, dynamic>>.from((top['cigaretteCatch'] as List?) ?? const []);
+          _timingList = List<Map<String, dynamic>>.from((top['timingTap'] as List?) ?? const []);
+
+          _displayNames = {};
+          for (final r in [..._seqList, ..._wordList, ..._catchList, ..._timingList]) {
+            final id = r['user_id'] as String?;
+            final dn = r['display_name'] as String?;
+            if (id != null) {
+              _displayNames[id] = (dn != null && dn.trim().isNotEmpty) ? dn.trim() : null;
+            }
+          }
+
+          _mySeqRank = (my['numberSequenceRank'] as num?)?.toInt();
+          _myWordRank = (my['wordGameRank'] as num?)?.toInt();
+          _myCatchRank = (my['cigaretteCatchRank'] as num?)?.toInt();
+          _myTimingRank = (my['timingTapRank'] as num?)?.toInt();
+          _usingDailySnapshot = false;
+
+          if (!mounted) return;
+          setState(() {
+            _mySeqSec = (my['numberSequenceBestSeconds'] as num?)?.toDouble() ?? mySeq;
+            _myWordLevel = (my['wordGameLevel'] as num?)?.toInt() ?? myWord;
+            _myCatchScore = (my['cigaretteCatchBestScore'] as num?)?.toInt() ?? myCatch;
+            _myTimingScore = (my['timingTapBestScore'] as num?)?.toInt() ?? myTiming;
+            _loading = false;
+          });
+          return;
+        }
+      }
+
       var hasDaily = false;
       try {
         final probe = await client

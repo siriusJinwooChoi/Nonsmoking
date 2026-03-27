@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import '../widgets/banner_ad_bar.dart';
+import '../api/game_sync_helper.dart';
 
 // ✅ Analytics helper
 import '../analytics/app_analytics.dart';
@@ -45,6 +46,7 @@ class _GameScreenState extends State<GameScreen> {
   Future<void> _saveBestRecord(double newRecord) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble('bestRecord', newRecord);
+    unawaitedSyncGameStatsToApiIfAvailable();
   }
 
   static const int _maxNumber = 30;
