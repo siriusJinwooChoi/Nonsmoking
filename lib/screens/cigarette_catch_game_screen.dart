@@ -8,6 +8,7 @@ import '../theme/app_theme.dart';
 import '../ad_manager.dart';
 import '../supabase/supabase_sync_service.dart';
 import 'attendance_screen.dart';
+import '../api/game_reward_helper.dart';
 import '../api/game_sync_helper.dart';
 
 /// 담배맞추기: 떨어지는 담배 2개를 시간차로 맞추는 게임. 1~100단계, 단계별 속도 증가, 점수·최종단계 기록.
@@ -111,7 +112,13 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
     await prefs.setInt(_bestScoreKey, _score);
     if (mounted) setState(() => _bestScore = _score);
     unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
-    unawaitedSyncGameStatsToApiIfAvailable();
+    if (mounted) {
+      unawaited(syncStatsThenClaimGameRewardWithSnackBar(
+        context,
+        game: 'cigarette_catch',
+        proof: {'bestScore': _score},
+      ));
+    }
   }
 
   void _startGame() {

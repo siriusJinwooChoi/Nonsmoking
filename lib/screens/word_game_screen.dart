@@ -1,9 +1,11 @@
+import 'dart:async' show unawaited;
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import '../ad_manager.dart';
 import '../widgets/banner_ad_bar.dart';
+import '../api/game_reward_helper.dart';
 import '../api/game_sync_helper.dart';
 
 /// 7x8 그리드에 들어갈 수 있는 단어만 사용 (최대 길이 7)
@@ -126,10 +128,18 @@ class _WordGameScreenState extends State<WordGameScreen> {
     }
   }
 
-  Future<void> _saveLevel() async {
+  Future<void> _saveLevel({bool tryDailyReward = false}) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_levelKey, _level);
-    unawaitedSyncGameStatsToApiIfAvailable();
+    if (tryDailyReward && mounted) {
+      unawaited(syncStatsThenClaimGameRewardWithSnackBar(
+        context,
+        game: 'word_game',
+        proof: {'level': _level},
+      ));
+    } else {
+      unawaited(syncGameStatsToApiIfAvailable());
+    }
   }
 
   void _buildPuzzle() {
@@ -336,17 +346,19 @@ class _WordGameScreenState extends State<WordGameScreen> {
     if (shouldShowAd) {
       if (_isLevelAdShowing) return;
       _isLevelAdShowing = true;
-      AdManager.showAd(onAdClosed: () {
+      AdManager.showAd(onAdClosed: () async {
         if (!mounted) return;
         _isLevelAdShowing = false;
         setState(() => _level = (_level + 1).clamp(1, 100));
-        _saveLevel();
-        _buildPuzzle();
+        await _saveLevel(tryDailyReward: true);
+        if (mounted) _buildPuzzle();
       });
     } else {
       setState(() => _level = (_level + 1).clamp(1, 100));
-      _saveLevel();
-      _buildPuzzle();
+      unawaited(() async {
+        await _saveLevel(tryDailyReward: true);
+        if (mounted) _buildPuzzle();
+      }());
     }
   }
 

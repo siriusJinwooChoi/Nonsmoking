@@ -8,10 +8,10 @@ import 'games_api_service.dart';
 
 const GamesApiService _gamesApiService = GamesApiService();
 
-Future<void> syncGameStatsToApiIfAvailable() async {
-  if (!SupabaseConfig.isConfigured) return;
+Future<bool> syncGameStatsToApiIfAvailable() async {
+  if (!SupabaseConfig.isConfigured) return false;
   final token = Supabase.instance.client.auth.currentSession?.accessToken;
-  if (token == null || token.isEmpty) return;
+  if (token == null || token.isEmpty) return false;
 
   final prefs = await SharedPreferences.getInstance();
   final best = prefs.getDouble('bestRecord');
@@ -22,7 +22,7 @@ Future<void> syncGameStatsToApiIfAvailable() async {
   final cigaretteCatchBestScore = prefs.getInt('cigarette_catch_best_score') ?? 0;
 
   try {
-    await _gamesApiService.syncStats(
+    return await _gamesApiService.syncStats(
       accessToken: token,
       numberSequenceBestSeconds: bestSeconds,
       wordGameLevel: wordGameLevel,
@@ -31,7 +31,7 @@ Future<void> syncGameStatsToApiIfAvailable() async {
       cigaretteCatchBestScore: cigaretteCatchBestScore,
     );
   } catch (_) {
-    // 로컬 우선 정책: 서버 실패 시 무시
+    return false;
   }
 }
 

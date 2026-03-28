@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import '../widgets/banner_ad_bar.dart';
-import '../api/game_sync_helper.dart';
+import '../api/game_reward_helper.dart';
 
 // ✅ Analytics helper
 import '../analytics/app_analytics.dart';
@@ -46,7 +46,6 @@ class _GameScreenState extends State<GameScreen> {
   Future<void> _saveBestRecord(double newRecord) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble('bestRecord', newRecord);
-    unawaitedSyncGameStatsToApiIfAvailable();
   }
 
   static const int _maxNumber = 30;
@@ -96,6 +95,13 @@ class _GameScreenState extends State<GameScreen> {
         bestRecord = elapsed;
         isNewBest = true;
         await _saveBestRecord(elapsed);
+        if (mounted) {
+          unawaited(syncStatsThenClaimGameRewardWithSnackBar(
+            context,
+            game: 'number_sequence',
+            proof: {'elapsedSeconds': elapsed},
+          ));
+        }
       }
 
       // ✅ 먼저 다이얼로그 띄우기 (Analytics 지연/오류로 “안 눌림” 체감 방지)

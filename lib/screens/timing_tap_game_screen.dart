@@ -5,6 +5,7 @@ import '../supabase/supabase_sync_service.dart';
 import '../theme/app_theme.dart';
 import 'attendance_screen.dart';
 import '../widgets/banner_ad_bar.dart';
+import '../api/game_reward_helper.dart';
 import '../api/game_sync_helper.dart';
 
 /// 완벽 타이밍: 움직이는 표시가 중앙에 올 때 탭하는 타이밍 게임
@@ -200,7 +201,13 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
       _bestScore = _score;
     });
     unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
-    unawaitedSyncGameStatsToApiIfAvailable();
+    if (mounted) {
+      unawaited(syncStatsThenClaimGameRewardWithSnackBar(
+        context,
+        game: 'timing_tap',
+        proof: {'bestScore': _score},
+      ));
+    }
   }
 
   void _resetGame() {
