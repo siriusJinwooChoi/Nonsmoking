@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-
 import '../api/api_config.dart';
+import '../auth/bff_auth_service.dart';
 import '../api/games_api_service.dart';
 import '../supabase/supabase_config.dart';
 import '../theme/app_theme.dart';
@@ -33,7 +32,7 @@ class _GameMenuScreenState extends State<GameMenuScreen> {
     if (!ApiConfig.isConfigured || !SupabaseConfig.isConfigured) {
       return;
     }
-    final token = Supabase.instance.client.auth.currentSession?.accessToken;
+    final token = await BffAuthService.instance.getValidAccessToken();
     if (token == null || token.isEmpty) {
       if (mounted) {
         setState(() {
@@ -46,7 +45,7 @@ class _GameMenuScreenState extends State<GameMenuScreen> {
     if (!mounted) return;
     setState(() {
       _rewardHint = s != null
-          ? '종목당 하루 1회 · 금연코인 +${s.rewardCoinsPerClaim} (서버에서 지급)'
+          ? '종목당 하루 1회 · 금연코인 +${s.rewardCoinsPerClaim}'
           : '종목당 하루 1회 · 서버 검증 보상이 있어요.';
     });
   }

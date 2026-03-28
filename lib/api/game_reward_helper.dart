@@ -1,8 +1,7 @@
 import 'dart:async' show unawaited;
 
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-
+import '../auth/bff_auth_service.dart';
 import '../screens/attendance_screen.dart';
 import '../supabase/supabase_config.dart';
 import '../supabase/supabase_sync_service.dart';
@@ -18,7 +17,7 @@ Future<GameRewardClaimResult?> claimGameDailyRewardIfAvailable({
   Map<String, dynamic>? proof,
 }) async {
   if (!SupabaseConfig.isConfigured) return null;
-  final token = Supabase.instance.client.auth.currentSession?.accessToken;
+  final token = await BffAuthService.instance.getValidAccessToken();
   if (token == null || token.isEmpty) return null;
 
   final synced = await syncGameStatsToApiIfAvailable();

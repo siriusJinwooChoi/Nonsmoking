@@ -2,16 +2,17 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../supabase/supabase_config.dart';
 import '../supabase/supabase_sync_service.dart';
+import '../widgets/update_prompt_gate.dart';
+import 'bff_auth_service.dart';
 import 'login_screen.dart';
 import '../screens/nickname_setup_screen.dart';
 import 'terms_acceptance_screen.dart';
-import '../widgets/update_prompt_gate.dart';
+import '../api/bff_profile_api.dart';
 
-/// Supabase가 설정된 경우에만 로그인·약관을 거친 뒤 [child]를 표시합니다.
+/// API(BFF)가 설정된 경우에만 로그인·약관을 거친 뒤 [child]를 표시합니다.
 class AuthGate extends StatefulWidget {
   const AuthGate({super.key, required this.child});
 
@@ -22,28 +23,30 @@ class AuthGate extends StatefulWidget {
 }
 
 class _AuthGateState extends State<AuthGate> {
-  StreamSubscription<AuthState>? _authSub;
   int _termsVersion = 0;
   int _profileGateVersion = 0;
 
   @override
   void initState() {
     super.initState();
-    if (SupabaseConfig.isConfigured) {
-      _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((data) {
-        if (data.session != null &&
-            (data.event == AuthChangeEvent.signedIn ||
-                data.event == AuthChangeEvent.initialSession)) {
-          unawaited(SupabaseSyncService.runPostLoginPullIfNeeded());
-        }
-        setState(() {});
-      });
-    }
+    BffAuthService.instance.addListener(_onAuthChanged);
+    _schedulePostLoginPull();
+  }
+
+  void _onAuthChanged() {
+    if (mounted) setState(() {});
+    _schedulePostLoginPull();
+  }
+
+  void _schedulePostLoginPull() {
+    if (!SupabaseConfig.isConfigured) return;
+    if (!BffAuthService.instance.isLoggedIn) return;
+    unawaited(SupabaseSyncService.runPostLoginPullIfNeeded());
   }
 
   @override
   void dispose() {
-    _authSub?.cancel();
+    BffAuthService.instance.removeListener(_onAuthChanged);
     super.dispose();
   }
 
@@ -53,14 +56,9 @@ class _AuthGateState extends State<AuthGate> {
   }
 
   Future<String?> _loadDisplayName() async {
-    final uid = Supabase.instance.client.auth.currentUser?.id;
-    if (uid == null) return null;
-    final row = await Supabase.instance.client
-        .from('profiles')
-        .select('display_name')
-        .eq('id', uid)
-        .maybeSingle();
-    final n = row?['display_name'] as String?;
+    final row = await BffProfileApi.fetchProfile();
+    if (row == null) return null;
+    final n = row['display_name'] as String?;
     if (n == null || n.trim().isEmpty) return null;
     return n.trim();
   }
@@ -71,41 +69,45 @@ class _AuthGateState extends State<AuthGate> {
       return UpdatePromptGate(child: widget.child);
     }
 
-    final session = Supabase.instance.client.auth.currentSession;
-    if (session == null) {
-      return const LoginScreen();
-    }
+    return ListenableBuilder(
+      listenable: BffAuthService.instance,
+      builder: (context, _) {
+        if (!BffAuthService.instance.isLoggedIn) {
+          return const LoginScreen();
+        }
 
-    return FutureBuilder<bool>(
-      key: ValueKey(_termsVersion),
-      future: _termsFuture(),
-      builder: (context, snap) {
-        if (!snap.hasData) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
-        if (!snap.data!) {
-          return TermsAcceptanceScreen(
-            onAgreed: () => setState(() => _termsVersion++),
-          );
-        }
-        return FutureBuilder<String?>(
-          key: ValueKey(_profileGateVersion),
-          future: _loadDisplayName(),
-          builder: (context, nameSnap) {
-            if (nameSnap.connectionState != ConnectionState.done) {
+        return FutureBuilder<bool>(
+          key: ValueKey(_termsVersion),
+          future: _termsFuture(),
+          builder: (context, snap) {
+            if (!snap.hasData) {
               return const Scaffold(
                 body: Center(child: CircularProgressIndicator()),
               );
             }
-            final displayName = nameSnap.data;
-            if (displayName == null || displayName.isEmpty) {
-              return NicknameSetupScreen(
-                onComplete: () => setState(() => _profileGateVersion++),
+            if (!snap.data!) {
+              return TermsAcceptanceScreen(
+                onAgreed: () => setState(() => _termsVersion++),
               );
             }
-            return UpdatePromptGate(child: widget.child);
+            return FutureBuilder<String?>(
+              key: ValueKey(_profileGateVersion),
+              future: _loadDisplayName(),
+              builder: (context, nameSnap) {
+                if (nameSnap.connectionState != ConnectionState.done) {
+                  return const Scaffold(
+                    body: Center(child: CircularProgressIndicator()),
+                  );
+                }
+                final displayName = nameSnap.data;
+                if (displayName == null || displayName.isEmpty) {
+                  return NicknameSetupScreen(
+                    onComplete: () => setState(() => _profileGateVersion++),
+                  );
+                }
+                return UpdatePromptGate(child: widget.child);
+              },
+            );
           },
         );
       },

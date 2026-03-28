@@ -1,9 +1,7 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../api/remote_assets.dart';
 import '../theme/app_theme.dart';
 import '../supabase/supabase_sync_service.dart';
 
@@ -34,17 +32,7 @@ class _CigaretteCatalogScreenState extends State<CigaretteCatalogScreen> {
 
     List<String> assets = const [];
     try {
-      final manifestJson = await rootBundle.loadString('AssetManifest.json');
-      final Map<String, dynamic> manifest =
-          json.decode(manifestJson) as Map<String, dynamic>;
-      assets = manifest.keys
-          .where((k) {
-            if (!k.startsWith('assets/cigarettes/')) return false;
-            final lower = k.toLowerCase();
-            return lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg');
-          })
-          .toList()
-        ..sort();
+      assets = await RemoteAssets.fetchCigarettePackKeys();
     } catch (_) {
       assets = const [];
     }
@@ -142,7 +130,7 @@ class _CigaretteCatalogScreenState extends State<CigaretteCatalogScreen> {
                                 const SizedBox(height: 2),
                                 Text(
                                   total == 0
-                                      ? '이미지를 불러올 수 없습니다. assets/cigarettes 및 pubspec.yaml 설정을 확인해 주세요.'
+                                      ? '서버에서 담배갑 목록을 불러오지 못했습니다. API 주소와 서버 static 폴더를 확인해 주세요.'
                                       : '$owned / $total 수집',
                                   style: AppTheme.bodyMedium
                                       .copyWith(color: AppTheme.textMuted),
@@ -232,10 +220,10 @@ class _CatalogTile extends StatelessWidget {
               child: Padding(
                 padding: const EdgeInsets.all(10),
                 child: isOwned
-                    ? Image.asset(
-                        asset,
+                    ? RemoteAssetImage(
+                        assetKey: asset,
                         fit: BoxFit.contain,
-                        errorBuilder: (_, __, ___) => const Center(
+                        error: const Center(
                           child: Icon(Icons.image_not_supported_rounded,
                               color: AppTheme.textMuted),
                         ),

@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:math';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../api/remote_assets.dart';
 import '../theme/app_theme.dart';
 import '../ad_manager.dart';
 import '../supabase/supabase_sync_service.dart';
@@ -70,22 +70,13 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
 
   Future<void> _loadCigaretteAssets() async {
     try {
-      final manifestJson = await rootBundle.loadString('AssetManifest.json');
-      final Map<String, dynamic> manifest = json.decode(manifestJson) as Map<String, dynamic>;
-      final assets = manifest.keys
-          .where((k) {
-            if (!k.startsWith('assets/cigarettes/')) return false;
-            final lower = k.toLowerCase();
-            return lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg');
-          })
-          .toList()
-        ..sort();
+      final assets = await RemoteAssets.fetchCigarettePackKeys();
       if (!mounted) return;
       setState(() {
         _cigaretteAssets = assets;
       });
     } catch (_) {
-      // 에셋 로드 실패 시 기존 fallback painter 사용
+      // 목록 실패 시 기존 fallback painter 사용
     }
   }
 
@@ -133,8 +124,12 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
       _spawnDelayMs = (800 - (_stage - 1) * 6).clamp(200, 800);
       _isGameOverAdShowing = false;
     });
-    _spawnNext();
     _startLoop();
+    // 실제 Stack 크기와 _gameArea* 가 맞은 뒤 스폰 (바깥 LayoutBuilder 값만 쓰면 좌표가 어긋날 수 있음)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _waitingStart || _gameOver) return;
+      _spawnNext();
+    });
   }
 
   void _startLoop() {
@@ -160,6 +155,13 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
 
   void _spawnNext() {
     if (!mounted || _gameOver) return;
+    if (_gameAreaWidth < _cigaretteWidth + 8 || _gameAreaHeight < _cigaretteHeight + _hitZoneHeight + 20) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _gameOver) return;
+        _spawnNext();
+      });
+      return;
+    }
     if (_spawned >= _cigarettesPerRound) {
       _spawned = 0;
       Future.delayed(const Duration(milliseconds: 400), () {
@@ -173,11 +175,21 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
       });
       return;
     }
-    final x = 20 + _random.nextDouble() * (_gameAreaWidth - 40 - _cigaretteWidth);
+    final maxX = (_gameAreaWidth - _cigaretteWidth - 8)
+        .clamp(0.0, double.infinity)
+        .toDouble();
+    final x = 4.0 + (maxX <= 0 ? 0.0 : _random.nextDouble() * maxX);
     final assetPath = _cigaretteAssets.isEmpty
         ? null
         : _cigaretteAssets[_random.nextInt(_cigaretteAssets.length)];
-    _cigarettes.add(_FallingCigarette(x: x, y: -_cigaretteHeight, assetPath: assetPath));
+    // Stack 상단( y=0 ) 바로 위에서 등장해 아래로만 내려오게 함
+    _cigarettes.add(
+      _FallingCigarette(
+        x: x,
+        y: -_cigaretteHeight,
+        assetPath: assetPath,
+      ),
+    );
     _spawned++;
     if (_spawned < _cigarettesPerRound) {
       Future.delayed(Duration(milliseconds: _spawnDelayMs), _spawnNext);
@@ -268,7 +280,10 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
         _isGameOverAdShowing = false;
       });
       _startLoop();
-      _spawnNext();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _gameOver) return;
+        _spawnNext();
+      });
       return;
     }
     await _finalizeGameOver();
@@ -307,12 +322,7 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
       ),
       body: SafeArea(
         bottom: true,
-        child: LayoutBuilder(
-        builder: (context, constraints) {
-          _gameAreaWidth = constraints.maxWidth - 32;
-          _gameAreaHeight = constraints.maxHeight - 220;
-          _gameAreaHeight = _gameAreaHeight.clamp(260.0, 520.0);
-          return Padding(
+        child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
               children: [
@@ -349,68 +359,95 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
                         ),
                         const SizedBox(height: 12),
                         Expanded(
-                          child: GestureDetector(
-                            onTapDown: (d) => _onTap(d.localPosition),
-                            child: Container(
-                              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(20),
-                                border: Border.all(color: AppTheme.primary.withValues(alpha: 0.25)),
-                              ),
-                              child: Stack(
-                                children: [
-                                  Positioned(
-                                    left: 0,
-                                    right: 0,
-                                    bottom: 0,
-                                    height: _hitZoneHeight,
+                          child: LayoutBuilder(
+                            builder: (context, inner) {
+                              const marginH = 16.0;
+                              const marginV = 8.0;
+                              final playW = (inner.maxWidth - marginH * 2)
+                                  .clamp(_cigaretteWidth + 8, double.infinity);
+                              final playH = (inner.maxHeight - marginV * 2)
+                                  .clamp(_hitZoneHeight + _cigaretteHeight + 24, double.infinity);
+                              // Stack 좌표계와 낙하 판정이 항상 일치하도록(바깥 추정값 사용 금지)
+                              _gameAreaWidth = playW;
+                              _gameAreaHeight = playH;
+                              return Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: marginH,
+                                  vertical: marginV,
+                                ),
+                                child: GestureDetector(
+                                  onTapDown: (d) => _onTap(d.localPosition),
+                                  child: Center(
                                     child: Container(
+                                      width: playW,
+                                      height: playH,
                                       decoration: BoxDecoration(
-                                        gradient: LinearGradient(
-                                          begin: Alignment.topCenter,
-                                          end: Alignment.bottomCenter,
-                                          colors: [
-                                            AppTheme.primary.withValues(alpha: 0.06),
-                                            AppTheme.primary.withValues(alpha: 0.16),
-                                          ],
-                                        ),
-                                        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(20)),
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(20),
+                                      border: Border.all(
+                                        color: AppTheme.primary.withValues(alpha: 0.25),
                                       ),
-                                      alignment: Alignment.center,
-                                      child: Text(
-                                        '맞출 영역',
-                                        style: AppTheme.bodyMedium.copyWith(
-                                          color: AppTheme.primaryDark,
-                                          fontWeight: FontWeight.w600,
-                                        ),
+                                    ),
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(20),
+                                      child: Stack(
+                                        clipBehavior: Clip.hardEdge,
+                                        children: [
+                                          Positioned(
+                                            left: 0,
+                                            right: 0,
+                                            bottom: 0,
+                                            height: _hitZoneHeight,
+                                            child: Container(
+                                              decoration: BoxDecoration(
+                                                gradient: LinearGradient(
+                                                  begin: Alignment.topCenter,
+                                                  end: Alignment.bottomCenter,
+                                                  colors: [
+                                                    AppTheme.primary.withValues(alpha: 0.06),
+                                                    AppTheme.primary.withValues(alpha: 0.16),
+                                                  ],
+                                                ),
+                                              ),
+                                              alignment: Alignment.center,
+                                              child: Text(
+                                                '맞출 영역',
+                                                style: AppTheme.bodyMedium.copyWith(
+                                                  color: AppTheme.primaryDark,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                          for (final c in _cigarettes)
+                                            Positioned(
+                                              left: c.x,
+                                              top: c.y,
+                                              width: _cigaretteWidth,
+                                              height: _cigaretteHeight,
+                                              child: _buildCigarette(c.assetPath),
+                                            ),
+                                          if (_hitFxLocal != null)
+                                            Positioned(
+                                              left: _hitFxLocal!.dx - 44,
+                                              top: _hitFxLocal!.dy - 44,
+                                              child: IgnorePointer(
+                                                child: AnimatedBuilder(
+                                                  animation: _hitFxController,
+                                                  builder: (context, _) => _HitTapBurst(
+                                                    progress: _hitFxController.value,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                        ],
                                       ),
                                     ),
                                   ),
-                                  for (final c in _cigarettes)
-                                    Positioned(
-                                      left: c.x,
-                                      top: c.y,
-                                      width: _cigaretteWidth,
-                                      height: _cigaretteHeight,
-                                      child: _buildCigarette(c.assetPath),
-                                    ),
-                                  if (_hitFxLocal != null)
-                                    Positioned(
-                                      left: _hitFxLocal!.dx - 44,
-                                      top: _hitFxLocal!.dy - 44,
-                                      child: IgnorePointer(
-                                        child: AnimatedBuilder(
-                                          animation: _hitFxController,
-                                          builder: (context, _) => _HitTapBurst(
-                                            progress: _hitFxController.value,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                ],
+                                ),
                               ),
-                            ),
+                            );
+                            },
                           ),
                         ),
                         const SizedBox(height: 8),
@@ -455,9 +492,7 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
                 ),
               ],
             ),
-          );
-        },
-      ),
+          ),
       ),
     );
   }
@@ -494,10 +529,12 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
     }
     return ClipRRect(
       borderRadius: BorderRadius.circular(4),
-      child: Image.asset(
-        assetPath,
+      child: RemoteAssetImage(
+        assetKey: assetPath,
         fit: BoxFit.contain,
-        errorBuilder: (_, __, ___) => CustomPaint(
+        width: _cigaretteWidth,
+        height: _cigaretteHeight,
+        error: CustomPaint(
           size: const Size(_cigaretteWidth, _cigaretteHeight),
           painter: _CigarettePainter(),
         ),

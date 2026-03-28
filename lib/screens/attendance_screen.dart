@@ -2,7 +2,8 @@ import 'dart:async' show unawaited;
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import '../api/remote_assets.dart';
+import '../auth/bff_auth_service.dart';
 import '../theme/app_theme.dart';
 import '../notifications/daily_reminder_worker.dart';
 import '../supabase/supabase_config.dart';
@@ -47,7 +48,7 @@ Future<int?> consumeCoinsIfPossible(int amount) async {
   if (localCoins < amount) return null;
 
   if (SupabaseConfig.isConfigured) {
-    final token = Supabase.instance.client.auth.currentSession?.accessToken;
+    final token = await BffAuthService.instance.getValidAccessToken();
     if (token != null && token.isNotEmpty) {
       try {
         final apiCoins = await _coinsApiService.consume(
@@ -103,7 +104,7 @@ class AttendanceScreen extends StatefulWidget {
   State<AttendanceScreen> createState() => _AttendanceScreenState();
 }
 
-const String _coinAsset = 'assets/scoin.png';
+const String _scoinRemoteKey = 'scoin.png';
 
 class _AttendanceScreenState extends State<AttendanceScreen> {
   final AttendanceApiService _attendanceApi = const AttendanceApiService();
@@ -201,7 +202,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
   Future<void> _syncAttendanceFromApiIfAvailable() async {
     if (!SupabaseConfig.isConfigured) return;
-    final token = Supabase.instance.client.auth.currentSession?.accessToken;
+    final token = await BffAuthService.instance.getValidAccessToken();
     if (token == null || token.isEmpty) return;
     try {
       final remote = await _attendanceApi.fetchState(accessToken: token);
@@ -225,7 +226,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
   Future<void> _checkInToApiIfAvailable(int day) async {
     if (!SupabaseConfig.isConfigured) return;
-    final token = Supabase.instance.client.auth.currentSession?.accessToken;
+    final token = await BffAuthService.instance.getValidAccessToken();
     if (token == null || token.isEmpty) return;
     try {
       final result = await _attendanceApi.checkIn(accessToken: token, day: day);
@@ -302,11 +303,11 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Image.asset(
-                      _coinAsset,
+                    RemoteAssetImage(
+                      assetKey: _scoinRemoteKey,
                       width: 20,
                       height: 20,
-                      errorBuilder: (_, __, ___) => const Icon(Icons.monetization_on_rounded, color: Colors.amber, size: 20),
+                      error: const Icon(Icons.monetization_on_rounded, color: Colors.amber, size: 20),
                     ),
                     const SizedBox(width: 6),
                     Text(
@@ -489,11 +490,11 @@ class _CoinEarnedOverlayState extends State<_CoinEarnedOverlay>
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Image.asset(
-                            _coinAsset,
+                          RemoteAssetImage(
+                            assetKey: _scoinRemoteKey,
                             width: 32,
                             height: 32,
-                            errorBuilder: (_, __, ___) => const Icon(Icons.monetization_on_rounded, color: Colors.amber, size: 32),
+                            error: const Icon(Icons.monetization_on_rounded, color: Colors.amber, size: 32),
                           ),
                           const SizedBox(width: 8),
                           Text(
@@ -579,11 +580,11 @@ class _DayTile extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Image.asset(
-                    _coinAsset,
+                  RemoteAssetImage(
+                    assetKey: _scoinRemoteKey,
                     width: 12,
                     height: 12,
-                    errorBuilder: (_, __, ___) => Icon(
+                    error: Icon(
                       isMilestone ? Icons.card_giftcard_rounded : Icons.diamond_rounded,
                       color: isTappable ? const Color(0xFF5FC3E8) : Colors.white38,
                       size: 14,

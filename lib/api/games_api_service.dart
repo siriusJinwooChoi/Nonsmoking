@@ -34,7 +34,7 @@ class GameRewardSettings {
 
   factory GameRewardSettings.fromJson(Map<String, dynamic> j) {
     return GameRewardSettings(
-      rewardCoinsPerClaim: (j['rewardCoinsPerClaim'] as num?)?.toInt() ?? 5,
+      rewardCoinsPerClaim: (j['rewardCoinsPerClaim'] as num?)?.toInt() ?? 2,
       statsFreshMinutes: (j['statsFreshMinutes'] as num?)?.toInt() ?? 25,
       wordGameMinLevelForReward: (j['wordGameMinLevelForReward'] as num?)?.toInt() ?? 2,
       timingTapMinBestScoreForReward: (j['timingTapMinBestScoreForReward'] as num?)?.toInt() ?? 1,

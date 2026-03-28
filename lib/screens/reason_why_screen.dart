@@ -3,7 +3,7 @@ import 'dart:async' show unawaited;
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import '../auth/bff_auth_service.dart';
 import '../theme/app_theme.dart';
 import '../notifications/daily_reminder_worker.dart';
 import '../supabase/supabase_config.dart';
@@ -190,7 +190,7 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
 
   Future<void> _pushReasonsToApiIfAvailable() async {
     if (!SupabaseConfig.isConfigured) return;
-    final token = Supabase.instance.client.auth.currentSession?.accessToken;
+    final token = await BffAuthService.instance.getValidAccessToken();
     if (token == null || token.isEmpty) return;
     final pinned = _reasons.where((r) => r.pinned).map((r) => r.text.trim()).firstWhere(
           (t) => t.isNotEmpty,
@@ -216,7 +216,7 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
 
   Future<void> _syncReasonsFromApiIfAvailable() async {
     if (!SupabaseConfig.isConfigured) return;
-    final token = Supabase.instance.client.auth.currentSession?.accessToken;
+    final token = await BffAuthService.instance.getValidAccessToken();
     if (token == null || token.isEmpty) return;
     try {
       final remote = await _reasonsApi.fetchReasonState(accessToken: token);

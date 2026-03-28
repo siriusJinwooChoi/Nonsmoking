@@ -1,8 +1,7 @@
 import 'dart:async' show unawaited;
 
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-
+import '../auth/bff_auth_service.dart';
 import '../supabase/supabase_config.dart';
 import 'games_api_service.dart';
 
@@ -10,7 +9,7 @@ const GamesApiService _gamesApiService = GamesApiService();
 
 Future<bool> syncGameStatsToApiIfAvailable() async {
   if (!SupabaseConfig.isConfigured) return false;
-  final token = Supabase.instance.client.auth.currentSession?.accessToken;
+  final token = await BffAuthService.instance.getValidAccessToken();
   if (token == null || token.isEmpty) return false;
 
   final prefs = await SharedPreferences.getInstance();

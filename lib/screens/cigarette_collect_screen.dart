@@ -1,11 +1,11 @@
 import 'dart:math';
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:lottie/lottie.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../api/api_config.dart';
+import '../api/remote_assets.dart';
 import '../theme/app_theme.dart';
 import 'cigarette_catalog_screen.dart';
 import 'attendance_screen.dart';
@@ -153,20 +153,10 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
     await prefs.setInt(_sessionAttemptsKey, _attempts);
   }
 
-  /// assets/cigarettes/ 폴더 내 이미지 목록을 AssetManifest에서 불러옵니다.
-  /// 이미지를 바꾼 경우 앱을 완전히 다시 빌드(flutter run)해야 반영됩니다.
+  /// 서버 `GET /v1/assets/cigarettes` + `/static/cigarettes/*` 이미지.
   Future<void> _loadAssets() async {
     try {
-      final manifestJson = await rootBundle.loadString('AssetManifest.json');
-      final Map<String, dynamic> manifest = json.decode(manifestJson) as Map<String, dynamic>;
-      final assets = manifest.keys
-          .where((k) {
-            if (!k.startsWith('assets/cigarettes/')) return false;
-            final lower = k.toLowerCase();
-            return lower.endsWith('.png') || lower.endsWith('.jpg') || lower.endsWith('.jpeg');
-          })
-          .toList()
-        ..sort();
+      final assets = await RemoteAssets.fetchCigarettePackKeys();
 
       if (!mounted) return;
       setState(() {
@@ -174,7 +164,9 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
         _currentAsset = assets.isNotEmpty ? assets[_random.nextInt(assets.length)] : null;
         _loadingAssets = false;
         if (_currentAsset == null) {
-          _status = '담배갑 이미지가 없습니다. assets/cigarettes 폴더를 확인해 주세요.';
+          _status = ApiConfig.isConfigured
+              ? '담배갑 이미지 목록이 비어 있거나 서버에서 불러오지 못했습니다.'
+              : '서버 주소(API_BASE_URL)가 없어 이미지를 불러올 수 없습니다.';
         }
       });
       await _loadWindowState(assets);
@@ -183,7 +175,7 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
       setState(() {
         _loadingAssets = false;
         _currentAsset = null;
-        _status = '담배갑 이미지를 불러오지 못했습니다. assets 설정을 확인해 주세요.';
+        _status = '담배갑 이미지를 불러오지 못했습니다. 네트워크를 확인해 주세요.';
       });
     }
   }
@@ -551,10 +543,10 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
                                                       )
                                                     : SizedBox(
                                                         height: 150,
-                                                        child: Image.asset(
-                                                          _currentAsset!,
+                                                        child: RemoteAssetImage(
+                                                          assetKey: _currentAsset!,
                                                           fit: BoxFit.contain,
-                                                          errorBuilder: (_, __, ___) => const Icon(
+                                                          error: const Icon(
                                                             Icons.image_not_supported_rounded,
                                                             size: 80,
                                                             color: AppTheme.textMuted,
@@ -634,8 +626,8 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
                                     AnimatedScale(
                                       scale: _pressingButton ? 0.94 : 1.0,
                                       duration: const Duration(milliseconds: 120),
-                                      child: Lottie.asset(
-                                        'assets/lottie/zippo.json',
+                                      child: Lottie.network(
+                                        RemoteAssets.urlForKey('lottie/zippo.json').toString(),
                                         width: 128,
                                         height: 128,
                                         fit: BoxFit.contain,

@@ -2,11 +2,10 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-
 import '../supabase/supabase_config.dart';
 import '../theme/app_theme.dart';
 import 'auth_service.dart';
+import 'bff_auth_service.dart';
 
 Future<void> showEmailAuthSheet(BuildContext context) {
   return showModalBottomSheet<void>(
@@ -59,13 +58,13 @@ class _EmailAuthSheetState extends State<_EmailAuthSheet>
     super.dispose();
   }
 
-  /// Supabase Auth는 `email` 필드에 이메일 형식 문자열만 허용 — 앱에서는 로그인용 고유 ID로만 사용.
+  /// 서버 인증은 `email` 필드에 이메일 형식 문자열만 허용 — 앱에서는 로그인용 고유 ID로만 사용.
   bool _isValidLoginIdFormat(String value) {
     final re = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
     return re.hasMatch(value);
   }
 
-  /// Supabase 기본 비밀번호 정책에 맞춤: 소문자·대문자·숫자·특수문자 포함, 8자 이상.
+  /// 기본 비밀번호 정책에 맞춤: 소문자·대문자·숫자·특수문자 포함, 8자 이상.
   /// (서버가 `weak_password` / reason `characters` 를 줄 때 대응)
   bool _meetsSignupPasswordPolicy(String password) {
     if (password.length < 8) return false;
@@ -102,45 +101,61 @@ class _EmailAuthSheetState extends State<_EmailAuthSheet>
     return '부족: ${missing.join(', ')}$lenHint\n${_passwordGuideText()}';
   }
 
-  String _formatWeakPasswordReasons(AuthWeakPasswordException e) {
+  Map<String, dynamic>? _bffDetailsMap(BffAuthException e) {
+    final body = e.body;
+    if (body is! Map) return null;
+    final root = Map<String, dynamic>.from(body);
+    final details = root['details'];
+    if (details is Map) return Map<String, dynamic>.from(details);
+    return root;
+  }
+
+  String _formatWeakPasswordReasonsFromDetails(Map<String, dynamic> d) {
     const mapKo = <String, String>{
       'characters':
-          '소문자·대문자·숫자·특수문자를 모두 넣었는지 확인해 주세요. (Supabase 보안 정책)',
+          '소문자·대문자·숫자·특수문자를 모두 넣었는지 확인해 주세요.',
       'length': '비밀번호가 너무 짧습니다. 최소 길이를 맞춰 주세요.',
       'pwned': '다른 서비스에서 유출된 비밀번호입니다. 다른 비밀번호를 사용해 주세요.',
     };
-    final lines = e.reasons.map((r) => mapKo[r] ?? r).toList();
-    return lines.join('\n');
+    final reasons = d['reasons'];
+    if (reasons is List) {
+      final lines = reasons
+          .map((r) => r is String ? (mapKo[r] ?? r) : r.toString())
+          .toList();
+      if (lines.isNotEmpty) return lines.join('\n');
+    }
+    final msg = (d['msg'] ?? d['message'])?.toString();
+    if (msg != null && msg.isNotEmpty) return msg;
+    return '비밀번호가 서버 정책에 맞지 않습니다. 규칙을 조정해 주세요.';
   }
 
   String _toUserError(Object e, {required bool isSignUp}) {
     final raw = e.toString().toLowerCase();
 
-    if (e is AuthWeakPasswordException) {
-      return e.reasons.isEmpty
-          ? '비밀번호가 서버 정책에 맞지 않습니다. 규칙을 조정해 주세요.'
-          : _formatWeakPasswordReasons(e);
-    }
+    if (e is BffAuthException) {
+      final d = _bffDetailsMap(e);
+      final errorCode =
+          (d?['error_code'] ?? d?['error'])?.toString().toLowerCase();
+      final message = (d?['msg'] ?? d?['message'] ?? e.messageFromServer)
+          .toString()
+          .toLowerCase();
 
-    if (e is AuthException) {
-      final code = e.code?.toLowerCase();
-      final message = e.message.toLowerCase();
-      final http = e.statusCode;
-
-      if (code == 'weak_password') {
-        return '비밀번호가 서버 정책에 맞지 않습니다. 다른 비밀번호를 사용해 주세요.';
+      if (errorCode == 'weak_password') {
+        return d != null
+            ? _formatWeakPasswordReasonsFromDetails(d)
+            : '비밀번호가 서버 정책에 맞지 않습니다. 다른 비밀번호를 사용해 주세요.';
       }
-      if (code == 'signup_disabled') {
+      if (errorCode == 'signup_disabled') {
         return '현재 회원가입이 비활성화되어 있습니다. 관리자에게 문의해 주세요.';
       }
-      if (code == 'email_provider_disabled') {
-        return 'Supabase에서 이메일(아이디) 로그인이 꺼져 있습니다. '
-            '대시보드 Authentication → Providers → Email 에서 Enable 을 켜 주세요.';
+      if (errorCode == 'email_provider_disabled') {
+        return '서버에서 이메일(아이디) 로그인이 비활성화되어 있습니다. '
+            '관리자에게 문의해 주세요.';
       }
 
-      if (code == 'user_already_exists' ||
-          code == 'email_exists' ||
-          code == 'identity_already_exists') {
+      if (errorCode == 'user_already_exists' ||
+          errorCode == 'email_exists' ||
+          errorCode == 'identity_already_exists') {
         return '이미 사용 중인 아이디입니다. 「로그인」에서 시도해 주세요.';
       }
       if (message.contains('user already registered') ||
@@ -155,12 +170,13 @@ class _EmailAuthSheetState extends State<_EmailAuthSheet>
       if (message.contains('invalid login credentials')) {
         return '아이디 또는 비밀번호가 올바르지 않습니다.';
       }
-      if (http == '429') {
+      if (e.statusCode == 429) {
         return '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.';
       }
 
-      if (e.message.trim().isNotEmpty) {
-        return e.message.trim();
+      final shown = e.messageFromServer.trim();
+      if (shown.isNotEmpty && shown != e.toString()) {
+        return shown;
       }
     }
 
@@ -179,7 +195,7 @@ class _EmailAuthSheetState extends State<_EmailAuthSheet>
 
   Future<void> _submit(bool isSignUp) async {
     if (!SupabaseConfig.isConfigured) {
-      setState(() => _error = '앱에 Supabase 설정(URL/키)이 없습니다. 빌드 설정을 확인해 주세요.');
+      setState(() => _error = '서버 주소(API_BASE_URL)가 설정되지 않았습니다. 빌드 설정을 확인해 주세요.');
       return;
     }
 
@@ -214,11 +230,12 @@ class _EmailAuthSheetState extends State<_EmailAuthSheet>
     try {
       if (isSignUp) {
         final res = await AuthService.signUpWithEmail(email: id, password: pw);
-        if (res.session == null) {
+        final session = res['session'];
+        if (session == null) {
           setState(() {
             _error = '가입은 되었으나 바로 로그인할 수 없습니다. '
-                'Supabase에서 Confirm email 설정을 확인하거나, '
-                '메일 인증 후 로그인해 주세요.';
+                '이메일 인증이 필요한 경우 메일을 확인하거나, '
+                '잠시 후 「로그인」에서 다시 시도해 주세요.';
           });
           return;
         }

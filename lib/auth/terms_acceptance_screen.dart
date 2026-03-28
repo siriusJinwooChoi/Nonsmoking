@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-
+import '../api/bff_profile_api.dart';
 import '../supabase/supabase_config.dart';
 import '../theme/app_theme.dart';
 import 'terms_detail_actions.dart';
@@ -34,13 +33,9 @@ class _TermsAcceptanceScreenState extends State<TermsAcceptanceScreen> {
       await prefs.setBool(kTermsAgreedPrefsKey, true);
 
       if (SupabaseConfig.isConfigured) {
-        final uid = Supabase.instance.client.auth.currentUser?.id;
-        if (uid != null) {
-          await Supabase.instance.client.from('profiles').upsert({
-            'id': uid,
-            'terms_accepted_at': DateTime.now().toUtc().toIso8601String(),
-          }, onConflict: 'id');
-        }
+        await BffProfileApi.patchProfile(
+          termsAcceptedAtIso: DateTime.now().toUtc().toIso8601String(),
+        );
       }
 
       widget.onAgreed();

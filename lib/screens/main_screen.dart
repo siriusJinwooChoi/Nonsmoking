@@ -6,7 +6,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import '../api/remote_assets.dart';
+import '../auth/bff_auth_service.dart';
 
 import 'reason_why_screen.dart';
 import 'nonsmoke_helper_screen.dart';
@@ -240,8 +241,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   Future<void> _syncMainReasonFromApiIfAvailable() async {
     if (!SupabaseConfig.isConfigured) return;
-    final session = Supabase.instance.client.auth.currentSession;
-    final token = session?.accessToken;
+    final token = await BffAuthService.instance.getValidAccessToken();
     if (token == null || token.isEmpty) return;
     try {
       final serverPinned = await _reasonsApi.fetchPinnedReason(accessToken: token);
@@ -559,8 +559,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   Future<void> _pushMainReasonToApiIfAvailable(String text) async {
     if (text.trim().isEmpty) return;
     if (!SupabaseConfig.isConfigured) return;
-    final session = Supabase.instance.client.auth.currentSession;
-    final token = session?.accessToken;
+    final token = await BffAuthService.instance.getValidAccessToken();
     if (token == null || token.isEmpty) return;
     try {
       await _reasonsApi.savePinnedReason(accessToken: token, text: text.trim());
@@ -866,11 +865,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Image.asset(
-                    'assets/scoin.png',
+                  RemoteAssetImage(
+                    assetKey: 'scoin.png',
                     width: 24,
                     height: 24,
-                    errorBuilder: (_, __, ___) => const Icon(Icons.monetization_on_rounded, color: Colors.amber, size: 24),
+                    error: const Icon(Icons.monetization_on_rounded, color: Colors.amber, size: 24),
                   ),
                   const SizedBox(width: 4),
                   Text(

@@ -1,9 +1,12 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../api/api_config.dart';
+import '../api/remote_assets.dart';
+import '../auth/bff_auth_service.dart';
 import '../notifications/daily_reminder_worker.dart' as dw;
 import '../screens/attendance_screen.dart' as att;
 import 'supabase_config.dart';
@@ -37,36 +40,41 @@ abstract final class _PrefsKeys {
   static const timingTapBestScore = 'timing_tap_best_score';
   static const cigaretteCatchBestStage = 'cigarette_catch_best_stage';
   static const cigaretteCatchBestScore = 'cigarette_catch_best_score';
-  /// 로그아웃 후 다음 로그인 시 원격에서 복원(pull) 필요
   static const pullPendingAfterLogin = 'supabase_pull_pending_after_login';
 }
 
 String _initialPullDoneKey(String uid) => 'supabase_initial_pull_done_$uid';
 
-/// 로컬(SharedPreferences)과 Supabase 테이블 간 동기화.
-///
-/// - **일상 사용**: 로컬이 기준. 앱 시작·백그라운드 등에서는 **push만** (원격을 당겨오지 않음).
-/// - **pull**: 로그아웃 후 재로그인, 또는 이 기기에서 해당 계정으로 **처음 세션을 맞출 때만**
-///   ([runPostLoginPullIfNeeded]).
-///
-/// 로그인된 사용자(`auth.currentSession`)만 동기화합니다. (익명 로그인 미사용)
-///
-/// **가입 시 DB 트리거**로 `user_settings` 등에 기본 행이 생기므로, “원격에 행이 있다”만으로는
-/// pull 하지 않습니다. **`user_settings.is_configured`** 가 true일 때만 원격 온보딩 완료로 보고 pull 합니다.
+Uri _bffUri(String path) {
+  final base = ApiConfig.baseUrl.endsWith('/')
+      ? ApiConfig.baseUrl.substring(0, ApiConfig.baseUrl.length - 1)
+      : ApiConfig.baseUrl;
+  return Uri.parse('$base$path');
+}
+
+Future<Map<String, String>> _authHeader() async {
+  final t = await BffAuthService.instance.getValidAccessToken();
+  if (t == null || t.isEmpty) return {};
+  return {
+    'Authorization': 'Bearer $t',
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+  };
+}
+
+/// 로컬(SharedPreferences)과 서버(BFF → Supabase) 간 동기화.
 abstract final class SupabaseSyncService {
   static Future<void>? _postLoginPullInFlight;
 
-  /// 로그아웃 직전에 호출: 다음 로그인 시 [runPostLoginPullIfNeeded]에서 pull 하도록 표시.
   static Future<void> markPullRequiredOnNextLogin() async {
     if (!SupabaseConfig.isConfigured) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_PrefsKeys.pullPendingAfterLogin, true);
   }
 
-  /// 앱 시작 시: **로컬 → 서버 push만** (pull 없음).
   static Future<void> runStartupPushOnlyIfEligible() async {
     if (!SupabaseConfig.isConfigured) return;
-    if (Supabase.instance.client.auth.currentSession == null) return;
+    if (!BffAuthService.instance.isLoggedIn) return;
 
     final prefs = await SharedPreferences.getInstance();
     if (!(prefs.getBool(_PrefsKeys.isConfigured) ?? false)) return;
@@ -80,10 +88,6 @@ abstract final class SupabaseSyncService {
     }
   }
 
-  /// 로그인 직후(`signedIn` / `initialSession`): pull 이 필요한 경우에만 원격 반영.
-  ///
-  /// - 이 기기에서 해당 계정의 **최초 동기화**가 아직이거나
-  /// - [markPullRequiredOnNextLogin] 이 설정된 경우(로그아웃 후 재로그인 등)
   static Future<void> runPostLoginPullIfNeeded() async {
     final existing = _postLoginPullInFlight;
     if (existing != null) {
@@ -101,10 +105,10 @@ abstract final class SupabaseSyncService {
 
   static Future<void> _runPostLoginPullIfNeededBody() async {
     if (!SupabaseConfig.isConfigured) return;
-    if (Supabase.instance.client.auth.currentSession == null) return;
+    if (!BffAuthService.instance.isLoggedIn) return;
 
     final prefs = await SharedPreferences.getInstance();
-    final uid = Supabase.instance.client.auth.currentUser?.id;
+    final uid = BffAuthService.instance.userId;
     if (uid == null) return;
 
     final pending = prefs.getBool(_PrefsKeys.pullPendingAfterLogin) ?? false;
@@ -127,10 +131,9 @@ abstract final class SupabaseSyncService {
     }
   }
 
-  /// 온보딩 완료 직후, 앱 백그라운드 진입 시 등: 로컬 → 서버 업로드.
   static Future<void> pushLocalToRemoteIfEligible() async {
     if (!SupabaseConfig.isConfigured) return;
-    if (Supabase.instance.client.auth.currentSession == null) return;
+    if (!BffAuthService.instance.isLoggedIn) return;
 
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -143,148 +146,34 @@ abstract final class SupabaseSyncService {
     }
   }
 
-  /// DB 트리거로 `user_settings` 행은 가입 직후 생기지만 `is_configured` 는 false 가 기본값.
   static Future<bool> _remoteOnboardingCompleted() async {
-    final uid = Supabase.instance.client.auth.currentUser?.id;
-    if (uid == null) return false;
-    final row = await Supabase.instance.client
-        .from('user_settings')
-        .select('is_configured')
-        .eq('user_id', uid)
-        .maybeSingle();
-    if (row == null) return false;
-    return row['is_configured'] as bool? ?? false;
+    final headers = await _authHeader();
+    if (headers.isEmpty) return false;
+    final res = await http.get(_bffUri('/v1/sync/onboarding'), headers: headers);
+    if (res.statusCode != 200) return false;
+    final map = jsonDecode(res.body) as Map<String, dynamic>;
+    return map['is_configured'] == true;
   }
 
-  /// 한 테이블 upsert 실패 시 전체가 중단되면 코인 등 뒤쪽 테이블이 영원히 안 올라갈 수 있어 분리 처리.
   static Future<void> _pushAll(SharedPreferences prefs) async {
-    final uid = Supabase.instance.client.auth.currentUser!.id;
-    final client = Supabase.instance.client;
+    final headers = await _authHeader();
+    if (headers.isEmpty) return;
 
-    Future<void> run(String label, Future<void> Function() op) async {
-      try {
-        await op();
-      } catch (e, st) {
-        if (kDebugMode) {
-          debugPrint('SupabaseSyncService._pushAll[$label]: $e\n$st');
-        }
-      }
+    final best = prefs.getDouble(_PrefsKeys.bestRecord);
+    double? bestSec;
+    if (best != null && best.isFinite && !best.isNaN) {
+      bestSec = best;
     }
 
-    await run('user_settings', () => _upsertUserSettings(client, uid, prefs));
-    await run('quit_progress', () => _upsertQuitProgress(client, uid, prefs));
-    await run('reasons', () => _upsertReasons(client, uid, prefs));
-    await run('notification_settings', () => _upsertNotificationSettings(client, uid, prefs));
-    await run('coins_and_attendance', () => _upsertCoinsAndAttendance(client, uid, prefs));
-    await run('tree_progress', () => _upsertTreeProgress(client, uid, prefs));
-    await run('cigarette_collection', () => _upsertCigaretteCollection(client, uid, prefs));
-    await run('game_stats', () => _upsertGameStats(client, uid, prefs));
-  }
-
-  static Future<void> _pullAll(SharedPreferences prefs) async {
-    final uid = Supabase.instance.client.auth.currentUser!.id;
-    final client = Supabase.instance.client;
-
-    await _applyUserSettings(
-      await client.from('user_settings').select().eq('user_id', uid).maybeSingle(),
-      prefs,
-    );
-    await _applyQuitProgress(
-      await client.from('quit_progress').select().eq('user_id', uid).maybeSingle(),
-      prefs,
-    );
-    await _applyReasons(
-      await client.from('reasons').select().eq('user_id', uid).maybeSingle(),
-      prefs,
-    );
-    await _applyNotificationSettings(
-      await client.from('notification_settings').select().eq('user_id', uid).maybeSingle(),
-      prefs,
-    );
-    await _applyCoinsAndAttendance(
-      await client.from('coins_and_attendance').select().eq('user_id', uid).maybeSingle(),
-      prefs,
-    );
-    await _applyTreeProgress(
-      await client.from('tree_progress').select().eq('user_id', uid).maybeSingle(),
-      prefs,
-    );
-    await _applyCigaretteCollection(
-      await client.from('cigarette_collection').select().eq('user_id', uid).maybeSingle(),
-      prefs,
-    );
-    await _applyGameStats(
-      await client.from('game_stats').select().eq('user_id', uid).maybeSingle(),
-      prefs,
-    );
-  }
-
-  // --- upsert helpers ---
-
-  static Future<void> _upsertUserSettings(
-    SupabaseClient client,
-    String uid,
-    SharedPreferences prefs,
-  ) async {
-    await client.from('user_settings').upsert({
-      'user_id': uid,
-      'is_configured': prefs.getBool(_PrefsKeys.isConfigured) ?? false,
-      'daily_cigarettes': prefs.getInt(_PrefsKeys.dailyCigarettes) ?? 0,
-      'cigarettes_per_pack': prefs.getInt(_PrefsKeys.cigarettesPerPack) ?? 20,
-      'price_per_pack': prefs.getInt(_PrefsKeys.pricePerPack) ?? 4500,
-      'duration_days': prefs.getInt(_PrefsKeys.durationDays),
-    }, onConflict: 'user_id');
-  }
-
-  static Future<void> _upsertQuitProgress(
-    SupabaseClient client,
-    String uid,
-    SharedPreferences prefs,
-  ) async {
-    final startMs = prefs.getInt(_PrefsKeys.startTime) ??
-        DateTime.now().millisecondsSinceEpoch;
-    final lungLast =
-        prefs.getInt(_PrefsKeys.lastUpdatedTime) ?? startMs;
-
-    await client.from('quit_progress').upsert({
-      'user_id': uid,
-      'start_time_ms': startMs,
-      'failure_count': prefs.getInt(_PrefsKeys.failureCount) ?? 0,
-      'goal_days': prefs.getInt(dw.kGoalDaysKey),
-      'goal_congratulated_day': prefs.getInt(dw.kGoalCongratulatedDayKey),
-      'lung_health': (prefs.getInt(_PrefsKeys.lungHealth) ?? 100).clamp(0, 100),
-      'lung_last_updated_ms': lungLast,
-      'pinned_reason_text': prefs.getString(_PrefsKeys.pinnedReasonText),
-    }, onConflict: 'user_id');
-  }
-
-  static Future<void> _upsertReasons(
-    SupabaseClient client,
-    String uid,
-    SharedPreferences prefs,
-  ) async {
-    final raw = prefs.getString(_PrefsKeys.quitReasonsV1);
-    dynamic decoded;
-    if (raw != null && raw.trim().isNotEmpty) {
+    dynamic reasonDecoded;
+    final rawReason = prefs.getString(_PrefsKeys.quitReasonsV1);
+    if (rawReason != null && rawReason.trim().isNotEmpty) {
       try {
-        decoded = jsonDecode(raw);
+        reasonDecoded = jsonDecode(rawReason);
       } catch (_) {}
     }
-    final list = decoded is List ? decoded : <dynamic>[];
+    final reasonsList = reasonDecoded is List ? reasonDecoded : <dynamic>[];
 
-    await client.from('reasons').upsert({
-      'user_id': uid,
-      'reasons_json': list,
-      'selected_reason_id': prefs.getString(_PrefsKeys.selectedReasonId),
-      'selected_reason_text': prefs.getString(dw.kSelectedReasonTextKey),
-    }, onConflict: 'user_id');
-  }
-
-  static Future<void> _upsertNotificationSettings(
-    SupabaseClient client,
-    String uid,
-    SharedPreferences prefs,
-  ) async {
     dynamic reminderDecoded;
     final reminderRaw = prefs.getString(dw.kReminderTimesKey);
     if (reminderRaw != null && reminderRaw.trim().isNotEmpty) {
@@ -292,101 +181,131 @@ abstract final class SupabaseSyncService {
         reminderDecoded = jsonDecode(reminderRaw);
       } catch (_) {}
     }
-    final reminderJson = reminderDecoded is List ? reminderDecoded : <dynamic>[];
+    final reminderList = reminderDecoded is List ? reminderDecoded : <dynamic>[];
 
-    await client.from('notification_settings').upsert({
-      'user_id': uid,
-      'reminder_times_json': reminderJson,
-      'reason_notification_enabled':
-          prefs.getBool(dw.kReasonNotificationEnabledKey) ?? false,
-      'inactivity_notification_enabled':
-          prefs.getBool(dw.kInactivityNotificationEnabledKey) ?? true,
-      'attendance_reminder_enabled':
-          prefs.getBool(dw.kAttendanceReminderEnabledKey) ?? true,
-      'last_app_open_time_ms': prefs.getInt(dw.kLastAppOpenTimeMsKey),
-    }, onConflict: 'user_id');
-  }
-
-  static Future<void> _upsertCoinsAndAttendance(
-    SupabaseClient client,
-    String uid,
-    SharedPreferences prefs,
-  ) async {
     final lastDateStr = prefs.getString(att.kAttendanceLastDateKey);
-    String? dateForDb;
-    if (lastDateStr != null && lastDateStr.length >= 10) {
-      dateForDb = lastDateStr.substring(0, 10);
-    } else if (lastDateStr != null && lastDateStr.isNotEmpty) {
-      dateForDb = lastDateStr;
-    }
 
-    await client.from('coins_and_attendance').upsert({
-      'user_id': uid,
-      'golden_coins': prefs.getInt(att.kGoldenCoinsKey) ?? 0,
-      'attendance_streak_day': prefs.getInt(att.kAttendanceStreakDayKey) ?? 1,
-      'attendance_last_date': dateForDb,
-    }, onConflict: 'user_id');
-  }
-
-  static Future<void> _upsertTreeProgress(
-    SupabaseClient client,
-    String uid,
-    SharedPreferences prefs,
-  ) async {
-    final lastMs = prefs.getInt(_PrefsKeys.lastWaterUpdateTime) ??
+    final startMs = prefs.getInt(_PrefsKeys.startTime) ??
         DateTime.now().millisecondsSinceEpoch;
+    final lungLast =
+        prefs.getInt(_PrefsKeys.lastUpdatedTime) ?? startMs;
 
-    await client.from('tree_progress').upsert({
-      'user_id': uid,
-      'growth_stage': prefs.getInt(_PrefsKeys.growthStage) ?? 1,
-      'water': prefs.getInt(_PrefsKeys.water) ?? 0,
-      'current_water': prefs.getInt(_PrefsKeys.currentWater) ?? 0,
-      'last_water_update_ms': lastMs,
-      'saved_trees_count': prefs.getInt(_PrefsKeys.savedTreesCount) ?? 0,
-    }, onConflict: 'user_id');
-  }
+    final body = <String, dynamic>{
+      'user_settings': {
+        'is_configured': prefs.getBool(_PrefsKeys.isConfigured) ?? false,
+        'daily_cigarettes': prefs.getInt(_PrefsKeys.dailyCigarettes) ?? 0,
+        'cigarettes_per_pack': prefs.getInt(_PrefsKeys.cigarettesPerPack) ?? 20,
+        'price_per_pack': prefs.getInt(_PrefsKeys.pricePerPack) ?? 4500,
+        'duration_days': prefs.getInt(_PrefsKeys.durationDays),
+      },
+      'quit_progress': {
+        'start_time_ms': startMs,
+        'failure_count': prefs.getInt(_PrefsKeys.failureCount) ?? 0,
+        'goal_days': prefs.getInt(dw.kGoalDaysKey),
+        'goal_congratulated_day': prefs.getInt(dw.kGoalCongratulatedDayKey),
+        'lung_health': (prefs.getInt(_PrefsKeys.lungHealth) ?? 100).clamp(0, 100),
+        'lung_last_updated_ms': lungLast,
+        'pinned_reason_text': prefs.getString(_PrefsKeys.pinnedReasonText),
+      },
+      'reasons': {
+        'reasons_json': reasonsList,
+        'selected_reason_id': prefs.getString(_PrefsKeys.selectedReasonId),
+        'selected_reason_text': prefs.getString(dw.kSelectedReasonTextKey),
+      },
+      'notification_settings': {
+        'reminder_times_json': reminderList,
+        'reason_notification_enabled':
+            prefs.getBool(dw.kReasonNotificationEnabledKey) ?? false,
+        'inactivity_notification_enabled':
+            prefs.getBool(dw.kInactivityNotificationEnabledKey) ?? true,
+        'attendance_reminder_enabled':
+            prefs.getBool(dw.kAttendanceReminderEnabledKey) ?? true,
+        'last_app_open_time_ms': prefs.getInt(dw.kLastAppOpenTimeMsKey),
+      },
+      'coins_and_attendance': {
+        'golden_coins': prefs.getInt(att.kGoldenCoinsKey) ?? 0,
+        'attendance_streak_day': prefs.getInt(att.kAttendanceStreakDayKey) ?? 1,
+        'attendance_last_date': lastDateStr,
+      },
+      'tree_progress': {
+        'growth_stage': prefs.getInt(_PrefsKeys.growthStage) ?? 1,
+        'water': prefs.getInt(_PrefsKeys.water) ?? 0,
+        'current_water': prefs.getInt(_PrefsKeys.currentWater) ?? 0,
+        'last_water_update_ms': prefs.getInt(_PrefsKeys.lastWaterUpdateTime) ??
+            DateTime.now().millisecondsSinceEpoch,
+        'saved_trees_count': prefs.getInt(_PrefsKeys.savedTreesCount) ?? 0,
+      },
+      'cigarette_collection': {
+        'last_collection_window': prefs.getString(_PrefsKeys.lastCollectionWindow),
+        'session_window': prefs.getString(_PrefsKeys.sessionWindow),
+        'session_asset': prefs.getString(_PrefsKeys.sessionAsset),
+        'session_attempts': prefs.getInt(_PrefsKeys.sessionAttempts) ?? 0,
+        'collected_asset_paths': RemoteAssets.normalizeCigaretteKeyList(
+          prefs.getStringList(_PrefsKeys.collectedCigaretteAssets) ?? <String>[],
+        ),
+      },
+      'game_stats': {
+        'number_sequence_best_seconds': bestSec,
+        'word_game_level': prefs.getInt(_PrefsKeys.wordGameLevel) ?? 1,
+        'timing_tap_best_score': prefs.getInt(_PrefsKeys.timingTapBestScore) ?? 0,
+        'cigarette_catch_best_stage':
+            prefs.getInt(_PrefsKeys.cigaretteCatchBestStage) ?? 0,
+        'cigarette_catch_best_score':
+            prefs.getInt(_PrefsKeys.cigaretteCatchBestScore) ?? 0,
+      },
+    };
 
-  static Future<void> _upsertCigaretteCollection(
-    SupabaseClient client,
-    String uid,
-    SharedPreferences prefs,
-  ) async {
-    final collected = prefs.getStringList(_PrefsKeys.collectedCigaretteAssets) ?? [];
-
-    await client.from('cigarette_collection').upsert({
-      'user_id': uid,
-      'last_collection_window': prefs.getString(_PrefsKeys.lastCollectionWindow),
-      'session_window': prefs.getString(_PrefsKeys.sessionWindow),
-      'session_asset': prefs.getString(_PrefsKeys.sessionAsset),
-      'session_attempts': prefs.getInt(_PrefsKeys.sessionAttempts) ?? 0,
-      'collected_asset_paths': collected,
-    }, onConflict: 'user_id');
-  }
-
-  static Future<void> _upsertGameStats(
-    SupabaseClient client,
-    String uid,
-    SharedPreferences prefs,
-  ) async {
-    final best = prefs.getDouble(_PrefsKeys.bestRecord);
-    double? bestSec;
-    if (best != null && best.isFinite && !best.isNaN) {
-      bestSec = best;
+    final res = await http.put(
+      _bffUri('/v1/sync/push'),
+      headers: headers,
+      body: jsonEncode(body),
+    );
+    if (res.statusCode != 200 && kDebugMode) {
+      debugPrint('sync push failed ${res.statusCode} ${res.body}');
     }
-
-    await client.from('game_stats').upsert({
-      'user_id': uid,
-      'number_sequence_best_seconds': bestSec,
-      'word_game_level': prefs.getInt(_PrefsKeys.wordGameLevel) ?? 1,
-      'timing_tap_best_score': prefs.getInt(_PrefsKeys.timingTapBestScore) ?? 0,
-      'cigarette_catch_best_stage':
-          prefs.getInt(_PrefsKeys.cigaretteCatchBestStage) ?? 0,
-      'cigarette_catch_best_score':
-          prefs.getInt(_PrefsKeys.cigaretteCatchBestScore) ?? 0,
-    }, onConflict: 'user_id');
   }
 
-  // --- apply (pull) helpers ---
+  static Future<void> _pullAll(SharedPreferences prefs) async {
+    final headers = await _authHeader();
+    if (headers.isEmpty) return;
+
+    final res = await http.get(_bffUri('/v1/sync/pull'), headers: headers);
+    if (res.statusCode != 200) return;
+    final map = jsonDecode(res.body) as Map<String, dynamic>;
+
+    await _applyUserSettings(
+      map['user_settings'] as Map<String, dynamic>?,
+      prefs,
+    );
+    await _applyQuitProgress(
+      map['quit_progress'] as Map<String, dynamic>?,
+      prefs,
+    );
+    await _applyReasons(
+      map['reasons'] as Map<String, dynamic>?,
+      prefs,
+    );
+    await _applyNotificationSettings(
+      map['notification_settings'] as Map<String, dynamic>?,
+      prefs,
+    );
+    await _applyCoinsAndAttendance(
+      map['coins_and_attendance'] as Map<String, dynamic>?,
+      prefs,
+    );
+    await _applyTreeProgress(
+      map['tree_progress'] as Map<String, dynamic>?,
+      prefs,
+    );
+    await _applyCigaretteCollection(
+      map['cigarette_collection'] as Map<String, dynamic>?,
+      prefs,
+    );
+    await _applyGameStats(
+      map['game_stats'] as Map<String, dynamic>?,
+      prefs,
+    );
+  }
 
   static Future<void> _applyUserSettings(
     Map<String, dynamic>? row,
@@ -520,8 +439,6 @@ abstract final class SupabaseSyncService {
     final hasRemoteAttendanceDate =
         d != null && d.toString().trim().isNotEmpty;
 
-    // 가입 직후 DB 기본 행 등으로 attendance_last_date 가 비어 있으면,
-    // 로컬에서 이미 출석 처리했는데 pull 이 지우는 일을 막는다.
     if (!hasRemoteAttendanceDate) {
       final localCoins = prefs.getInt(att.kGoldenCoinsKey) ?? 0;
       final merged = remoteCoins > localCoins ? remoteCoins : localCoins;
@@ -587,7 +504,10 @@ abstract final class SupabaseSyncService {
     }
     final sa = row['session_asset'] as String?;
     if (sa != null) {
-      await prefs.setString(_PrefsKeys.sessionAsset, sa);
+      await prefs.setString(
+        _PrefsKeys.sessionAsset,
+        RemoteAssets.normalizeCigaretteKey(sa),
+      );
     } else {
       await prefs.remove(_PrefsKeys.sessionAsset);
     }
@@ -598,11 +518,13 @@ abstract final class SupabaseSyncService {
     final paths = row['collected_asset_paths'];
     final localCollected =
         prefs.getStringList(_PrefsKeys.collectedCigaretteAssets) ?? <String>[];
-    // DB 기본 행은 collected_asset_paths 가 [] — pull 이 로컬 수집을 지우지 않도록 한다.
-    // 원격에 수집 데이터가 있으면 로컬과 합쳐 멀티 기기·재설치 후에도 잃지 않게 한다.
     if (paths is List && paths.isNotEmpty) {
-      final remote = paths.map((e) => e.toString()).toList();
-      final merged = {...localCollected, ...remote}.toList()..sort();
+      final remote = paths
+          .map((e) => RemoteAssets.normalizeCigaretteKey(e.toString()))
+          .toList();
+      final localNorm =
+          localCollected.map(RemoteAssets.normalizeCigaretteKey).toList();
+      final merged = {...localNorm, ...remote}.toList()..sort();
       await prefs.setStringList(_PrefsKeys.collectedCigaretteAssets, merged);
     }
   }
@@ -631,7 +553,6 @@ abstract final class SupabaseSyncService {
         (row['cigarette_catch_best_stage'] as num?)?.toInt() ?? 0;
     final localCatch =
         prefs.getInt(_PrefsKeys.cigaretteCatchBestStage) ?? 0;
-    // DB 기본값 0이 pull 때 로컬 기록을 지우지 않도록 더 큰 값을 유지
     final mergedCatch =
         remoteCatch > localCatch ? remoteCatch : localCatch;
     await prefs.setInt(_PrefsKeys.cigaretteCatchBestStage, mergedCatch);

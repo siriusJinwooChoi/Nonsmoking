@@ -3,6 +3,8 @@ import 'package:lottie/lottie.dart';
 import 'dart:async';
 import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../api/api_config.dart';
+import '../api/remote_assets.dart';
 import '../theme/app_theme.dart';
 
 // ✅ Analytics helper
@@ -366,12 +368,18 @@ class _TreeScreenState extends State<TreeScreen>
                       Positioned(
                         top: -20,
                         right: 80,
-                        child: Lottie.asset(
-                          'assets/lottie/water.json',
-                          width: 120,
-                          height: 120,
-                          fit: BoxFit.contain,
-                        ),
+                        child: ApiConfig.isConfigured
+                            ? Lottie.network(
+                                RemoteAssets.urlForKey('lottie/water.json').toString(),
+                                width: 120,
+                                height: 120,
+                                fit: BoxFit.contain,
+                              )
+                            : Icon(
+                                Icons.water_drop_rounded,
+                                size: 100,
+                                color: Colors.blue.shade300,
+                              ),
                       ),
                     AnimatedBuilder(
                       animation: _shakeController,
@@ -380,9 +388,11 @@ class _TreeScreenState extends State<TreeScreen>
                             sin(_shakeController.value * 2 * pi) * 0.05;
                         return Transform.rotate(
                           angle: angle,
-                          child: Image.asset(
-                            'assets/tree_stage_$growthStage.png',
+                          child: RemoteAssetImage(
+                            assetKey: 'tree_stage_$growthStage.png',
                             height: 140,
+                            fit: BoxFit.contain,
+                            error: Icon(Icons.park_rounded, size: 120, color: Colors.green.shade400),
                           ),
                         );
                       },

@@ -41,9 +41,12 @@ import 'analytics/app_analytics.dart';
 
 import 'dart:async';
 
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:app_links/app_links.dart';
 
 import 'auth/auth_gate.dart';
+import 'auth/bff_auth_service.dart';
+import 'auth/bff_oauth_service.dart';
+import 'api/remote_assets.dart';
 import 'supabase/supabase_config.dart';
 import 'supabase/supabase_sync_service.dart';
 
@@ -69,21 +72,16 @@ void main() async {
     // ✅ WorkManager 초기화
     await Workmanager().initialize(
       callbackDispatcher,
-      isInDebugMode: false,
+      isInDebugMode: kDebugMode,
     );
 
     tz_data.initializeTimeZones();
     tz.setLocalLocation(tz.getLocation('Asia/Seoul'));
 
     if (SupabaseConfig.isConfigured) {
-      await Supabase.initialize(
-        url: SupabaseConfig.url,
-        anonKey: SupabaseConfig.anonKey,
-        authOptions: const FlutterAuthClientOptions(
-          authFlowType: AuthFlowType.pkce,
-        ),
-      );
+      await BffAuthService.instance.restoreSession();
     }
+    await RemoteAssets.migrateLegacyCigarettePathsInPrefs();
     await SupabaseSyncService.runStartupPushOnlyIfEligible();
 
     runApp(const QuitSmokingApp());
@@ -101,6 +99,8 @@ class QuitSmokingApp extends StatefulWidget {
 
 class _QuitSmokingAppState extends State<QuitSmokingApp>
     with WidgetsBindingObserver {
+  StreamSubscription<Uri>? _appLinkSub;
+
   Future<bool> checkIfConfigured() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool('isConfigured') ?? false;
@@ -119,10 +119,30 @@ class _QuitSmokingAppState extends State<QuitSmokingApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _initOAuthDeepLinks();
+  }
+
+  Future<void> _initOAuthDeepLinks() async {
+    if (!SupabaseConfig.isConfigured) return;
+    final appLinks = AppLinks();
+    _appLinkSub = appLinks.uriLinkStream.listen((uri) {
+      if (uri.scheme == 'com.cjw.nonsmoking' && uri.host == 'login-callback') {
+        BffOAuthService.completeWithAuthCode(uri.queryParameters['code']);
+      }
+    });
+    try {
+      final initial = await appLinks.getInitialLink();
+      if (initial != null &&
+          initial.scheme == 'com.cjw.nonsmoking' &&
+          initial.host == 'login-callback') {
+        BffOAuthService.completeWithAuthCode(initial.queryParameters['code']);
+      }
+    } catch (_) {}
   }
 
   @override
   void dispose() {
+    _appLinkSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -315,8 +335,11 @@ class _AttendanceGateState extends State<AttendanceGate> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _applySkipOverlayFlag());
-    unawaited(bootstrapCoreReminderSchedulesOnAppOpen());
+    // 첫 프레임 이후에 권한·알람 예약 (Activity 미준비 상태에서 요청하면 실패할 수 있음)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_applySkipOverlayFlag());
+      unawaited(bootstrapCoreReminderSchedulesOnAppOpen());
+    });
   }
 
   Future<void> _applySkipOverlayFlag() async {

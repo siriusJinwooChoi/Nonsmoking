@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lottie/lottie.dart';
 import 'dart:async';
+import '../api/api_config.dart';
+import '../api/remote_assets.dart';
 import '../theme/app_theme.dart';
 import '../ad_manager.dart';
 import '../widget/widget_helper.dart';
@@ -236,15 +238,17 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
               const SizedBox(height: 24),
               SizedBox(
                 height: 230,
-                child: Lottie.asset(
-                  'assets/lung_recover.json',
-                  controller: _controller,
-                  onLoaded: (composition) {
-                    _controller.duration = composition.duration;
-                  },
-                  repeat: false,
-                  fit: BoxFit.contain,
-                ),
+                child: ApiConfig.isConfigured
+                    ? Lottie.network(
+                        RemoteAssets.urlForKey('lung_recover.json').toString(),
+                        controller: _controller,
+                        onLoaded: (composition) {
+                          _controller.duration = composition.duration;
+                        },
+                        repeat: false,
+                        fit: BoxFit.contain,
+                      )
+                    : Icon(Icons.favorite_rounded, size: 120, color: healthColor),
               ),
               const SizedBox(height: 24),
               Container(

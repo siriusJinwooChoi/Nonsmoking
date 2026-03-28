@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../api/bff_profile_api.dart';
+import '../auth/bff_auth_service.dart';
 import '../supabase/supabase_config.dart';
 import '../theme/app_theme.dart';
 
@@ -32,11 +33,10 @@ class _NicknameSetupScreenState extends State<NicknameSetupScreen> {
       return;
     }
     if (!SupabaseConfig.isConfigured) {
-      setState(() => _error = 'Supabase가 설정되지 않았습니다.');
+      setState(() => _error = '서버 주소가 설정되지 않았습니다.');
       return;
     }
-    final uid = Supabase.instance.client.auth.currentUser?.id;
-    if (uid == null) {
+    if (!BffAuthService.instance.isLoggedIn) {
       setState(() => _error = '로그인 정보를 찾을 수 없습니다.');
       return;
     }
@@ -47,10 +47,16 @@ class _NicknameSetupScreenState extends State<NicknameSetupScreen> {
     });
 
     try {
-      await Supabase.instance.client.from('profiles').update({
-        'display_name': raw,
-      }).eq('id', uid);
+      final ok = await BffProfileApi.patchProfile(displayName: raw);
       if (!mounted) return;
+      if (!ok) {
+        setState(() {
+          _saving = false;
+          _error = '저장에 실패했습니다. 잠시 후 다시 시도해 주세요.';
+        });
+        return;
+      }
+      setState(() => _saving = false);
       widget.onComplete();
     } catch (e) {
       if (mounted) {

@@ -1,5 +1,6 @@
 import 'dart:convert';
-import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
+import 'package:flutter/foundation.dart'
+    show debugPrint, kDebugMode, defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -224,6 +225,8 @@ Future<void> scheduleZonedDailyReminderForSlot({
 
 /// 🔁 모든 알림 시간에 대해 정시 예약 (WorkManager 제거)
 Future<void> scheduleAllDailyReminders() async {
+  await ensureAndroidAlarmPermissionsForScheduling();
+
   final prefs = await SharedPreferences.getInstance();
   final raw = prefs.getString(kReminderTimesKey);
   if (raw == null || raw.isEmpty) return;
@@ -260,7 +263,7 @@ Future<void> scheduleReasonReminder() async {
   final enabled = prefs.getBool(kReasonNotificationEnabledKey) ?? false;
   if (!enabled) return;
 
-  await requestNotificationPermissionIfNeeded();
+  await ensureAndroidAlarmPermissionsForScheduling();
   ensureNotificationTimezoneInitialized();
 
   final reasonText = prefs.getString(kSelectedReasonTextKey) ?? '오늘도 금연을 이어가세요!';
@@ -315,6 +318,28 @@ Future<bool> requestNotificationPermissionIfNeeded() async {
   return granted ?? false;
 }
 
+/// Android 12+ 정확한 알람(AlarmManager exact). 미허용 시 `zonedSchedule(..., exactAllowWhileIdle)` 가 조용히 실패할 수 있음.
+Future<void> requestAndroidExactAlarmPermissionIfNeeded() async {
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+  final plugin = FlutterLocalNotificationsPlugin();
+  final androidImpl = plugin.resolvePlatformSpecificImplementation<
+      AndroidFlutterLocalNotificationsPlugin>();
+  if (androidImpl == null) return;
+  try {
+    await androidImpl.requestExactAlarmsPermission();
+  } catch (e, st) {
+    if (kDebugMode) {
+      debugPrint('requestExactAlarmsPermission failed: $e\n$st');
+    }
+  }
+}
+
+/// 일일/이유 리마인더 등 exact 스케줄 전에 호출
+Future<void> ensureAndroidAlarmPermissionsForScheduling() async {
+  await requestNotificationPermissionIfNeeded();
+  await requestAndroidExactAlarmPermissionIfNeeded();
+}
+
 Future<bool> _ensureNotificationPermissionGranted() async {
   final plugin = FlutterLocalNotificationsPlugin();
   final androidImpl = plugin.resolvePlatformSpecificImplementation<
@@ -349,7 +374,7 @@ Future<List<TimeOfDay>> getReminderTimes() async {
 
 /// ✅ 알림 시간 목록 저장 및 예약
 Future<void> saveReminderTimes(List<TimeOfDay> times) async {
-  await requestNotificationPermissionIfNeeded();
+  await ensureAndroidAlarmPermissionsForScheduling();
 
   final prefs = await SharedPreferences.getInstance();
   final list = times.map((t) => {'h': t.hour, 'm': t.minute}).toList();
@@ -867,6 +892,7 @@ Future<void> maybeNotifyCigaretteCollectionWindowOpened() async {
 /// 앱 실행 시 알림 권한 확인 + 핵심 스케줄(비접속/출석/담배수집) 재설정
 Future<void> bootstrapCoreReminderSchedulesOnAppOpen() async {
   ensureNotificationTimezoneInitialized();
+  await ensureAndroidAlarmPermissionsForScheduling();
   final granted = await _ensureNotificationPermissionGranted();
   if (!granted) return;
   await updateLastAppOpenAndScheduleInactivity();

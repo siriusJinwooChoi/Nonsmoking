@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lottie/lottie.dart';
+import '../api/api_config.dart';
+import '../api/remote_assets.dart';
 import '../theme/app_theme.dart';
 
 class SmokingScreen extends StatefulWidget {
@@ -28,13 +30,17 @@ class _SmokingScreenState extends State<SmokingScreen>
 
   void _onPressStart() {
     setState(() => _isSmoking = true);
-    _controller.repeat();
+    if (ApiConfig.isConfigured) {
+      _controller.repeat();
+    }
   }
 
   void _onPressEnd() {
     setState(() => _isSmoking = false);
-    _controller.stop();
-    _controller.reset();
+    if (ApiConfig.isConfigured) {
+      _controller.stop();
+      _controller.reset();
+    }
   }
 
   @override
@@ -108,16 +114,19 @@ class _SmokingScreenState extends State<SmokingScreen>
                     ),
                   ),
 
-                  // 메인 Lottie 애니메이션
-                  Lottie.asset(
-                    'assets/lottie/Cig.json',
-                    controller: _controller,
-                    onLoaded: (composition) {
-                      _controller.duration = composition.duration;
-                    },
-                    repeat: true,
-                    fit: BoxFit.contain,
-                  ),
+                  // 메인 Lottie 애니메이션 (서버 static)
+                  if (ApiConfig.isConfigured)
+                    Lottie.network(
+                      RemoteAssets.urlForKey('lottie/Cig.json').toString(),
+                      controller: _controller,
+                      onLoaded: (composition) {
+                        _controller.duration = composition.duration;
+                      },
+                      repeat: true,
+                      fit: BoxFit.contain,
+                    )
+                  else
+                    Icon(Icons.smoking_rooms_rounded, size: 120, color: Colors.grey.shade600),
                 ],
               ),
             ),
