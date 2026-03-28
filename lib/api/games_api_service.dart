@@ -16,6 +16,34 @@ class GameRewardClaimResult {
   });
 }
 
+/// `GET /v1/games/reward/settings` 응답 (Render 등 서버 환경변수 반영)
+class GameRewardSettings {
+  final int rewardCoinsPerClaim;
+  final int statsFreshMinutes;
+  final int wordGameMinLevelForReward;
+  final int timingTapMinBestScoreForReward;
+  final int cigaretteCatchMinBestScoreForReward;
+
+  const GameRewardSettings({
+    required this.rewardCoinsPerClaim,
+    required this.statsFreshMinutes,
+    required this.wordGameMinLevelForReward,
+    required this.timingTapMinBestScoreForReward,
+    required this.cigaretteCatchMinBestScoreForReward,
+  });
+
+  factory GameRewardSettings.fromJson(Map<String, dynamic> j) {
+    return GameRewardSettings(
+      rewardCoinsPerClaim: (j['rewardCoinsPerClaim'] as num?)?.toInt() ?? 5,
+      statsFreshMinutes: (j['statsFreshMinutes'] as num?)?.toInt() ?? 25,
+      wordGameMinLevelForReward: (j['wordGameMinLevelForReward'] as num?)?.toInt() ?? 2,
+      timingTapMinBestScoreForReward: (j['timingTapMinBestScoreForReward'] as num?)?.toInt() ?? 1,
+      cigaretteCatchMinBestScoreForReward:
+          (j['cigaretteCatchMinBestScoreForReward'] as num?)?.toInt() ?? 1,
+    );
+  }
+}
+
 class GamesApiService {
   const GamesApiService();
 
@@ -82,6 +110,23 @@ class GamesApiService {
       granted: granted,
       alreadyClaimed: body['alreadyClaimed'] == true,
     );
+  }
+
+  Future<GameRewardSettings?> fetchRewardSettings({
+    required String accessToken,
+  }) async {
+    if (!ApiConfig.isConfigured) return null;
+    final res = await http.get(
+      _uri('/v1/games/reward/settings'),
+      headers: {
+        'Authorization': 'Bearer $accessToken',
+        'Accept': 'application/json',
+      },
+    );
+    if (res.statusCode != 200) return null;
+    final body = jsonDecode(res.body) as Map<String, dynamic>;
+    if (body['ok'] != true) return null;
+    return GameRewardSettings.fromJson(body);
   }
 
   Future<Map<String, dynamic>?> fetchRankings({

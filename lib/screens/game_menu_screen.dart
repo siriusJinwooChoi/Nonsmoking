@@ -1,14 +1,55 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../api/api_config.dart';
+import '../api/games_api_service.dart';
+import '../supabase/supabase_config.dart';
 import '../theme/app_theme.dart';
-import 'game_screen.dart';
-import 'word_game_screen.dart';
 import 'cigarette_catch_game_screen.dart';
-import 'timing_tap_game_screen.dart';
 import 'game_ranking_screen.dart';
+import 'game_screen.dart';
+import 'timing_tap_game_screen.dart';
+import 'word_game_screen.dart';
 
 /// 게임 선택: 1-30 숫자 게임 / 단어맞추기 / 담배맞추기 / 완벽 타이밍
-class GameMenuScreen extends StatelessWidget {
+class GameMenuScreen extends StatefulWidget {
   const GameMenuScreen({super.key});
+
+  @override
+  State<GameMenuScreen> createState() => _GameMenuScreenState();
+}
+
+class _GameMenuScreenState extends State<GameMenuScreen> {
+  static const GamesApiService _gamesApi = GamesApiService();
+  String? _rewardHint;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRewardHint();
+  }
+
+  Future<void> _loadRewardHint() async {
+    if (!ApiConfig.isConfigured || !SupabaseConfig.isConfigured) {
+      return;
+    }
+    final token = Supabase.instance.client.auth.currentSession?.accessToken;
+    if (token == null || token.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _rewardHint = '로그인하면 미니게임 일일 보상(서버 검증)을 받을 수 있어요.';
+        });
+      }
+      return;
+    }
+    final s = await _gamesApi.fetchRewardSettings(accessToken: token);
+    if (!mounted) return;
+    setState(() {
+      _rewardHint = s != null
+          ? '종목당 하루 1회 · 금연코인 +${s.rewardCoinsPerClaim} (서버에서 지급)'
+          : '종목당 하루 1회 · 서버 검증 보상이 있어요.';
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -41,6 +82,14 @@ class GameMenuScreen extends StatelessWidget {
                 style: AppTheme.titleMedium.copyWith(color: AppTheme.textMuted),
                 textAlign: TextAlign.center,
               ),
+              if (_rewardHint != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  _rewardHint!,
+                  style: AppTheme.bodyMedium.copyWith(color: AppTheme.textMuted, fontSize: 13),
+                  textAlign: TextAlign.center,
+                ),
+              ],
               const SizedBox(height: 32),
               _GameCard(
                 icon: Icons.numbers_rounded,
@@ -129,7 +178,7 @@ class _GameCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: AppTheme.primary.withOpacity(0.15),
+                  color: AppTheme.primary.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Icon(icon, size: 36, color: AppTheme.primary),
