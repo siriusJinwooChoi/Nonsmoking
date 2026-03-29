@@ -40,6 +40,7 @@ import 'firebase_options.dart';
 import 'analytics/app_analytics.dart';
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:app_links/app_links.dart';
 
@@ -82,7 +83,8 @@ void main() async {
       await BffAuthService.instance.restoreSession();
     }
     await RemoteAssets.migrateLegacyCigarettePathsInPrefs();
-    await SupabaseSyncService.runStartupPushOnlyIfEligible();
+    // 첫 프레임·스플래시를 막지 않도록 전체 push 는 백그라운드 (로그인·온보딩 완료 시에만 동작)
+    unawaited(SupabaseSyncService.runStartupPushOnlyIfEligible());
 
     runApp(const QuitSmokingApp());
   }, (error, stack) {
@@ -152,6 +154,15 @@ class _QuitSmokingAppState extends State<QuitSmokingApp>
     if (state == AppLifecycleState.paused) {
       unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
     }
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshReminderSchedulesOnResume());
+    }
+  }
+
+  Future<void> _refreshReminderSchedulesOnResume() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!(prefs.getBool('isConfigured') ?? false)) return;
+    await bootstrapCoreReminderSchedulesOnAppOpen();
   }
 
   @override
@@ -215,6 +226,8 @@ class _IntroFlowWrapperState extends State<IntroFlowWrapper> {
   int cigarettesPerPack = 0;
   int pricePerPack = 0;
   int durationDays = 90;
+  /// 금연 이유 화면(3단계)에서 선택·입력한 문구
+  String _onboardingQuitReason = '';
 
   void nextScreen() => setState(() => currentIndex++);
 
@@ -230,7 +243,14 @@ class _IntroFlowWrapperState extends State<IntroFlowWrapper> {
         return Screen2Goals(onNext: nextScreen, step: step, totalSteps: _introTotalSteps);
 
       case 2:
-        return Screen3Reasons(onNext: nextScreen, step: step, totalSteps: _introTotalSteps);
+        return Screen3Reasons(
+          onContinueWithReason: (reason) {
+            setState(() => _onboardingQuitReason = reason);
+            nextScreen();
+          },
+          step: step,
+          totalSteps: _introTotalSteps,
+        );
 
       case 3:
         return Screen4StartDate(onNext: nextScreen, step: step, totalSteps: _introTotalSteps);
@@ -279,7 +299,30 @@ class _IntroFlowWrapperState extends State<IntroFlowWrapper> {
             await prefs.setInt('pricePerPack', pricePerPack);
             await prefs.setInt('duration_days', durationDays);
 
+            final reason = _onboardingQuitReason.trim();
+            if (reason.isNotEmpty) {
+              final now = DateTime.now().millisecondsSinceEpoch;
+              final id = 'onboard_$now';
+              await prefs.setString('pinnedReasonText', reason);
+              await prefs.setString(
+                'quitReasons_v1',
+                jsonEncode([
+                  {
+                    'id': id,
+                    'text': reason,
+                    'pinned': true,
+                    'createdAt': now,
+                    'displayNumber': 1,
+                  },
+                ]),
+              );
+              await prefs.setString('selectedReasonId', id);
+              await prefs.setString(kSelectedReasonTextKey, reason);
+              await prefs.setBool(kReasonNotificationEnabledKey, true);
+            }
+
             unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
+            unawaited(bootstrapCoreReminderSchedulesOnAppOpen());
 
             if (!mounted) return;
 
@@ -536,8 +579,8 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
                 _NavItem(icon: Icons.home_rounded, label: '메인', index: 0, current: currentIndex, onTap: _showAdThenNavigate),
                 _NavItem(icon: Icons.sports_esports_rounded, label: '게임', index: 1, current: currentIndex, onTap: _showAdThenNavigate),
                 _NavItem(icon: Icons.eco_rounded, label: '나무', index: 2, current: currentIndex, onTap: _showAdThenNavigate),
-                _NavItem(icon: Icons.favorite_rounded, label: '폐/흡연', index: 3, current: currentIndex, onTap: _showAdThenNavigate),
-                _NavItem(icon: Icons.inventory_2_rounded, label: '담배 컬렉션', index: 4, current: currentIndex, onTap: _showAdThenNavigate),
+                _NavItem(icon: Icons.favorite_rounded, label: '폐·건강', index: 3, current: currentIndex, onTap: _showAdThenNavigate),
+                _NavItem(icon: Icons.inventory_2_rounded, label: '수집·도감', index: 4, current: currentIndex, onTap: _showAdThenNavigate),
                 _NavItem(icon: Icons.favorite_border_rounded, label: '건강', index: 5, current: currentIndex, onTap: _showAdThenNavigate),
               ],
             ),

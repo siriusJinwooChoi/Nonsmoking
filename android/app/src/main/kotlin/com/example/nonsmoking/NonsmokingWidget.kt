@@ -10,7 +10,7 @@ import android.widget.RemoteViews
 import java.util.Locale
 
 /**
- * 홈 화면 위젯: 금연 시간, 절약 금액, 안 피운 담배, 폐 건강 표시
+ * 홈 화면 위젯: 금연 시간, 절약 금액, 넘긴 개비, 폐 건강 표시
  * Flutter SharedPreferences(FlutterSharedPreferences)에서 데이터를 읽어 표시합니다.
  */
 class NonsmokingWidget : AppWidgetProvider() {

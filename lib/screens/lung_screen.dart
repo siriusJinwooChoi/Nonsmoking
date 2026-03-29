@@ -107,8 +107,8 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
       context: context,
       builder: (_) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('흡연하시겠습니까?'),
-        content: const Text('흡연하면 폐 건강이 10% 감소합니다.'),
+        title: const Text('흔들림을 기록할까요?'),
+        content: const Text('기록하면 폐 건강 수치가 10% 감소합니다.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -117,7 +117,7 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('흡연'),
+            child: const Text('기록'),
           ),
         ],
       ),
@@ -219,7 +219,7 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      '흡연 시 건강도가 감소하지만, 금연을 유지하면 다시 회복됩니다.',
+                      '유혹에 넘어간 순간에는 건강도가 줄지만, 금연을 유지하면 다시 회복됩니다.',
                       textAlign: TextAlign.center,
                       style: AppTheme.bodyMedium,
                     ),
@@ -293,8 +293,8 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
               Center(
                 child: ElevatedButton.icon(
                   onPressed: _confirmSmokeAndDamage,
-                  icon: const Icon(Icons.smoking_rooms_rounded, size: 20),
-                  label: const Text('흡연 (-10%)'),
+                  icon: const Icon(Icons.waves_rounded, size: 20),
+                  label: const Text('흔들림 기록 (-10%)'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.error,
                     foregroundColor: Colors.white,

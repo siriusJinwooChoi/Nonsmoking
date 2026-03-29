@@ -46,7 +46,7 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
   int _attempts = 0;
   bool _caught = false;
   bool _disappeared = false;
-  String _status = '지포라이터를 눌러 담배 수집을 시작하세요!';
+  String _status = '지포라이터를 눌러 도감 수집을 시작하세요!';
   bool _loadingAssets = true;
   /// 현재 시간이 수집 가능 구간인지, 해당 구간을 이미 사용했는지
   bool _isInCollectionWindow = false;
@@ -136,7 +136,7 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
         if (attempts > 0) {
           _caught = false;
           _disappeared = false;
-          _status = '지포라이터를 눌러 담배 수집을 시작하세요!';
+          _status = '지포라이터를 눌러 도감 수집을 시작하세요!';
         }
       }
     });
@@ -165,7 +165,7 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
         _loadingAssets = false;
         if (_currentAsset == null) {
           _status = ApiConfig.isConfigured
-              ? '담배갑 이미지 목록이 비어 있거나 서버에서 불러오지 못했습니다.'
+              ? '도감 이미지 목록이 비어 있거나 서버에서 불러오지 못했습니다.'
               : '서버 주소(API_BASE_URL)가 없어 이미지를 불러올 수 없습니다.';
         }
       });
@@ -175,7 +175,7 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
       setState(() {
         _loadingAssets = false;
         _currentAsset = null;
-        _status = '담배갑 이미지를 불러오지 못했습니다. 네트워크를 확인해 주세요.';
+        _status = '도감 이미지를 불러오지 못했습니다. 네트워크를 확인해 주세요.';
       });
     }
   }
@@ -351,7 +351,7 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
     return Scaffold(
       backgroundColor: AppTheme.surface,
       appBar: AppBar(
-        title: const Text('담배 컬렉션'),
+        title: const Text('수집·도감'),
         actions: [
           IconButton(
             tooltip: '도감',
@@ -395,7 +395,7 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '여러 종류의 담배를 수집해보세요.',
+                      '도감에 패키지 도안을 모아보세요.',
                       style: AppTheme.titleMedium.copyWith(
                         fontSize: 17,
                         fontWeight: FontWeight.w600,
@@ -412,7 +412,7 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      '담배 수집 시 1회 시도할 때마다 금연코인 2개가\n소모됩니다.',
+                      '도감 수집 1회 시도마다 금연코인 2개가\n소모됩니다.',
                       style: AppTheme.bodyMedium.copyWith(
                         color: AppTheme.primary,
                         fontSize: 13,
@@ -469,7 +469,7 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
                                             Icon(Icons.schedule_rounded, size: 44, color: AppTheme.textMuted),
                                             const SizedBox(height: 10),
                                             Text(
-                                              '현재는 담배를 수집할 수 있는 시간이\n아닙니다.',
+                                              '현재는 수집할 수 있는 시간이\n아닙니다.',
                                               textAlign: TextAlign.center,
                                               style: AppTheme.titleMedium.copyWith(
                                                 color: AppTheme.textPrimary,

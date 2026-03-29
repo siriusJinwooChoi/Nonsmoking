@@ -10,7 +10,7 @@ import 'game_screen.dart';
 import 'timing_tap_game_screen.dart';
 import 'word_game_screen.dart';
 
-/// 게임 선택: 1-30 숫자 게임 / 단어맞추기 / 담배맞추기 / 완벽 타이밍
+/// 게임 선택: 1-30 숫자 게임 / 단어맞추기 / 낙하 맞추기 / 완벽 타이밍
 class GameMenuScreen extends StatefulWidget {
   const GameMenuScreen({super.key});
 
@@ -116,8 +116,8 @@ class _GameMenuScreenState extends State<GameMenuScreen> {
               const SizedBox(height: 16),
               _GameCard(
                 icon: Icons.smoking_rooms_rounded,
-                title: '담배맞추기',
-                subtitle: '떨어지는 담배를 맞춰 보세요 (1~100단계)',
+                title: '낙하 맞추기',
+                subtitle: '떨어지는 목표를 타이밍에 맞춰 보세요 (1~100단계)',
                 onTap: () {
                   Navigator.push(
                     context,

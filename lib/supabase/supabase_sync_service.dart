@@ -220,6 +220,8 @@ abstract final class SupabaseSyncService {
             prefs.getBool(dw.kInactivityNotificationEnabledKey) ?? true,
         'attendance_reminder_enabled':
             prefs.getBool(dw.kAttendanceReminderEnabledKey) ?? true,
+        'cigarette_collection_reminder_enabled':
+            prefs.getBool(dw.kCigaretteCollectionReminderEnabledKey) ?? true,
         'last_app_open_time_ms': prefs.getInt(dw.kLastAppOpenTimeMsKey),
       },
       'coins_and_attendance': {
@@ -421,11 +423,23 @@ abstract final class SupabaseSyncService {
       dw.kAttendanceReminderEnabledKey,
       row['attendance_reminder_enabled'] as bool? ?? true,
     );
+    await prefs.setBool(
+      dw.kCigaretteCollectionReminderEnabledKey,
+      row['cigarette_collection_reminder_enabled'] as bool? ?? true,
+    );
     final lastMs = row['last_app_open_time_ms'];
     if (lastMs != null) {
       await prefs.setInt(dw.kLastAppOpenTimeMsKey, (lastMs as num).toInt());
     } else {
       await prefs.remove(dw.kLastAppOpenTimeMsKey);
+    }
+    try {
+      await dw.scheduleCigaretteCollectionReminders();
+    } catch (_) {}
+    if (!(row['attendance_reminder_enabled'] as bool? ?? true)) {
+      try {
+        await dw.cancelAttendanceReminder();
+      } catch (_) {}
     }
   }
 

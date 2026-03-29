@@ -66,8 +66,8 @@ class _SmokingScreenState extends State<SmokingScreen>
                 children: [
                   Text(
                     _isSmoking
-                        ? '연기가 피어오르고 있습니다'
-                        : '버튼을 누르면 흡연 애니메이션이 재생됩니다.',
+                        ? '장면이 재생 중이에요'
+                        : '버튼을 누르면 연습 장면이 재생됩니다.',
                     textAlign: TextAlign.center,
                     style: AppTheme.bodyLarge.copyWith(
                       color: _isSmoking ? AppTheme.error : AppTheme.textPrimary,
@@ -77,8 +77,8 @@ class _SmokingScreenState extends State<SmokingScreen>
                   const SizedBox(height: 6),
                   Text(
                     _isSmoking
-                        ? '흡연 중... 건강을 위해 잠시 멈춰보세요.'
-                        : '이 장면은 흡연의 습관적 행동을 보여줍니다.',
+                        ? '재생 중… 잠깐 손을 떼며 숨을 고르세요.'
+                        : '잠깐의 유혹이 몸에 어떤 느낌인지 떠올려 보는 연습입니다.',
                     textAlign: TextAlign.center,
                     style: AppTheme.bodyMedium,
                   ),
@@ -126,12 +126,12 @@ class _SmokingScreenState extends State<SmokingScreen>
                       fit: BoxFit.contain,
                     )
                   else
-                    Icon(Icons.smoking_rooms_rounded, size: 120, color: Colors.grey.shade600),
+                    Icon(Icons.movie_filter_rounded, size: 120, color: Colors.grey.shade600),
                 ],
               ),
             ),
 
-            // 🚬 버튼
+            // 연습 재생 버튼
             GestureDetector(
               onTapDown: (_) => _onPressStart(),
               onTapUp: (_) => _onPressEnd(),
@@ -159,7 +159,7 @@ class _SmokingScreenState extends State<SmokingScreen>
                   ],
                 ),
                 child: Text(
-                  _isSmoking ? '흡연 중...' : '담배 피우기 시작',
+                  _isSmoking ? '기록 중...' : '흔들림 기록 시작',
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 18,
@@ -174,8 +174,8 @@ class _SmokingScreenState extends State<SmokingScreen>
               padding: const EdgeInsets.only(bottom: 16),
               child: Text(
                 _isSmoking
-                    ? '잠깐의 흡연, 오랜 회복이 필요합니다.'
-                    : '흡연을 줄이면 폐가 점차 회복됩니다.',
+                    ? '한순간의 선택이 회복 시간을 늘립니다.'
+                    : '유혹을 넘길수록 폐는 천천히 회복됩니다.',
                 textAlign: TextAlign.center,
                 style: AppTheme.bodyMedium.copyWith(
                   color: _isSmoking ? AppTheme.error : AppTheme.textSecondary,

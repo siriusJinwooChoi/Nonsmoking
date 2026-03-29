@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 
-/// 금연 뱃지 화면: 피우지 않은 담배 개수·금연 일수 기준 뱃지
+/// 금연 뱃지 화면: 넘긴 개비 누적·금연 일수 기준 뱃지
 class BadgeScreen extends StatefulWidget {
   const BadgeScreen({super.key});
 
@@ -49,7 +49,7 @@ class _BadgeScreenState extends State<BadgeScreen> {
       body: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
         children: [
-          _sectionTitle('피우지 않은 담배 개수'),
+          _sectionTitle('넘긴 개비 누적'),
           _badgeGrid(
             values: const [20, 50, 100, 200, 500, 1000, 10000],
             achieved: _skippedCigarettes,

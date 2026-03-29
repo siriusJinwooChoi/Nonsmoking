@@ -11,7 +11,7 @@ import 'attendance_screen.dart';
 import '../api/game_reward_helper.dart';
 import '../api/game_sync_helper.dart';
 
-/// 담배맞추기: 떨어지는 담배 2개를 시간차로 맞추는 게임. 1~100단계, 단계별 속도 증가, 점수·최종단계 기록.
+/// 낙하 맞추기: 떨어지는 목표 2개를 시간차로 맞추는 게임. 1~100단계, 단계별 속도 증가, 점수·최종단계 기록.
 class CigaretteCatchGameScreen extends StatefulWidget {
   const CigaretteCatchGameScreen({super.key});
 
@@ -182,11 +182,11 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
     final assetPath = _cigaretteAssets.isEmpty
         ? null
         : _cigaretteAssets[_random.nextInt(_cigaretteAssets.length)];
-    // Stack 상단( y=0 ) 바로 위에서 등장해 아래로만 내려오게 함
+    // Stack 좌표계 상단(y=0) 위에서 등장 → 화면 안으로 자연스럽게 낙하
     _cigarettes.add(
       _FallingCigarette(
         x: x,
-        y: -_cigaretteHeight,
+        y: -_cigaretteHeight - 4,
         assetPath: assetPath,
       ),
     );
@@ -200,12 +200,19 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
   void _onTap(Offset local) {
     if (_gameOver || _waitingStart) return;
     final hitZoneTop = _gameAreaHeight - _hitZoneHeight;
+    // 담배와 맞춤 영역이 겹칠 때만 인정 (이전: 상단 y만 봐서 반쯤 들어온 경우 놓침)
+    const padX = 32.0;
+    const padY = 36.0;
     for (var i = 0; i < _cigarettes.length; i++) {
       final c = _cigarettes[i];
-      if (c.y < hitZoneTop || c.y > _gameAreaHeight) continue;
-      final cx = c.x + _cigaretteWidth / 2;
-      final cy = c.y + _cigaretteHeight / 2;
-      if ((local.dx - cx).abs() < 35 && (local.dy - cy).abs() < 35) {
+      final cigBottom = c.y + _cigaretteHeight;
+      final overlapsZone = cigBottom > hitZoneTop && c.y < _gameAreaHeight;
+      if (!overlapsZone) continue;
+      final left = c.x - padX;
+      final right = c.x + _cigaretteWidth + padX;
+      final top = c.y - padY;
+      final bottom = c.y + _cigaretteHeight + padY;
+      if (local.dx >= left && local.dx <= right && local.dy >= top && local.dy <= bottom) {
         HapticFeedback.lightImpact();
         _cigarettes.removeAt(i);
         setState(() {
@@ -314,7 +321,7 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
     return Scaffold(
       backgroundColor: AppTheme.surface,
       appBar: AppBar(
-        title: const Text('담배맞추기'),
+        title: const Text('낙하 맞추기'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
           onPressed: () => Navigator.pop(context),
@@ -350,7 +357,7 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
                         const SizedBox(height: 16),
                         Text(
                           _waitingStart
-                              ? '떨어지는 담배를\n맞는 타이밍에 탭하세요'
+                              ? '떨어지는 표시를\n맞는 타이밍에 탭하세요'
                               : _gameOver
                                   ? '게임 종료'
                                   : '아래 연한 영역에 들어왔을 때 탭!',
@@ -375,13 +382,12 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
                                   horizontal: marginH,
                                   vertical: marginV,
                                 ),
-                                child: GestureDetector(
-                                  onTapDown: (d) => _onTap(d.localPosition),
-                                  child: Center(
-                                    child: Container(
-                                      width: playW,
-                                      height: playH,
-                                      decoration: BoxDecoration(
+                                child: Align(
+                                  alignment: Alignment.topCenter,
+                                  child: Container(
+                                    width: playW,
+                                    height: playH,
+                                    decoration: BoxDecoration(
                                       color: Colors.white,
                                       borderRadius: BorderRadius.circular(20),
                                       border: Border.all(
@@ -398,23 +404,25 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
                                             right: 0,
                                             bottom: 0,
                                             height: _hitZoneHeight,
-                                            child: Container(
-                                              decoration: BoxDecoration(
-                                                gradient: LinearGradient(
-                                                  begin: Alignment.topCenter,
-                                                  end: Alignment.bottomCenter,
-                                                  colors: [
-                                                    AppTheme.primary.withValues(alpha: 0.06),
-                                                    AppTheme.primary.withValues(alpha: 0.16),
-                                                  ],
+                                            child: IgnorePointer(
+                                              child: Container(
+                                                decoration: BoxDecoration(
+                                                  gradient: LinearGradient(
+                                                    begin: Alignment.topCenter,
+                                                    end: Alignment.bottomCenter,
+                                                    colors: [
+                                                      AppTheme.primary.withValues(alpha: 0.06),
+                                                      AppTheme.primary.withValues(alpha: 0.16),
+                                                    ],
+                                                  ),
                                                 ),
-                                              ),
-                                              alignment: Alignment.center,
-                                              child: Text(
-                                                '맞출 영역',
-                                                style: AppTheme.bodyMedium.copyWith(
-                                                  color: AppTheme.primaryDark,
-                                                  fontWeight: FontWeight.w600,
+                                                alignment: Alignment.center,
+                                                child: Text(
+                                                  '맞출 영역',
+                                                  style: AppTheme.bodyMedium.copyWith(
+                                                    color: AppTheme.primaryDark,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
                                                 ),
                                               ),
                                             ),
@@ -427,6 +435,13 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
                                               height: _cigaretteHeight,
                                               child: _buildCigarette(c.assetPath),
                                             ),
+                                          Positioned.fill(
+                                            child: GestureDetector(
+                                              behavior: HitTestBehavior.translucent,
+                                              onTapDown: (d) => _onTap(d.localPosition),
+                                              child: const SizedBox.expand(),
+                                            ),
+                                          ),
                                           if (_hitFxLocal != null)
                                             Positioned(
                                               left: _hitFxLocal!.dx - 44,
@@ -445,8 +460,7 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
                                     ),
                                   ),
                                 ),
-                              ),
-                            );
+                              );
                             },
                           ),
                         ),

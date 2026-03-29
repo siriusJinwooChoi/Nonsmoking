@@ -18,6 +18,20 @@ void ensureNotificationTimezoneInitialized() {
   _notificationTzInitialized = true;
 }
 
+const String kIsConfiguredPrefsKey = 'isConfigured';
+
+/// 온보딩 완료 후 알림 시간을 한 번도 저장한 적이 없으면 기본(09:00, 21:00)을 저장하고 예약합니다.
+Future<void> ensureDefaultDailyReminderTimesIfUninitialized() async {
+  final prefs = await SharedPreferences.getInstance();
+  if (!(prefs.getBool(kIsConfiguredPrefsKey) ?? false)) return;
+  if (prefs.containsKey(kReminderTimesKey)) return;
+
+  await saveReminderTimes(const [
+    TimeOfDay(hour: 9, minute: 0),
+    TimeOfDay(hour: 21, minute: 0),
+  ]);
+}
+
 const String kDailyReminderTaskName = "daily_reminder_task";
 const String kReasonReminderTaskName = "reason_reminder_task";
 const String kDailyReminderUniqueWorkPrefix = "daily_reminder_slot_";
@@ -503,8 +517,7 @@ Future<bool> _handleInactivityReminder(Map<String, dynamic>? inputData) async {
 
 /// 비접속 알림 1회 예약 (delayDays일 후 실행)
 Future<void> scheduleInactivityReminderOneOff({int delayDays = 3}) async {
-  final granted = await _ensureNotificationPermissionGranted();
-  if (!granted) return;
+  // 알림 권한이 없어도 WorkManager 예약은 등록합니다. 실행 시점에 표시는 OS 정책을 따릅니다.
   final delay = Duration(days: delayDays);
   await Workmanager().registerOneOffTask(
     kInactivityReminderUniqueWork,
@@ -537,8 +550,6 @@ Future<void> setInactivityNotificationEnabled(bool enabled) async {
   if (!enabled) {
     await Workmanager().cancelByUniqueName(kInactivityReminderUniqueWork);
   } else {
-    final granted = await _ensureNotificationPermissionGranted();
-    if (!granted) return;
     await scheduleInactivityReminderOneOff(delayDays: kInactivityDaysThreshold);
   }
 }
@@ -643,8 +654,6 @@ Future<bool> getAttendanceReminderEnabled() async {
 
 /// 앱 열릴 때: 18시 이후이고 오늘 미출석이면 10분 후 출석 알림 예약
 Future<void> scheduleAttendanceReminderIfNeeded() async {
-  final granted = await _ensureNotificationPermissionGranted();
-  if (!granted) return;
   final enabled = await getAttendanceReminderEnabled();
   if (!enabled) return;
   final prefs = await SharedPreferences.getInstance();
@@ -685,8 +694,8 @@ Future<bool> _handleCigaretteCollectionReminder(Map<String, dynamic>? inputData)
 
   const channel = AndroidNotificationChannel(
     'cigarette_collection_reminder_channel',
-    '담배 수집 알림',
-    description: '담배 수집 가능 시간 알림',
+    '수집 시간 알림',
+    description: '도감 수집 가능 시간 안내',
     importance: Importance.high,
   );
   final androidImpl = plugin.resolvePlatformSpecificImplementation<
@@ -695,13 +704,13 @@ Future<bool> _handleCigaretteCollectionReminder(Map<String, dynamic>? inputData)
 
   await plugin.show(
     kCigaretteCollectionReminderNotificationIdBase + hour,
-    '담배 수집',
-    '지금부터 20분간 담배를 수집할 수 있는 시간입니다!',
+    '수집 가능 시간',
+    '지금부터 20분간 도감 수집을 시도할 수 있어요.',
     const NotificationDetails(
       android: AndroidNotificationDetails(
         'cigarette_collection_reminder_channel',
-        '담배 수집 알림',
-        channelDescription: '담배 수집 가능 시간 알림',
+        '수집 시간 알림',
+        channelDescription: '도감 수집 가능 시간 안내',
         importance: Importance.high,
         priority: Priority.high,
       ),
@@ -737,8 +746,8 @@ Future<void> scheduleCigaretteCollectionReminderForHour(int hour) async {
 
   const channel = AndroidNotificationChannel(
     'cigarette_collection_reminder_channel',
-    '담배 수집 알림',
-    description: '담배 수집 가능 시간 알림',
+    '수집 시간 알림',
+    description: '도감 수집 가능 시간 안내',
     importance: Importance.high,
   );
   final androidImpl = plugin.resolvePlatformSpecificImplementation<
@@ -747,14 +756,14 @@ Future<void> scheduleCigaretteCollectionReminderForHour(int hour) async {
 
   await plugin.zonedSchedule(
     kCigaretteCollectionReminderNotificationIdBase + hour,
-    '담배 수집',
-    '지금부터 20분간 담배를 수집할 수 있는 시간입니다!',
+    '수집 가능 시간',
+    '지금부터 20분간 도감 수집을 시도할 수 있어요.',
     _nextInstanceAtTime(hour, 0),
     const NotificationDetails(
       android: AndroidNotificationDetails(
         'cigarette_collection_reminder_channel',
-        '담배 수집 알림',
-        channelDescription: '담배 수집 가능 시간 알림',
+        '수집 시간 알림',
+        channelDescription: '도감 수집 가능 시간 안내',
         importance: Importance.high,
         priority: Priority.high,
       ),
@@ -789,8 +798,7 @@ Future<void> scheduleCigaretteCollectionReminders() async {
     return;
   }
 
-  final granted = await _ensureNotificationPermissionGranted();
-  if (!granted) return;
+  await requestNotificationPermissionIfNeeded();
 
   // 과거 WorkManager 기반 잔여 작업 정리
   for (final hour in _cigaretteCollectionHours) {
@@ -862,8 +870,8 @@ Future<void> maybeNotifyCigaretteCollectionWindowOpened() async {
 
   const channel = AndroidNotificationChannel(
     'cigarette_collection_reminder_channel',
-    '담배 수집 알림',
-    description: '담배 수집 가능 시간 알림',
+    '수집 시간 알림',
+    description: '도감 수집 가능 시간 안내',
     importance: Importance.high,
   );
   final androidImpl = plugin.resolvePlatformSpecificImplementation<
@@ -873,13 +881,13 @@ Future<void> maybeNotifyCigaretteCollectionWindowOpened() async {
   final hour = now.hour;
   await plugin.show(
     kCigaretteCollectionReminderNotificationIdBase + hour,
-    '담배 수집',
-    '지금부터 20분간 담배를 수집할 수 있는 시간입니다!',
+    '수집 가능 시간',
+    '지금부터 20분간 도감 수집을 시도할 수 있어요.',
     const NotificationDetails(
       android: AndroidNotificationDetails(
         'cigarette_collection_reminder_channel',
-        '담배 수집 알림',
-        channelDescription: '담배 수집 가능 시간 알림',
+        '수집 시간 알림',
+        channelDescription: '도감 수집 가능 시간 안내',
         importance: Importance.high,
         priority: Priority.high,
       ),
@@ -889,12 +897,38 @@ Future<void> maybeNotifyCigaretteCollectionWindowOpened() async {
   await prefs.setString(kCigaretteCollectionLastNotifiedWindowKey, windowId);
 }
 
-/// 앱 실행 시 알림 권한 확인 + 핵심 스케줄(비접속/출석/담배수집) 재설정
+/// 앱 실행 시 알림 권한 요청·핵심 스케줄(비접속/출석/담배수집·일일 리마인더) 재설정
+///
+/// 알림 권한을 거부한 경우에도 WorkManager·가능한 예약은 등록하고, 사용자가 설정에서 허용한 뒤
+/// 앱을 다시 열면 [bootstrapCoreReminderSchedulesOnAppOpen]이 재호출되어 보완됩니다.
 Future<void> bootstrapCoreReminderSchedulesOnAppOpen() async {
   ensureNotificationTimezoneInitialized();
   await ensureAndroidAlarmPermissionsForScheduling();
-  final granted = await _ensureNotificationPermissionGranted();
-  if (!granted) return;
+  await requestNotificationPermissionIfNeeded();
+
+  await ensureDefaultDailyReminderTimesIfUninitialized();
+  final times = await getReminderTimes();
+  if (times.isNotEmpty) {
+    try {
+      await scheduleAllDailyReminders();
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('bootstrap scheduleAllDailyReminders: $e\n$st');
+      }
+    }
+  }
+
+  final prefs = await SharedPreferences.getInstance();
+  if (prefs.getBool(kReasonNotificationEnabledKey) ?? false) {
+    try {
+      await scheduleReasonReminder();
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('bootstrap scheduleReasonReminder: $e\n$st');
+      }
+    }
+  }
+
   await updateLastAppOpenAndScheduleInactivity();
   await scheduleAttendanceReminderIfNeeded();
   await scheduleCigaretteCollectionReminders();

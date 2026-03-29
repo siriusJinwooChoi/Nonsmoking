@@ -125,6 +125,11 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   }
 
   Future<void> _load() async {
+    // 서버와 로컬 불일치로 '탭 불가'가 되는 것을 줄이기 위해, 표시 전에 한 번 동기화
+    if (SupabaseConfig.isConfigured) {
+      await _syncAttendanceFromApiIfAvailable();
+    }
+
     final prefs = await SharedPreferences.getInstance();
     final last = prefs.getString(kAttendanceLastDateKey);
     final today = _todayString();
@@ -149,7 +154,18 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       _coins = prefs.getInt(kGoldenCoinsKey) ?? 0;
       _loading = false;
     });
-    unawaited(_syncAttendanceFromApiIfAvailable());
+  }
+
+  void _onTapDayBlocked(int day, {required bool alreadyToday, required int? tappableDay}) {
+    if (!mounted) return;
+    final msg = alreadyToday
+        ? '오늘은 이미 출석했어요. 내일 또 만나요!'
+        : (tappableDay != null
+            ? '지금은 $tappableDay일 칸을 눌러 출석할 수 있어요.'
+            : '출석할 수 없습니다.');
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), duration: const Duration(seconds: 2)),
+    );
   }
 
   Future<void> _onTapDay(int day) async {
@@ -340,6 +356,11 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                         isTappable: isTappable,
                         isMilestone: isMilestone,
                         onTap: () => _onTapDay(day),
+                        onTapDisabled: () => _onTapDayBlocked(
+                          day,
+                          alreadyToday: alreadyToday,
+                          tappableDay: tappableDay,
+                        ),
                       );
                     },
                   ),
@@ -398,7 +419,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
             ),
             if (_justEarnedCoins != null && _justEarnedDay != null)
               Positioned.fill(
-                child: IgnorePointer(
+                child: AbsorbPointer(
                   child: _CoinEarnedOverlay(
                     coins: _justEarnedCoins!,
                     day: _justEarnedDay!,
@@ -534,6 +555,7 @@ class _DayTile extends StatelessWidget {
   final bool isTappable;
   final bool isMilestone;
   final VoidCallback onTap;
+  final VoidCallback onTapDisabled;
 
   const _DayTile({
     required this.day,
@@ -542,12 +564,13 @@ class _DayTile extends StatelessWidget {
     required this.isTappable,
     required this.isMilestone,
     required this.onTap,
+    required this.onTapDisabled,
   });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: isTappable ? onTap : null,
+      onTap: isTappable ? onTap : onTapDisabled,
       child: Container(
         decoration: BoxDecoration(
           color: checked

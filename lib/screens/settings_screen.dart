@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../auth/auth_service.dart';
+import '../services/app_update_service.dart';
 import '../auth/legal_urls.dart';
 import '../supabase/supabase_config.dart';
 import '../supabase/supabase_sync_service.dart';
@@ -121,6 +123,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             await setAttendanceReminderEnabled(value);
             if (!context.mounted) return;
             setState(() => _attendanceReminderEnabled = value);
+            unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(value ? '출석 알림을 켰습니다.' : '출석 알림을 껐습니다.'),
@@ -146,11 +149,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       child: ListTile(
         leading: const Icon(Icons.inventory_2_rounded, color: AppTheme.primary, size: 24),
         title: Text(
-          '담배 수집 알림',
+          '수집 시간 알림',
           style: AppTheme.titleMedium.copyWith(fontSize: 16, color: AppTheme.textPrimary),
         ),
         subtitle: const Text(
-          '09:00·12:00·18:00·22:00 정각에 수집 가능 시간 안내',
+          '09:00·12:00·18:00·22:00 정각에 도감 수집 가능 안내',
           style: AppTheme.bodyMedium,
         ),
         trailing: Switch(
@@ -159,9 +162,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             await setCigaretteCollectionReminderEnabled(value);
             if (!context.mounted) return;
             setState(() => _cigaretteCollectionReminderEnabled = value);
+            unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text(value ? '담배 수집 알림을 켰습니다.' : '담배 수집 알림을 껐습니다.'),
+                content: Text(value ? '수집 시간 알림을 켰습니다.' : '수집 시간 알림을 껐습니다.'),
                 duration: const Duration(seconds: 1),
               ),
             );
@@ -240,6 +244,85 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  Future<void> _checkForAppUpdate(BuildContext context) async {
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final store = await fetchPlayStoreLatestVersionName();
+      if (!context.mounted) return;
+      Navigator.of(context).pop();
+
+      if (store == null) {
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: const Text('업데이트 확인'),
+            content: Text(
+              'Play 스토어는 페이지 구조·보안 정책 때문에 앱에서 자동으로 최신 버전 숫자를 읽기 어려울 수 있습니다.\n\n'
+              '스토어에서 직접 업데이트 여부를 확인하거나, 잠시 후 다시 시도해 주세요.\n\n'
+              '이 기기 앱 버전: ${info.version}',
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('닫기')),
+              TextButton(
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  await openPlayStoreAppPage();
+                },
+                child: const Text('스토어 열기'),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
+
+      if (isInstalledOlderThanStore(info.version, store)) {
+        final go = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: const Text('새 버전이 있습니다'),
+            content: Text(
+              '스토어 최신 버전: $store\n'
+              '이 기기 버전: ${info.version}\n\n'
+              '스토어에서 업데이트할 수 있습니다.',
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('닫기')),
+              TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('스토어로 이동')),
+            ],
+          ),
+        );
+        if (go == true && context.mounted) await openPlayStoreAppPage();
+      } else {
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: const Text('업데이트 확인'),
+            content: Text('현재 버전(${info.version})이 최신입니다.'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('확인')),
+            ],
+          ),
+        );
+      }
+    } catch (_) {
+      if (context.mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('업데이트 확인 중 오류가 발생했습니다.')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -261,7 +344,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             context,
             icon: Icons.emoji_events_rounded,
             title: '금연 뱃지',
-            subtitle: '피우지 않은 담배·금연 일수 뱃지 확인',
+            subtitle: '넘긴 개비·금연 일수 뱃지 확인',
             onTap: () {
               Navigator.push(
                 context,
@@ -295,6 +378,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 24),
           _sectionTitle('설정'),
+          _settingsTile(
+            context,
+            icon: Icons.system_update_rounded,
+            title: '업데이트 확인',
+            subtitle: 'Play 스토어 최신 버전과 비교',
+            onTap: () => _checkForAppUpdate(context),
+          ),
           _settingsTile(
             context,
             icon: Icons.info_outline_rounded,

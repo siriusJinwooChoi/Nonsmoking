@@ -4,7 +4,7 @@ import '../widgets/banner_ad_bar.dart';
 import 'lung_screen.dart';
 import 'smoking_screen.dart';
 
-/// 폐/흡연 메뉴 선택 화면
+/// 폐·건강 메뉴 선택 화면
 class LungSmokingMenuScreen extends StatelessWidget {
   const LungSmokingMenuScreen({super.key});
 
@@ -13,7 +13,7 @@ class LungSmokingMenuScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: AppTheme.surface,
       appBar: AppBar(
-        title: const Text('폐 / 흡연'),
+        title: const Text('폐 · 건강'),
       ),
       body: SafeArea(
         child: Column(
@@ -46,9 +46,9 @@ class LungSmokingMenuScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 16),
                     _MenuCard(
-                      icon: Icons.smoking_rooms_rounded,
-                      title: '흡연 애니메이션',
-                      subtitle: '흡연 습관을 시각적으로 되돌아볼 수 있는 화면입니다.',
+                      icon: Icons.movie_filter_rounded,
+                      title: '흔들림 장면 (연습)',
+                      subtitle: '참지 못한 순간을 짧게 시각화해 볼 수 있어요.',
                       color: AppTheme.error,
                       onTap: () {
                         Navigator.push(

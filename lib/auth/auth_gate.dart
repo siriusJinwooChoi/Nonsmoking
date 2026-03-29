@@ -55,12 +55,45 @@ class _AuthGateState extends State<AuthGate> {
     return prefs.getBool(kTermsAgreedPrefsKey) ?? false;
   }
 
-  Future<String?> _loadDisplayName() async {
+  /// 캐시가 있으면 즉시 반환하고 서버는 백그라운드에서 맞춤. 없으면 네트워크를 기다림.
+  Future<String?> _loadDisplayNameOrCachedFast() async {
+    final cached = await BffProfileApi.readCachedDisplayNameForCurrentUser();
+    if (cached != null && cached.isNotEmpty) {
+      unawaited(_refreshProfileFromServerInBackground());
+      return cached;
+    }
+    return _fetchProfileFromServerAndCache();
+  }
+
+  Future<String?> _fetchProfileFromServerAndCache() async {
     final row = await BffProfileApi.fetchProfile();
     if (row == null) return null;
     final n = row['display_name'] as String?;
-    if (n == null || n.trim().isEmpty) return null;
-    return n.trim();
+    final name = n?.trim();
+    if (name != null && name.isNotEmpty) {
+      await BffProfileApi.cacheDisplayNameForCurrentUser(name);
+      return name;
+    }
+    await BffProfileApi.clearDisplayNameCache();
+    return null;
+  }
+
+  /// 캐시로 빠르게 들어온 뒤 서버와 불일치(닉네임 삭제 등)만 반영
+  Future<void> _refreshProfileFromServerInBackground() async {
+    try {
+      final row = await BffProfileApi.fetchProfile();
+      if (!mounted) return;
+      if (row == null) return;
+
+      final n = row['display_name'] as String?;
+      final name = n?.trim();
+      if (name == null || name.isEmpty) {
+        await BffProfileApi.clearDisplayNameCache();
+        if (mounted) setState(() => _profileGateVersion++);
+        return;
+      }
+      await BffProfileApi.cacheDisplayNameForCurrentUser(name);
+    } catch (_) {}
   }
 
   @override
@@ -92,7 +125,7 @@ class _AuthGateState extends State<AuthGate> {
             }
             return FutureBuilder<String?>(
               key: ValueKey(_profileGateVersion),
-              future: _loadDisplayName(),
+              future: _loadDisplayNameOrCachedFast(),
               builder: (context, nameSnap) {
                 if (nameSnap.connectionState != ConnectionState.done) {
                   return const Scaffold(

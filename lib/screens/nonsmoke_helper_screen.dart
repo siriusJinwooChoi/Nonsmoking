@@ -31,8 +31,8 @@ class NonsmokeHelperScreen extends StatelessWidget {
       'icon': '📓'
     },
     {
-      'title': '담배 대신 저축',
-      'description': '담배값을 모아 특별한 계획에 써보세요.',
+      'title': '절약한 비용 모으기',
+      'description': '아끼게 된 비용을 모아 특별한 계획에 써보세요.',
       'icon': '🎁'
     },
     {
@@ -52,7 +52,7 @@ class NonsmokeHelperScreen extends StatelessWidget {
     },
     {
       'title': '카페인/술 줄이기',
-      'description': '흡연 욕구를 자극하는 요소를 피하세요.',
+      'description': '욕구를 자극할 수 있는 요소를 피하세요.',
       'icon': '☕'
     },
     {
@@ -61,13 +61,13 @@ class NonsmokeHelperScreen extends StatelessWidget {
       'icon': '🚷'
     },
     {
-      'title': '담배/라이터 버리기',
+      'title': '갑·라이터 정리하기',
       'description': '금연 결심을 강화하는 행동입니다.',
       'icon': '🗑️'
     },
     {
       'title': '자동차 청소하기',
-      'description': '담배 냄새 제거로 새로운 시작을 하세요.',
+      'description': '잔향을 없애며 새로운 시작을 하세요.',
       'icon': '🚗'
     },
     {

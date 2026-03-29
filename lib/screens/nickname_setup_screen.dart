@@ -56,6 +56,8 @@ class _NicknameSetupScreenState extends State<NicknameSetupScreen> {
         });
         return;
       }
+      await BffProfileApi.cacheDisplayNameForCurrentUser(raw);
+      if (!mounted) return;
       setState(() => _saving = false);
       widget.onComplete();
     } catch (e) {

@@ -191,7 +191,7 @@ class _GameRankingScreenState extends State<GameRankingScreen> {
                           tabs: const [
                             Tab(text: '1~30'),
                             Tab(text: '단어'),
-                            Tab(text: '담배'),
+                            Tab(text: '낙하'),
                             Tab(text: '타이밍'),
                           ],
                         ),
@@ -229,7 +229,7 @@ class _GameRankingScreenState extends State<GameRankingScreen> {
                               },
                             ),
                             _rankingTab(
-                              title: '담배맞추기',
+                              title: '낙하 맞추기',
                               subtitle: '최고 점수 기준',
                               rows: _catchList,
                               uid: uid,

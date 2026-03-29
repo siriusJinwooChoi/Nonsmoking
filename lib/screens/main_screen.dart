@@ -69,6 +69,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   String _mainReason = '';
   bool _showReasonEditor = true;
   final TextEditingController _reasonController = TextEditingController();
+  final FocusNode _reasonFocusNode = FocusNode();
 
   BannerAd? _bannerAd;
   bool _isBannerReady = false;
@@ -137,6 +138,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _timer?.cancel();
     _bannerAd?.dispose();
     _reasonController.dispose();
+    _reasonFocusNode.dispose();
     super.dispose();
   }
 
@@ -390,39 +392,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (updated != null && mounted) setState(() => _reminderTimes = updated);
   }
 
-  Future<void> _turnOffReminder() async {
-    if (_reminderTimes.isEmpty) return;
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('알림 끄기'),
-        content: const Text('모든 리마인더 알림을 끄시겠습니까?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('끄기'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-
-    await disableDailyReminder();
-    setState(() => _reminderTimes = []);
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('알림이 모두 꺼졌습니다.')),
-      );
-    }
-  }
-
   /// 흡연 욕구 시 금연시간, 절약금액, 별표(고정)한 금연할 이유, 응원메시지 표시
   Future<void> _showCravingSheet() async {
     final prefs = await SharedPreferences.getInstance();
@@ -448,7 +417,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('흡연 욕구가 올 때', style: AppTheme.titleLarge),
+                Text('마음이 흔들릴 때', style: AppTheme.titleLarge),
                 const SizedBox(height: 20),
                 _cravingRow(Icons.timer_outlined, '금연 시간', formatDurationLong(_elapsed)),
                 const SizedBox(height: 12),
@@ -465,7 +434,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    '지금까지 $_skippedCigarettes개의 담배를 참았습니다! 조금만 더 힘내세요.',
+                    '지금까지 $_skippedCigarettes개비를 넘기셨어요! 조금만 더 힘내세요.',
                     style: AppTheme.bodyLarge.copyWith(
                       fontWeight: FontWeight.w600,
                       color: AppTheme.primary,
@@ -504,8 +473,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                             onPressed: () => _openExternalYoutubeSearch('금연 불안 호흡 명상'),
                           ),
                           ActionChip(
-                            label: const Text('흡연 욕구 참는법'),
-                            onPressed: () => _openExternalYoutubeSearch('흡연 욕구 참는 법'),
+                            label: const Text('욕구 이겨내기'),
+                            onPressed: () => _openExternalYoutubeSearch('금연 욕구 이겨내기'),
                           ),
                           ActionChip(
                             label: const Text('금연하는 방법'),
@@ -535,13 +504,19 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _saveMainReasonFromInput() async {
+    final previousPinned = _mainReason.trim();
     final text = _reasonController.text.trim();
     final prefs = await SharedPreferences.getInstance();
     if (text.isEmpty) {
       await prefs.remove('pinnedReasonText');
     } else {
       await prefs.setString('pinnedReasonText', text);
-      await _upsertPinnedReasonInReasonList(prefs, text);
+      await _upsertPinnedReasonInReasonList(
+        prefs,
+        text,
+        previousPinnedText: previousPinned,
+      );
+      await _syncSelectedNotificationTextIfPinnedItemEdited(prefs, text);
     }
     if (!mounted) return;
     setState(() {
@@ -568,7 +543,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
   }
 
-  Future<void> _upsertPinnedReasonInReasonList(SharedPreferences prefs, String text) async {
+  /// 메인에서 대표 이유를 저장할 때: **기존 고정 항목의 문구를 바꾸는 것**이 우선(중복 행 추가 방지).
+  Future<void> _upsertPinnedReasonInReasonList(
+    SharedPreferences prefs,
+    String text, {
+    String previousPinnedText = '',
+  }) async {
     const reasonsKey = 'quitReasons_v1';
     final raw = prefs.getString(reasonsKey);
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -590,43 +570,95 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       }
     }
 
-    // 기존 pinned 해제
+    int? targetIndex;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i]['pinned'] == true) {
+        targetIndex = i;
+        break;
+      }
+    }
+    if (targetIndex == null && previousPinnedText.isNotEmpty) {
+      for (var i = 0; i < items.length; i++) {
+        final t = (items[i]['text'] as String?)?.trim() ?? '';
+        if (t == previousPinnedText) {
+          targetIndex = i;
+          break;
+        }
+      }
+    }
+
     for (final it in items) {
       it['pinned'] = false;
     }
 
-    // 동일 문구 있으면 해당 항목 재사용, 없으면 신규 추가
-    Map<String, dynamic>? target;
-    for (final it in items) {
-      final t = (it['text'] as String?)?.trim() ?? '';
-      if (t == normalized) {
-        target = it;
-        break;
-      }
-    }
-
-    if (target == null) {
-      var nextDisplayNumber = 1;
-      for (final it in items) {
-        final n = (it['displayNumber'] as int?) ?? 0;
-        if (n >= nextDisplayNumber) nextDisplayNumber = n + 1;
-      }
-      target = <String, dynamic>{
-        'id': now.toString(),
-        'text': normalized,
-        'pinned': true,
-        'createdAt': now,
-        'displayNumber': nextDisplayNumber,
-      };
-      items.add(target);
-    } else {
+    if (targetIndex != null) {
+      final target = items[targetIndex];
       target['text'] = normalized;
       target['pinned'] = true;
       target['createdAt'] = (target['createdAt'] as int?) ?? now;
       target['displayNumber'] = (target['displayNumber'] as int?) ?? 1;
+    } else {
+      Map<String, dynamic>? sameText;
+      for (final it in items) {
+        final t = (it['text'] as String?)?.trim() ?? '';
+        if (t == normalized) {
+          sameText = it;
+          break;
+        }
+      }
+      if (sameText != null) {
+        sameText['text'] = normalized;
+        sameText['pinned'] = true;
+        sameText['createdAt'] = (sameText['createdAt'] as int?) ?? now;
+        sameText['displayNumber'] = (sameText['displayNumber'] as int?) ?? 1;
+      } else {
+        var nextDisplayNumber = 1;
+        for (final it in items) {
+          final n = (it['displayNumber'] as int?) ?? 0;
+          if (n >= nextDisplayNumber) nextDisplayNumber = n + 1;
+        }
+        items.add(<String, dynamic>{
+          'id': now.toString(),
+          'text': normalized,
+          'pinned': true,
+          'createdAt': now,
+          'displayNumber': nextDisplayNumber,
+        });
+      }
     }
 
     await prefs.setString(reasonsKey, jsonEncode(items));
+  }
+
+  /// 알림에 쓰는 이유(종 아이콘)가 대표 이유와 같은 항목이면, 문구만 바뀌어도 알림 문구를 맞춤.
+  Future<void> _syncSelectedNotificationTextIfPinnedItemEdited(
+    SharedPreferences prefs,
+    String newPinnedText,
+  ) async {
+    const reasonsKey = 'quitReasons_v1';
+    const selectedIdKey = 'selectedReasonId';
+    final raw = prefs.getString(reasonsKey);
+    if (raw == null || raw.trim().isEmpty) return;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return;
+      final items = decoded.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList();
+      Map<String, dynamic>? pinned;
+      for (final it in items) {
+        if (it['pinned'] == true) {
+          pinned = it;
+          break;
+        }
+      }
+      if (pinned == null) return;
+      final pid = pinned['id'] as String?;
+      final sel = prefs.getString(selectedIdKey);
+      if (pid == null || sel == null || pid != sel) return;
+      await prefs.setString(kSelectedReasonTextKey, newPinnedText.trim());
+      if (prefs.getBool(kReasonNotificationEnabledKey) == true) {
+        await scheduleReasonReminder();
+      }
+    } catch (_) {}
   }
 
   Future<void> _openExternalYoutubeSearch(String keyword) async {
@@ -644,6 +676,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       _showReasonEditor = true;
       _reasonController.text = _mainReason;
     });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _reasonFocusNode.requestFocus();
+    });
   }
 
   Future<void> _onSmokedTap() async {
@@ -651,9 +687,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       context: context,
       builder: (_) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('담배를 피우셨나요?'),
+        title: const Text('잠깐 흔들리셨나요?'),
         content: const Text(
-          '기록하면 실패 횟수만 올라가고, 금연 일수는 그대로 유지됩니다.\n폐 회복도 10% 감소합니다.',
+          '기록하면 실패 횟수만 올라가고, 금연 일수는 그대로 유지됩니다.\n폐 회복 수치는 10% 감소합니다.',
         ),
         actions: [
           TextButton(
@@ -934,44 +970,51 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 ],
               ),
             ),
-            Container(
-              margin: const EdgeInsets.only(bottom: 10),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppTheme.surfaceCard,
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
                 borderRadius: BorderRadius.circular(12),
-                boxShadow: AppTheme.cardShadowSubtle,
-                border: Border.all(color: AppTheme.primary.withValues(alpha: 0.15), width: 1),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _mainReason.isEmpty
-                          ? '금연할 이유(대표): 아직 입력된 이유가 없습니다.'
-                          : '금연할 이유(대표): $_mainReason',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.bodyMedium.copyWith(
-                        color: AppTheme.textPrimary,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  InkWell(
-                    onTap: _openReasonEditorInline,
+                onTap: _openReasonEditorInline,
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceCard,
                     borderRadius: BorderRadius.circular(12),
-                    child: Container(
-                      padding: const EdgeInsets.all(6),
-                      decoration: BoxDecoration(
-                        color: AppTheme.primary.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(Icons.edit_rounded, size: 14, color: AppTheme.primary),
-                    ),
+                    boxShadow: AppTheme.cardShadowSubtle,
+                    border: Border.all(color: AppTheme.primary.withValues(alpha: 0.15), width: 1),
                   ),
-                ],
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          _mainReason.isEmpty
+                              ? '금연할 이유(대표): 아직 입력된 이유가 없습니다.'
+                              : '금연할 이유(대표): $_mainReason',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTheme.bodyMedium.copyWith(
+                            color: AppTheme.textPrimary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.all(12),
+                        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                        style: IconButton.styleFrom(
+                          backgroundColor: AppTheme.primary.withValues(alpha: 0.12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        icon: Icon(Icons.edit_rounded, size: 20, color: AppTheme.primary),
+                        tooltip: '이유 편집',
+                        onPressed: _openReasonEditorInline,
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
             // 상단 요약 카드
@@ -1043,35 +1086,30 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   Container(height: 1, color: Colors.white24),
                   const SizedBox(height: 22),
                   Text(formatDurationLong(_elapsed), style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        '금연 시간 (년/월/일/시/분/초)',
-                        style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 12),
-                      ),
-                      if (_failureCount > 0)
-                        GestureDetector(
-                          onTap: _showReduceFailureCountDialog,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                '실패 $_failureCount회',
-                                style: const TextStyle(
-                                  color: Colors.amberAccent,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
+                  if (_failureCount > 0) ...[
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: GestureDetector(
+                        onTap: _showReduceFailureCountDialog,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              '실패 $_failureCount회',
+                              style: const TextStyle(
+                                color: Colors.amberAccent,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
                               ),
-                              const SizedBox(width: 4),
-                              Icon(Icons.touch_app_rounded, size: 12, color: Colors.white.withValues(alpha: 0.7)),
-                            ],
-                          ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(Icons.touch_app_rounded, size: 12, color: Colors.white.withValues(alpha: 0.7)),
+                          ],
                         ),
-                    ],
-                  ),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 16),
                   Row(
                     children: [
@@ -1096,7 +1134,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('안 핀 담배', style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 12)),
+                              Text('넘긴 개비', style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 12)),
                               Text('$_skippedCigarettes개비', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
                             ],
                           ),
@@ -1136,8 +1174,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                     const SizedBox(height: 10),
                     TextField(
                       controller: _reasonController,
+                      focusNode: _reasonFocusNode,
                       minLines: 2,
                       maxLines: 3,
+                      maxLength: 120,
                       textInputAction: TextInputAction.done,
                       decoration: const InputDecoration(
                         hintText: '예) 가족과 더 건강하게 오래 살고 싶어요.',
@@ -1157,7 +1197,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 ),
               ),
 
-            // 알림 / 흡연 욕구 버튼
+            // 알림 / 마음 다잡기
             Row(
               children: [
                 Expanded(
@@ -1178,7 +1218,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   child: ElevatedButton.icon(
                     onPressed: _showCravingSheet,
                     icon: const Icon(Icons.self_improvement_rounded, size: 20),
-                    label: const Text('흡연 욕구'),
+                    label: const Text('마음 다잡기'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF7C3AED),
                       foregroundColor: Colors.white,
@@ -1190,52 +1230,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               ],
             ),
             const SizedBox(height: 10),
-            // 전체 알림 끄기 / 담배 피움 / 금연 리셋 한 줄 3등분
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _reminderTimes.isEmpty ? null : _turnOffReminder,
-                    icon: const Icon(Icons.notifications_off_rounded, size: 16),
-                    label: const Text('알림 끄기', style: TextStyle(fontSize: 12)),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppTheme.primary,
-                      side: const BorderSide(color: AppTheme.primary),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _onSmokedTap,
-                    icon: const Icon(Icons.smoking_rooms_rounded, size: 16),
-                    label: const Text('담배 피움', style: TextStyle(fontSize: 12)),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppTheme.error,
-                      side: const BorderSide(color: AppTheme.error),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _resetSmokingStatus,
-                    icon: const Icon(Icons.refresh_rounded, size: 16),
-                    label: const Text('리셋', style: TextStyle(fontSize: 12)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.error,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-
-            // 이유 / 도우미
+            // 금연할 이유 / 금연 도우미
             Row(
               children: [
                 Expanded(
@@ -1271,6 +1266,38 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 ),
               ],
             ),
+            const SizedBox(height: 10),
+            // 흔들림 기록 / 리셋
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _onSmokedTap,
+                    icon: const Icon(Icons.waves_rounded, size: 16),
+                    label: const Text('흔들림 기록', style: TextStyle(fontSize: 12)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.error,
+                      side: const BorderSide(color: AppTheme.error),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _resetSmokingStatus,
+                    icon: const Icon(Icons.refresh_rounded, size: 16),
+                    label: const Text('리셋', style: TextStyle(fontSize: 12)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.error,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
 
             if (_isBannerReady && _bannerAd != null)
               Padding(
