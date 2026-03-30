@@ -48,13 +48,15 @@ class AttendanceApiService {
     required String accessToken,
   }) async {
     if (!ApiConfig.isConfigured) return null;
-    final res = await http.get(
-      _uri('/v1/attendance/state'),
-      headers: {
-        'Authorization': 'Bearer $accessToken',
-        'Accept': 'application/json',
-      },
-    );
+    final res = await http
+        .get(
+          _uri('/v1/attendance/state'),
+          headers: {
+            'Authorization': 'Bearer $accessToken',
+            'Accept': 'application/json',
+          },
+        )
+        .timeout(const Duration(seconds: 12));
     if (res.statusCode != 200) return null;
     final body = jsonDecode(res.body) as Map<String, dynamic>;
     return AttendanceState(
@@ -69,15 +71,17 @@ class AttendanceApiService {
     required int day,
   }) async {
     if (!ApiConfig.isConfigured) return null;
-    final res = await http.post(
-      _uri('/v1/attendance/check-in'),
-      headers: {
-        'Authorization': 'Bearer $accessToken',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      },
-      body: jsonEncode({'day': day}),
-    );
+    final res = await http
+        .post(
+          _uri('/v1/attendance/check-in'),
+          headers: {
+            'Authorization': 'Bearer $accessToken',
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          body: jsonEncode({'day': day}),
+        )
+        .timeout(const Duration(seconds: 15));
     if (res.statusCode != 200) return null;
     final body = jsonDecode(res.body) as Map<String, dynamic>;
     return AttendanceCheckInResult(

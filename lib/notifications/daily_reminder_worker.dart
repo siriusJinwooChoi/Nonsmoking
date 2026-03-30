@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart'
     show debugPrint, kDebugMode, defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:workmanager/workmanager.dart';
@@ -9,6 +10,42 @@ import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
 bool _notificationTzInitialized = false;
+
+bool _mapLooksLikeReminderTime(Map<String, dynamic> m) {
+  if (m.isEmpty) return false;
+  return m.containsKey('h') ||
+      m.containsKey('hour') ||
+      m.containsKey('m') ||
+      m.containsKey('minute');
+}
+
+/// [jsonDecode]·동기화 JSON 등으로 `Map<dynamic, dynamic>` 이 섞여도 스케줄되게 통일
+/// DB/JSON에 `{}` 빈 객체가 끼어 있는 경우(스크린샷 사례) 잘못된 기본 시각 예약을 막음
+List<Map<String, dynamic>> _reminderMapsFromDecodedList(List<dynamic> list) {
+  final out = <Map<String, dynamic>>[];
+  for (final item in list) {
+    if (item is Map) {
+      final m = Map<String, dynamic>.from(item);
+      if (!_mapLooksLikeReminderTime(m)) continue;
+      out.add(m);
+    }
+  }
+  return out;
+}
+
+int _readReminderHour(Map<String, dynamic> m) {
+  final v = m['h'] ?? m['hour'];
+  if (v is int) return v.clamp(0, 23);
+  if (v is num) return v.toInt().clamp(0, 23);
+  return 9;
+}
+
+int _readReminderMinute(Map<String, dynamic> m) {
+  final v = m['m'] ?? m['minute'];
+  if (v is int) return v.clamp(0, 59);
+  if (v is num) return v.toInt().clamp(0, 59);
+  return 0;
+}
 
 /// WorkManager isolate 등 `main()`보다 먼저 도는 경로에서도 tz.local 사용 가능하도록
 void ensureNotificationTimezoneInitialized() {
@@ -40,6 +77,19 @@ const int kDailyReminderNotificationIdBase = 1001;
 const int kReasonReminderNotificationId = 2001;
 const int kGoalReachedNotificationId = 3001;
 const String kReminderTimesKey = 'reminderTimes';
+
+/// 레거시 키. [fcmRemotePushEnabled]에서 [kFcmRemotePushEnabledKey]로 마이그레이션
+const String kFcmRemoteDailyRemindersKey = 'fcmRemoteDailyReminders';
+
+/// true 이면 일일·출석·담배수집 정각 알림을 서버 FCM으로만 보내고 해당 로컬 예약은 취소
+const String kFcmRemotePushEnabledKey = 'fcmRemotePushEnabled';
+
+bool fcmRemotePushEnabled(SharedPreferences prefs) {
+  if (prefs.containsKey(kFcmRemotePushEnabledKey)) {
+    return prefs.getBool(kFcmRemotePushEnabledKey) ?? false;
+  }
+  return prefs.getBool(kFcmRemoteDailyRemindersKey) ?? false;
+}
 const String kGoalDaysKey = 'goalDays';
 const String kGoalCongratulatedDayKey = 'goalCongratulatedDay';
 const String kSelectedReasonTextKey = 'selectedReasonText';
@@ -182,21 +232,49 @@ Future<bool> _handleDailyReminder(Map<String, dynamic>? inputData) async {
     const NotificationDetails(android: androidDetails),
   );
 
+  final mode = await resolveAndroidReminderScheduleMode();
   await scheduleZonedDailyReminderForSlot(
     hour: hour,
     minute: minute,
     slotIndex: slotIndex,
+    androidScheduleMode: mode,
   );
   return true;
 }
 
-/// 금연 리마인더: 매일 지정 시·분에 정시 알람(AlarmManager exact)으로 예약
+/// Android: 정확한 알람 권한이 없으면 `exactAllowWhileIdle` 예약이 전부 실패할 수 있어,
+/// 가능 여부에 따라 모드를 고릅니다.
+Future<AndroidScheduleMode> resolveAndroidReminderScheduleMode() async {
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+    return AndroidScheduleMode.exactAllowWhileIdle;
+  }
+  final android = FlutterLocalNotificationsPlugin()
+      .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+  if (android == null) return AndroidScheduleMode.exactAllowWhileIdle;
+  try {
+    final canExact = await android.canScheduleExactNotifications();
+    if (canExact == true) return AndroidScheduleMode.exactAllowWhileIdle;
+  } catch (_) {}
+  if (kDebugMode) {
+    debugPrint(
+      'resolveAndroidReminderScheduleMode: exact 알람 불가 → inexactAllowWhileIdle',
+    );
+  }
+  return AndroidScheduleMode.inexactAllowWhileIdle;
+}
+
+/// 금연 리마인더: 매일 지정 시·분에 알람 예약 (exact 불가 기기는 inexact로 폴백)
 Future<void> scheduleZonedDailyReminderForSlot({
   required int hour,
   required int minute,
   required int slotIndex,
+  AndroidScheduleMode? androidScheduleMode,
 }) async {
   ensureNotificationTimezoneInitialized();
+  var mode =
+      androidScheduleMode ?? await resolveAndroidReminderScheduleMode();
+
   final plugin = FlutterLocalNotificationsPlugin();
   const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
   const initSettings = InitializationSettings(android: androidInit);
@@ -224,17 +302,68 @@ Future<void> scheduleZonedDailyReminderForSlot({
     visibility: NotificationVisibility.public,
   );
 
-  await plugin.zonedSchedule(
-    kDailyReminderNotificationIdBase + slotIndex,
-    '금연 리마인더 🌿',
-    '오늘도 한 걸음! 금연을 이어가볼까요?',
-    _nextInstanceAtTime(hour, minute),
-    const NotificationDetails(android: androidDetails),
-    androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-    matchDateTimeComponents: DateTimeComponents.time,
-    uiLocalNotificationDateInterpretation:
-        UILocalNotificationDateInterpretation.absoluteTime,
-  );
+  Future<void> scheduleWith(AndroidScheduleMode m) => plugin.zonedSchedule(
+        kDailyReminderNotificationIdBase + slotIndex,
+        '금연 리마인더 🌿',
+        '오늘도 한 걸음! 금연을 이어가볼까요?',
+        _nextInstanceAtTime(hour, minute),
+        const NotificationDetails(android: androidDetails),
+        androidScheduleMode: m,
+        matchDateTimeComponents: DateTimeComponents.time,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+      );
+
+  try {
+    await scheduleWith(mode);
+  } on PlatformException catch (e) {
+    if (mode == AndroidScheduleMode.exactAllowWhileIdle &&
+        e.code == 'exact_alarms_not_permitted') {
+      if (kDebugMode) {
+        debugPrint(
+          'scheduleZonedDailyReminderForSlot: exact 실패 → inexact 재시도 slot=$slotIndex',
+        );
+      }
+      await scheduleWith(AndroidScheduleMode.inexactAllowWhileIdle);
+    } else {
+      rethrow;
+    }
+  }
+}
+
+/// 로컬 일일 리마인더(슬롯 0~19)만 취소
+Future<void> cancelLocalDailyReminderSlotsOnly() async {
+  for (var i = 0; i < 20; i++) {
+    await Workmanager().cancelByUniqueName('$kDailyReminderUniqueWorkPrefix$i');
+  }
+  final plugin = FlutterLocalNotificationsPlugin();
+  for (var i = 0; i < 20; i++) {
+    await plugin.cancel(kDailyReminderNotificationIdBase + i);
+  }
+}
+
+/// 서버 FCM 사용 여부. 켜면 일일·출석·담배수집·미접속·금연 이유 로컬 예약을 취소합니다.
+Future<void> setFcmRemotePushEnabled(bool enabled) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setBool(kFcmRemotePushEnabledKey, enabled);
+  await prefs.remove(kFcmRemoteDailyRemindersKey);
+  if (enabled) {
+    await cancelLocalDailyReminderSlotsOnly();
+    await cancelCigaretteCollectionReminders();
+    await cancelAttendanceReminder();
+    await cancelInactivityReminderSchedule();
+    await cancelReasonReminderSchedule();
+  } else {
+    await scheduleAllDailyReminders();
+    await scheduleCigaretteCollectionReminders();
+    await scheduleAttendanceReminderIfNeeded();
+    if (prefs.getBool(kInactivityNotificationEnabledKey) ?? true) {
+      await scheduleInactivityReminderOneOff(delayDays: kInactivityDaysThreshold);
+    }
+    if (prefs.getBool(kReasonNotificationEnabledKey) ?? false) {
+      await scheduleReasonReminder();
+    }
+  }
 }
 
 /// 🔁 모든 알림 시간에 대해 정시 예약 (WorkManager 제거)
@@ -242,6 +371,11 @@ Future<void> scheduleAllDailyReminders() async {
   await ensureAndroidAlarmPermissionsForScheduling();
 
   final prefs = await SharedPreferences.getInstance();
+  if (fcmRemotePushEnabled(prefs)) {
+    await cancelLocalDailyReminderSlotsOnly();
+    return;
+  }
+
   final raw = prefs.getString(kReminderTimesKey);
   if (raw == null || raw.isEmpty) return;
 
@@ -261,14 +395,37 @@ Future<void> scheduleAllDailyReminders() async {
     await plugin.cancel(kDailyReminderNotificationIdBase + i);
   }
 
-  for (var i = 0; i < list.length; i++) {
-    final m = list[i];
-    if (m is Map<String, dynamic>) {
-      final h = m['h'] as int? ?? 9;
-      final mnt = m['m'] as int? ?? 0;
-      await scheduleZonedDailyReminderForSlot(hour: h, minute: mnt, slotIndex: i);
-    }
+  final scheduleMode = await resolveAndroidReminderScheduleMode();
+  final maps = _reminderMapsFromDecodedList(list);
+  if (maps.isEmpty && list.isNotEmpty && kDebugMode) {
+    debugPrint(
+      'scheduleAllDailyReminders: 알림 JSON을 Map으로 읽지 못해 예약이 0건입니다. '
+      'raw=${raw.length > 200 ? "${raw.substring(0, 200)}..." : raw}',
+    );
   }
+  for (var i = 0; i < maps.length; i++) {
+    final m = maps[i];
+    final h = _readReminderHour(m);
+    final mnt = _readReminderMinute(m);
+    await scheduleZonedDailyReminderForSlot(
+      hour: h,
+      minute: mnt,
+      slotIndex: i,
+      androidScheduleMode: scheduleMode,
+    );
+  }
+}
+
+/// 금연 이유 알림 로컬 예약만 취소 (FCM 위임 시 prefs 유지)
+Future<void> cancelReasonReminderSchedule() async {
+  await Workmanager().cancelByUniqueName(kReasonReminderUniqueWork);
+  final plugin = FlutterLocalNotificationsPlugin();
+  await plugin.cancel(kReasonReminderNotificationId);
+}
+
+/// 비접속 알림 WorkManager 예약만 취소
+Future<void> cancelInactivityReminderSchedule() async {
+  await Workmanager().cancelByUniqueName(kInactivityReminderUniqueWork);
 }
 
 /// 금연 이유 알림 12:01 정시 예약 (예약 시점의 저장된 이유 문구 사용)
@@ -276,6 +433,10 @@ Future<void> scheduleReasonReminder() async {
   final prefs = await SharedPreferences.getInstance();
   final enabled = prefs.getBool(kReasonNotificationEnabledKey) ?? false;
   if (!enabled) return;
+  if (fcmRemotePushEnabled(prefs)) {
+    await cancelReasonReminderSchedule();
+    return;
+  }
 
   await ensureAndroidAlarmPermissionsForScheduling();
   ensureNotificationTimezoneInitialized();
@@ -309,17 +470,28 @@ Future<void> scheduleReasonReminder() async {
     enableVibration: true,
   );
 
-  await plugin.zonedSchedule(
-    kReasonReminderNotificationId,
-    '🌿 금연할 이유',
-    reasonText,
-    _nextInstanceAtTime(12, 1),
-    const NotificationDetails(android: androidDetails),
-    androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-    matchDateTimeComponents: DateTimeComponents.time,
-    uiLocalNotificationDateInterpretation:
-        UILocalNotificationDateInterpretation.absoluteTime,
-  );
+  final reasonMode = await resolveAndroidReminderScheduleMode();
+  Future<void> scheduleReason(AndroidScheduleMode m) => plugin.zonedSchedule(
+        kReasonReminderNotificationId,
+        '🌿 금연할 이유',
+        reasonText,
+        _nextInstanceAtTime(12, 1),
+        const NotificationDetails(android: androidDetails),
+        androidScheduleMode: m,
+        matchDateTimeComponents: DateTimeComponents.time,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+      );
+  try {
+    await scheduleReason(reasonMode);
+  } on PlatformException catch (e) {
+    if (reasonMode == AndroidScheduleMode.exactAllowWhileIdle &&
+        e.code == 'exact_alarms_not_permitted') {
+      await scheduleReason(AndroidScheduleMode.inexactAllowWhileIdle);
+    } else {
+      rethrow;
+    }
+  }
 }
 
 /// Android 13+ 알림 권한 요청
@@ -374,12 +546,13 @@ Future<List<TimeOfDay>> getReminderTimes() async {
 
   try {
     final list = jsonDecode(raw) as List<dynamic>;
-    return list
-        .whereType<Map<String, dynamic>>()
-        .map((m) => TimeOfDay(
-              hour: m['h'] as int? ?? 9,
-              minute: m['m'] as int? ?? 0,
-            ))
+    return _reminderMapsFromDecodedList(list)
+        .map(
+          (m) => TimeOfDay(
+            hour: _readReminderHour(m),
+            minute: _readReminderMinute(m),
+          ),
+        )
         .toList();
   } catch (_) {
     return [];
@@ -540,6 +713,9 @@ Future<void> updateLastAppOpenAndScheduleInactivity() async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.setInt(kLastAppOpenTimeMsKey, DateTime.now().millisecondsSinceEpoch);
   await Workmanager().cancelByUniqueName(kInactivityReminderUniqueWork);
+  if (fcmRemotePushEnabled(prefs)) {
+    return;
+  }
   await scheduleInactivityReminderOneOff(delayDays: kInactivityDaysThreshold);
 }
 
@@ -549,6 +725,8 @@ Future<void> setInactivityNotificationEnabled(bool enabled) async {
   await prefs.setBool(kInactivityNotificationEnabledKey, enabled);
   if (!enabled) {
     await Workmanager().cancelByUniqueName(kInactivityReminderUniqueWork);
+  } else if (fcmRemotePushEnabled(prefs)) {
+    await cancelInactivityReminderSchedule();
   } else {
     await scheduleInactivityReminderOneOff(delayDays: kInactivityDaysThreshold);
   }
@@ -643,7 +821,11 @@ Future<void> cancelAttendanceReminder() async {
 Future<void> setAttendanceReminderEnabled(bool enabled) async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.setBool(kAttendanceReminderEnabledKey, enabled);
-  if (!enabled) await cancelAttendanceReminder();
+  if (!enabled) {
+    await cancelAttendanceReminder();
+  } else {
+    await scheduleAttendanceReminderIfNeeded();
+  }
 }
 
 /// 출석 알림 설정값 조회
@@ -657,6 +839,10 @@ Future<void> scheduleAttendanceReminderIfNeeded() async {
   final enabled = await getAttendanceReminderEnabled();
   if (!enabled) return;
   final prefs = await SharedPreferences.getInstance();
+  if (fcmRemotePushEnabled(prefs)) {
+    await cancelAttendanceReminder();
+    return;
+  }
   if (prefs.getString(kAttendanceLastDateKey) == _todayString()) return;
   final now = DateTime.now();
   if (now.hour >= 18) await scheduleAttendanceReminderOnce();
@@ -797,6 +983,10 @@ Future<void> scheduleCigaretteCollectionReminders() async {
     await cancelCigaretteCollectionReminders();
     return;
   }
+  if (fcmRemotePushEnabled(prefs)) {
+    await cancelCigaretteCollectionReminders();
+    return;
+  }
 
   await requestNotificationPermissionIfNeeded();
 
@@ -852,6 +1042,7 @@ Future<void> maybeNotifyCigaretteCollectionWindowOpened() async {
   final prefs = await SharedPreferences.getInstance();
   final enabled = prefs.getBool(kCigaretteCollectionReminderEnabledKey) ?? true;
   if (!enabled) return;
+  if (fcmRemotePushEnabled(prefs)) return;
 
   final granted = await _ensureNotificationPermissionGranted();
   if (!granted) return;

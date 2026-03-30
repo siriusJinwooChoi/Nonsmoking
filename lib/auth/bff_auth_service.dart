@@ -102,7 +102,15 @@ class BffAuthService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 로그아웃 직전에 호출 (예: FCM 토큰 서버 삭제). 실패해도 로그아웃은 진행합니다.
+  Future<void> Function()? beforeSignOut;
+
   Future<void> signOut() async {
+    if (beforeSignOut != null) {
+      try {
+        await beforeSignOut!();
+      } catch (_) {}
+    }
     _accessToken = null;
     _refreshToken = null;
     _userId = null;

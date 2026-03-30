@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
@@ -409,7 +410,35 @@ abstract final class SupabaseSyncService {
     if (row == null) return;
     final j = row['reminder_times_json'];
     if (j != null) {
-      await prefs.setString(dw.kReminderTimesKey, jsonEncode(j));
+      // 서버·DB 기본값이 [] 인 경우, 로그인 직후 pull 이 로컬에 저장된 알림 시간을
+      // 덮어써 전부 사라지는 문제가 있음 → 빈 서버는 로컬이 비어 있을 때만 적용.
+      List<dynamic>? serverList;
+      if (j is List) {
+        serverList = j;
+      } else {
+        try {
+          final decoded = jsonDecode(jsonEncode(j));
+          if (decoded is List) serverList = decoded;
+        } catch (_) {}
+      }
+      final serverEmpty = serverList == null || serverList.isEmpty;
+      if (!serverEmpty) {
+        await prefs.setString(dw.kReminderTimesKey, jsonEncode(j));
+      } else {
+        var localHasReminders = false;
+        final localRaw = prefs.getString(dw.kReminderTimesKey);
+        if (localRaw != null && localRaw.trim().isNotEmpty) {
+          try {
+            final loc = jsonDecode(localRaw);
+            localHasReminders = loc is List && loc.isNotEmpty;
+          } catch (_) {}
+        }
+        if (!localHasReminders) {
+          await prefs.setString(dw.kReminderTimesKey, jsonEncode(j));
+        } else {
+          unawaited(pushLocalToRemoteIfEligible());
+        }
+      }
     }
     await prefs.setBool(
       dw.kReasonNotificationEnabledKey,
@@ -433,6 +462,9 @@ abstract final class SupabaseSyncService {
     } else {
       await prefs.remove(dw.kLastAppOpenTimeMsKey);
     }
+    try {
+      await dw.scheduleAllDailyReminders();
+    } catch (_) {}
     try {
       await dw.scheduleCigaretteCollectionReminders();
     } catch (_) {}

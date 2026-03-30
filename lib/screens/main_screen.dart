@@ -223,21 +223,18 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
     _reminderTimes = await getReminderTimes();
     if (!mounted) return;
-    try {
-      if (_reminderTimes.isNotEmpty) {
-        await scheduleAllDailyReminders();
-        if (!mounted) return;
-      }
-      final reasonEnabled = prefs.getBool(kReasonNotificationEnabledKey) ?? false;
-      if (reasonEnabled) {
-        await scheduleReasonReminder();
-        if (!mounted) return;
-      }
-    } catch (e, st) {
-      debugPrint('MainScreen: reminder schedule failed: $e\n$st');
-    }
-
-    unawaited(bootstrapCoreReminderSchedulesOnAppOpen());
+    // Activity·첫 프레임 준비 후 한 번만 부트스트랩 (initState 직후와 AttendanceGate와 중복 호출 시
+    // 서로 cancel/재예약이 겹칠 수 있음)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(() async {
+        try {
+          await bootstrapCoreReminderSchedulesOnAppOpen();
+        } catch (e, st) {
+          debugPrint('MainScreen: bootstrap reminders failed: $e\n$st');
+        }
+      }());
+    });
     await syncWidgetData();
   }
 

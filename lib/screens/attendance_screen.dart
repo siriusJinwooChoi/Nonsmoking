@@ -124,16 +124,23 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     _load();
   }
 
+  int _clampStreakDay(int v) => v.clamp(1, kAttendanceDays);
+
   Future<void> _load() async {
-    // 서버와 로컬 불일치로 '탭 불가'가 되는 것을 줄이기 위해, 표시 전에 한 번 동기화
+    // 서버 동기화는 네트워크 지연·무응답 시 화면이 멈추지 않도록 타임아웃
     if (SupabaseConfig.isConfigured) {
-      await _syncAttendanceFromApiIfAvailable();
+      try {
+        await _syncAttendanceFromApiIfAvailable()
+            .timeout(const Duration(seconds: 12));
+      } catch (_) {
+        // 로컬 우선: 타임아웃·오류 시에도 출석 UI는 계속 표시
+      }
     }
 
     final prefs = await SharedPreferences.getInstance();
     final last = prefs.getString(kAttendanceLastDateKey);
     final today = _todayString();
-    int streak = prefs.getInt(kAttendanceStreakDayKey) ?? 1;
+    int streak = _clampStreakDay(prefs.getInt(kAttendanceStreakDayKey) ?? 1);
 
     if (last != null) {
       final lastDt = DateTime.tryParse(last);
@@ -149,7 +156,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
     if (!mounted) return;
     setState(() {
-      _streakDay = streak;
+      _streakDay = _clampStreakDay(streak);
       _lastDate = last;
       _coins = prefs.getInt(kGoldenCoinsKey) ?? 0;
       _loading = false;
@@ -232,7 +239,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       if (!mounted) return;
       setState(() {
         _coins = remote.coins;
-        _streakDay = remote.streakDay;
+        _streakDay = _clampStreakDay(remote.streakDay);
         _lastDate = remote.lastDate;
       });
     } catch (_) {
@@ -256,7 +263,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       if (!mounted) return;
       setState(() {
         _coins = result.coins;
-        _streakDay = result.streakDay;
+        _streakDay = _clampStreakDay(result.streakDay);
         _lastDate = result.lastDate;
       });
     } catch (_) {

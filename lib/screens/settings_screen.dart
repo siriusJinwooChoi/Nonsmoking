@@ -81,16 +81,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         trailing: Switch(
           value: _inactivityNotificationEnabled,
-          onChanged: (value) async {
-            await setInactivityNotificationEnabled(value);
-            if (!context.mounted) return;
+          onChanged: (value) {
             setState(() => _inactivityNotificationEnabled = value);
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(value ? '비접속 시 알림을 켰습니다.' : '비접속 시 알림을 껐습니다.'),
-                duration: const Duration(seconds: 1),
-              ),
-            );
+            unawaited(() async {
+              await setInactivityNotificationEnabled(value);
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(value ? '비접속 시 알림을 켰습니다.' : '비접속 시 알림을 껐습니다.'),
+                  duration: const Duration(seconds: 1),
+                ),
+              );
+            }());
           },
           activeThumbColor: AppTheme.primary,
         ),
@@ -119,17 +121,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         trailing: Switch(
           value: _attendanceReminderEnabled,
-          onChanged: (value) async {
-            await setAttendanceReminderEnabled(value);
-            if (!context.mounted) return;
+          onChanged: (value) {
             setState(() => _attendanceReminderEnabled = value);
-            unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(value ? '출석 알림을 켰습니다.' : '출석 알림을 껐습니다.'),
-                duration: const Duration(seconds: 1),
-              ),
-            );
+            unawaited(() async {
+              await setAttendanceReminderEnabled(value);
+              if (!context.mounted) return;
+              unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(value ? '출석 알림을 켰습니다.' : '출석 알림을 껐습니다.'),
+                  duration: const Duration(seconds: 1),
+                ),
+              );
+            }());
           },
           activeThumbColor: AppTheme.primary,
         ),
@@ -158,17 +162,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         trailing: Switch(
           value: _cigaretteCollectionReminderEnabled,
-          onChanged: (value) async {
-            await setCigaretteCollectionReminderEnabled(value);
-            if (!context.mounted) return;
+          onChanged: (value) {
             setState(() => _cigaretteCollectionReminderEnabled = value);
-            unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(value ? '수집 시간 알림을 켰습니다.' : '수집 시간 알림을 껐습니다.'),
-                duration: const Duration(seconds: 1),
-              ),
-            );
+            unawaited(() async {
+              await setCigaretteCollectionReminderEnabled(value);
+              if (!context.mounted) return;
+              unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(value ? '수집 시간 알림을 켰습니다.' : '수집 시간 알림을 껐습니다.'),
+                  duration: const Duration(seconds: 1),
+                ),
+              );
+            }());
           },
           activeThumbColor: AppTheme.primary,
         ),

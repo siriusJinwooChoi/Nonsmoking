@@ -50,6 +50,8 @@ import 'auth/bff_oauth_service.dart';
 import 'api/remote_assets.dart';
 import 'supabase/supabase_config.dart';
 import 'supabase/supabase_sync_service.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'services/fcm_daily_reminder_service.dart' show firebaseMessagingBackgroundHandler, FcmDailyReminderService;
 
 void main() async {
   runZonedGuarded(() async {
@@ -61,6 +63,8 @@ void main() async {
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
+
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
     // ✅ Crashlytics 설정은 Firebase 초기화 이후에!
     await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(true);
@@ -122,6 +126,12 @@ class _QuitSmokingAppState extends State<QuitSmokingApp>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _initOAuthDeepLinks();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      BffAuthService.instance.beforeSignOut = () async {
+        await FcmDailyReminderService.instance.onBeforeSignOut();
+      };
+      unawaited(FcmDailyReminderService.instance.start());
+    });
   }
 
   Future<void> _initOAuthDeepLinks() async {
@@ -322,7 +332,6 @@ class _IntroFlowWrapperState extends State<IntroFlowWrapper> {
             }
 
             unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
-            unawaited(bootstrapCoreReminderSchedulesOnAppOpen());
 
             if (!mounted) return;
 
@@ -378,10 +387,9 @@ class _AttendanceGateState extends State<AttendanceGate> {
   @override
   void initState() {
     super.initState();
-    // 첫 프레임 이후에 권한·알람 예약 (Activity 미준비 상태에서 요청하면 실패할 수 있음)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       unawaited(_applySkipOverlayFlag());
-      unawaited(bootstrapCoreReminderSchedulesOnAppOpen());
+      // 알림 예약은 MainScreen 첫 프레임에서 bootstrapCoreReminderSchedulesOnAppOpen 한 번만 수행
     });
   }
 
