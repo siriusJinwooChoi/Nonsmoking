@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../notifications/daily_reminder_worker.dart';
 import '../theme/app_theme.dart';
+
 /// 알림을 여러 개 추가/삭제할 수 있는 화면
 class ReminderSettingsScreen extends StatefulWidget {
   final List<TimeOfDay> initialTimes;
@@ -18,10 +21,40 @@ class ReminderSettingsScreen extends StatefulWidget {
 
 class _ReminderSettingsScreenState extends State<ReminderSettingsScreen> {
   late List<TimeOfDay> _times;
+  bool _hasLocalEdits = false;
+
   @override
   void initState() {
     super.initState();
     _times = List.from(widget.initialTimes);
+    unawaited(_reloadTimesFromPrefs());
+  }
+
+  /// 부모가 넘긴 목록은 첫 프레임용이며, 저장소와 동기화해 재진입 시에도 최신 목록을 보여준다.
+  Future<void> _reloadTimesFromPrefs() async {
+    final t = await getReminderTimes();
+    if (!mounted) return;
+    // 화면 진입 직후 비동기 로드가 늦게 도착해도,
+    // 사용자가 이미 추가/수정/삭제한 로컬 상태를 덮어쓰지 않도록 보호한다.
+    if (_hasLocalEdits) return;
+    setState(() {
+      _times = t;
+      _sortTimes();
+    });
+  }
+
+  void _sortTimes() {
+    _times.sort((a, b) {
+      final amin = a.hour * 60 + a.minute;
+      final bmin = b.hour * 60 + b.minute;
+      return amin.compareTo(bmin);
+    });
+  }
+
+  Future<void> _persistAndNotify() async {
+    await saveReminderTimes(_times);
+    if (!mounted) return;
+    widget.onUpdated(List.from(_times));
   }
 
   Future<void> _addReminder() async {
@@ -32,15 +65,11 @@ class _ReminderSettingsScreenState extends State<ReminderSettingsScreen> {
     if (picked == null || !mounted) return;
 
     setState(() {
+      _hasLocalEdits = true;
       _times.add(picked);
-      _times.sort((a, b) {
-        final amin = a.hour * 60 + a.minute;
-        final bmin = b.hour * 60 + b.minute;
-        return amin.compareTo(bmin);
-      });
+      _sortTimes();
     });
-    await saveReminderTimes(_times);
-    widget.onUpdated(List.from(_times));
+    await _persistAndNotify();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('매일 ${picked.format(context)}에 알림이 추가되었습니다.'), duration: const Duration(seconds: 1)),
@@ -49,9 +78,11 @@ class _ReminderSettingsScreenState extends State<ReminderSettingsScreen> {
   }
 
   Future<void> _removeAt(int index) async {
-    setState(() => _times.removeAt(index));
-    await saveReminderTimes(_times);
-    widget.onUpdated(List.from(_times));
+    setState(() {
+      _hasLocalEdits = true;
+      _times.removeAt(index);
+    });
+    await _persistAndNotify();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('알림이 삭제되었습니다.'), duration: Duration(seconds: 1)),
@@ -68,15 +99,11 @@ class _ReminderSettingsScreenState extends State<ReminderSettingsScreen> {
     if (picked == null || !mounted) return;
 
     setState(() {
+      _hasLocalEdits = true;
       _times[index] = picked;
-      _times.sort((a, b) {
-        final amin = a.hour * 60 + a.minute;
-        final bmin = b.hour * 60 + b.minute;
-        return amin.compareTo(bmin);
-      });
+      _sortTimes();
     });
-    await saveReminderTimes(_times);
-    widget.onUpdated(List.from(_times));
+    await _persistAndNotify();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('매일 ${picked.format(context)}로 변경되었습니다.'), duration: const Duration(seconds: 1)),
@@ -87,15 +114,15 @@ class _ReminderSettingsScreenState extends State<ReminderSettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-        backgroundColor: AppTheme.surface,
-        appBar: AppBar(
-          title: const Text('알림 설정'),
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back_rounded),
-            onPressed: () => Navigator.pop(context),
-          ),
+      backgroundColor: AppTheme.surface,
+      appBar: AppBar(
+        title: const Text('알림 설정'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: () => Navigator.pop(context, List<TimeOfDay>.from(_times)),
         ),
-        body: ListView(
+      ),
+      body: ListView(
         padding: EdgeInsets.only(
           left: 16,
           right: 16,
@@ -152,11 +179,11 @@ class _ReminderSettingsScreenState extends State<ReminderSettingsScreen> {
             }),
         ],
       ),
-        floatingActionButton: FloatingActionButton(
-          onPressed: _addReminder,
-          tooltip: '알림 추가',
-          child: const Icon(Icons.add_rounded),
-        ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _addReminder,
+        tooltip: '알림 추가',
+        child: const Icon(Icons.add_rounded),
+      ),
     );
   }
 }

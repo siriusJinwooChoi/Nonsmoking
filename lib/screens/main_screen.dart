@@ -124,7 +124,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   @override
   void didUpdateWidget(covariant MainScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.refreshTrigger != widget.refreshTrigger) _loadGoldenCoins();
+    if (oldWidget.refreshTrigger != widget.refreshTrigger) {
+      _loadGoldenCoins();
+      unawaited(_reloadReminderTimesFromPrefs());
+    }
     if (oldWidget.dailyCigarettes != widget.dailyCigarettes ||
         oldWidget.pricePerPack != widget.pricePerPack ||
         oldWidget.cigarettesPerPack != widget.cigarettesPerPack) {
@@ -147,6 +150,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   Future<void> _loadGoldenCoins() async {
     final coins = await getGoldenCoins();
     if (mounted) setState(() => _goldenCoins = coins);
+  }
+
+  /// prefs 기준으로 알림 개수 라벨 동기화 (설정 화면 pop 직후·다른 탭 복귀 등)
+  Future<void> _reloadReminderTimesFromPrefs() async {
+    final fresh = await getReminderTimes();
+    if (!mounted) return;
+    setState(() => _reminderTimes = fresh);
   }
 
   /// 실패 횟수 1회 차감 (금연코인 5개 소모) 다이얼로그
@@ -377,7 +387,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _openReminderSettings() async {
-    final updated = await Navigator.push<List<TimeOfDay>>(
+    await Navigator.push<List<TimeOfDay>>(
       context,
       MaterialPageRoute(
         builder: (_) => ReminderSettingsScreen(
@@ -386,7 +396,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         ),
       ),
     );
-    if (updated != null && mounted) setState(() => _reminderTimes = updated);
+    await _reloadReminderTimesFromPrefs();
   }
 
   /// 흡연 욕구 시 금연시간, 절약금액, 별표(고정)한 금연할 이유, 응원메시지 표시
@@ -931,6 +941,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   ),
                 ),
               );
+              await _reloadReminderTimesFromPrefs();
             },
           ),
         ],

@@ -37,13 +37,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _inactivityNotificationEnabled = true;
   bool _attendanceReminderEnabled = true;
   bool _cigaretteCollectionReminderEnabled = true;
+  late List<TimeOfDay> _reminderTimes;
 
   @override
   void initState() {
     super.initState();
+    _reminderTimes = List<TimeOfDay>.from(widget.reminderTimes);
     _loadInactivitySetting();
     _loadAttendanceReminderSetting();
     _loadCigaretteCollectionReminderSetting();
+  }
+
+  @override
+  void didUpdateWidget(covariant SettingsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.reminderTimes != widget.reminderTimes) {
+      _reminderTimes = List<TimeOfDay>.from(widget.reminderTimes);
+    }
+  }
+
+  void _applyReminderTimes(List<TimeOfDay> times) {
+    if (!mounted) return;
+    setState(() => _reminderTimes = List<TimeOfDay>.from(times));
+    widget.onReminderUpdated(List<TimeOfDay>.from(times));
   }
 
   Future<void> _loadInactivitySetting() async {
@@ -183,17 +199,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Future<void> _openReminderSettings(BuildContext context, List<TimeOfDay> reminderTimes, void Function(List<TimeOfDay>) onReminderUpdated) async {
-    final updated = await Navigator.push<List<TimeOfDay>>(
+  Future<void> _openReminderSettings(BuildContext context) async {
+    final result = await Navigator.push<List<TimeOfDay>>(
       context,
       MaterialPageRoute(
         builder: (_) => ReminderSettingsScreen(
-          initialTimes: List.from(reminderTimes),
-          onUpdated: onReminderUpdated,
+          initialTimes: List.from(_reminderTimes),
+          onUpdated: _applyReminderTimes,
         ),
       ),
     );
-    if (updated != null) onReminderUpdated(updated);
+    if (result != null) {
+      _applyReminderTimes(result);
+      return;
+    }
+    final fresh = await getReminderTimes();
+    _applyReminderTimes(fresh);
   }
 
   Future<void> _confirmGoToFirstSetup(BuildContext context) async {
@@ -364,10 +385,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             context,
             icon: Icons.notifications_rounded,
             title: '알림',
-            subtitle: widget.reminderTimes.isEmpty
+            subtitle: _reminderTimes.isEmpty
                 ? '알림 없음'
-                : '${widget.reminderTimes.length}개 설정됨',
-            onTap: () => _openReminderSettings(context, widget.reminderTimes, widget.onReminderUpdated),
+                : '${_reminderTimes.length}개 설정됨',
+            onTap: () => _openReminderSettings(context),
           ),
           _inactivityNotificationTile(context),
           _attendanceReminderTile(context),

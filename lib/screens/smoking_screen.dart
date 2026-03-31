@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lottie/lottie.dart';
+import 'dart:async';
+import 'dart:math';
 import '../api/api_config.dart';
 import '../api/remote_assets.dart';
 import '../theme/app_theme.dart';
@@ -14,33 +16,146 @@ class SmokingScreen extends StatefulWidget {
 class _SmokingScreenState extends State<SmokingScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
-  bool _isSmoking = false;
+  Timer? _burnTimer;
+  bool _isBurning = false;
+  bool _isFastBurn = false;
+  final TextEditingController _chatController = TextEditingController();
+  final FocusNode _chatFocusNode = FocusNode();
+  final List<_EphemeralChat> _ephemeralChats = [];
+  final Random _random = Random();
+  static const List<Alignment> _chatAnchors = [
+    Alignment(-0.9, -0.82),
+    Alignment(-0.35, -0.92),
+    Alignment(0.25, -0.92),
+    Alignment(0.85, -0.82),
+    Alignment(-0.98, -0.35),
+    Alignment(0.98, -0.35),
+    Alignment(-0.95, 0.15),
+    Alignment(0.95, 0.15),
+  ];
+  static const int _burnSecondsPerCigarette = 300; // 5분
+  double _remainingSeconds = _burnSecondsPerCigarette.toDouble();
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(vsync: this);
+    _controller = AnimationController(vsync: this, lowerBound: 0, upperBound: 1);
   }
 
   @override
   void dispose() {
+    _burnTimer?.cancel();
+    _chatController.dispose();
+    _chatFocusNode.dispose();
     _controller.dispose();
     super.dispose();
   }
 
-  void _onPressStart() {
-    setState(() => _isSmoking = true);
-    if (ApiConfig.isConfigured) {
-      _controller.repeat();
-    }
+  void _onTapStart() {
+    if (_isBurning) return;
+    setState(() {
+      _isBurning = true;
+      _isFastBurn = false;
+      _remainingSeconds = _burnSecondsPerCigarette.toDouble();
+      _controller.value = 0;
+    });
+    _startBurningTimer();
   }
 
-  void _onPressEnd() {
-    setState(() => _isSmoking = false);
-    if (ApiConfig.isConfigured) {
-      _controller.stop();
-      _controller.reset();
+  void _startBurningTimer() {
+    _burnTimer?.cancel();
+    _burnTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+      if (!mounted || !_isBurning) {
+        timer.cancel();
+        return;
+      }
+
+      final speed = _isFastBurn ? 2.0 : 1.0;
+      final deltaSeconds = 0.1 * speed;
+      final nextRemaining = (_remainingSeconds - deltaSeconds).clamp(0.0, _burnSecondsPerCigarette.toDouble());
+      final progress = ((_burnSecondsPerCigarette - nextRemaining) / _burnSecondsPerCigarette).clamp(0.0, 1.0);
+
+      setState(() {
+        _remainingSeconds = nextRemaining;
+        _controller.value = progress;
+      });
+
+      if (nextRemaining <= 0) {
+        timer.cancel();
+        setState(() {
+          _isBurning = false;
+          _isFastBurn = false;
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('한 대가 모두 탔어요. 잠깐 멈추고 물 한 잔 해보세요.'), duration: Duration(seconds: 2)),
+          );
+        }
+      }
+    });
+  }
+
+  void _setFastBurnPressed(bool pressed) {
+    if (!_isBurning) return;
+    if (_isFastBurn == pressed) return;
+    setState(() => _isFastBurn = pressed);
+  }
+
+  void _sendEphemeralChat() {
+    final text = _chatController.text.trim();
+    if (text.isEmpty) return;
+    _chatController.clear();
+    _chatFocusNode.unfocus();
+
+    final color = Color.lerp(
+          const Color(0xFF22D3EE),
+          const Color(0xFFF472B6),
+          _random.nextDouble(),
+        ) ??
+        AppTheme.primary;
+    final dx = (_random.nextDouble() * 20) - 10;
+    final dy = (_random.nextDouble() * 16) - 8;
+    final id = DateTime.now().microsecondsSinceEpoch;
+    final anchorIndex = _pickLeastUsedAnchorIndex();
+    final chat = _EphemeralChat(
+      id: id,
+      text: text,
+      color: color,
+      anchorIndex: anchorIndex,
+      dx: dx,
+      dy: dy,
+      visible: true,
+    );
+    setState(() => _ephemeralChats.add(chat));
+
+    Future.delayed(const Duration(seconds: 3), () {
+      if (!mounted) return;
+      final idx = _ephemeralChats.indexWhere((c) => c.id == id);
+      if (idx < 0) return;
+      setState(() => _ephemeralChats[idx] = _ephemeralChats[idx].copyWith(visible: false));
+    });
+    Future.delayed(const Duration(milliseconds: 4300), () {
+      if (!mounted) return;
+      setState(() => _ephemeralChats.removeWhere((c) => c.id == id));
+    });
+  }
+
+  int _pickLeastUsedAnchorIndex() {
+    final counts = List<int>.filled(_chatAnchors.length, 0);
+    for (final chat in _ephemeralChats) {
+      if (!chat.visible) continue;
+      if (chat.anchorIndex >= 0 && chat.anchorIndex < counts.length) {
+        counts[chat.anchorIndex] += 1;
+      }
     }
+    final minCount = counts.reduce((a, b) => a < b ? a : b);
+    final candidates = <int>[];
+    for (var i = 0; i < counts.length; i++) {
+      if (counts[i] == minCount) {
+        candidates.add(i);
+      }
+    }
+    return candidates[_random.nextInt(candidates.length)];
   }
 
   @override
@@ -48,13 +163,22 @@ class _SmokingScreenState extends State<SmokingScreen>
     return Scaffold(
       backgroundColor: AppTheme.surface,
       appBar: AppBar(
-        title: const Text('금연해보도록 노력해봐요'),
+        title: const Text('담타시간(실시간 커뮤니티)'),
       ),
-      body: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                20,
+                24,
+                20,
+                16 + MediaQuery.of(context).viewInsets.bottom,
+              ),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight - 24),
+                child: Column(
+                  children: [
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
               decoration: BoxDecoration(
@@ -65,37 +189,51 @@ class _SmokingScreenState extends State<SmokingScreen>
               child: Column(
                 children: [
                   Text(
-                    _isSmoking
-                        ? '장면이 재생 중이에요'
-                        : '버튼을 누르면 연습 장면이 재생됩니다.',
+                    _isBurning
+                        ? '담배가 자동으로 타는 중이에요'
+                        : '버튼을 누르면 담타가 시작됩니다.',
                     textAlign: TextAlign.center,
                     style: AppTheme.bodyLarge.copyWith(
-                      color: _isSmoking ? AppTheme.error : AppTheme.textPrimary,
+                      color: _isBurning ? AppTheme.error : AppTheme.textPrimary,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    _isSmoking
-                        ? '재생 중… 잠깐 손을 떼며 숨을 고르세요.'
-                        : '잠깐의 유혹이 몸에 어떤 느낌인지 떠올려 보는 연습입니다.',
+                    '담배 이미지를 누르면 더 빨리 탑니다.',
                     textAlign: TextAlign.center,
                     style: AppTheme.bodyMedium,
+                  ),
+                  const SizedBox(height: 10),
+                  LinearProgressIndicator(
+                    value: _controller.value,
+                    minHeight: 8,
+                    borderRadius: BorderRadius.circular(99),
+                    backgroundColor: AppTheme.textMuted.withValues(alpha: 0.25),
+                    valueColor: AlwaysStoppedAnimation<Color>(_isFastBurn ? AppTheme.warning : AppTheme.primary),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _isBurning
+                        ? '남은 시간 ${(_remainingSeconds ~/ 60).toInt()}분 ${(_remainingSeconds % 60).toInt().toString().padLeft(2, '0')}초'
+                        : '남은 시간 5분 00초',
+                    style: AppTheme.labelMedium.copyWith(color: AppTheme.textSecondary),
                   ),
                 ],
               ),
             ),
 
             // 🌀 Lottie 애니메이션
+            const SizedBox(height: 20),
             SizedBox(
-              height: 250,
+              height: 300,
               width: double.infinity,
               child: Stack(
                 alignment: Alignment.center,
                 children: [
                   // 배경 효과 (연기처럼 흐릿한 원)
                   AnimatedOpacity(
-                    opacity: _isSmoking ? 1 : 0,
+                    opacity: _isBurning ? 1 : 0,
                     duration: const Duration(milliseconds: 600),
                     child: Container(
                       height: 240,
@@ -115,57 +253,117 @@ class _SmokingScreenState extends State<SmokingScreen>
                   ),
 
                   // 메인 Lottie 애니메이션 (서버 static)
-                  if (ApiConfig.isConfigured)
-                    Lottie.network(
-                      RemoteAssets.urlForKey('lottie/Cig.json').toString(),
-                      controller: _controller,
-                      onLoaded: (composition) {
-                        _controller.duration = composition.duration;
-                      },
-                      repeat: true,
-                      fit: BoxFit.contain,
-                    )
-                  else
-                    Icon(Icons.movie_filter_rounded, size: 120, color: Colors.grey.shade600),
+                  GestureDetector(
+                    onTapDown: (_) => _setFastBurnPressed(true),
+                    onTapUp: (_) => _setFastBurnPressed(false),
+                    onTapCancel: () => _setFastBurnPressed(false),
+                    child: ApiConfig.isConfigured
+                        ? Lottie.network(
+                            RemoteAssets.urlForKey('lottie/Cig.json').toString(),
+                            controller: _controller,
+                            onLoaded: (composition) {
+                              _controller.duration = composition.duration;
+                            },
+                            repeat: false,
+                            fit: BoxFit.contain,
+                          )
+                        : Icon(Icons.movie_filter_rounded, size: 120, color: Colors.grey.shade600),
+                  ),
+                  ..._ephemeralChats.map(
+                    (chat) => Align(
+                      alignment: _chatAnchors[chat.anchorIndex],
+                      child: AnimatedOpacity(
+                        duration: const Duration(milliseconds: 1200),
+                        curve: Curves.easeOut,
+                        opacity: chat.visible ? 1 : 0,
+                        child: Transform.translate(
+                          offset: Offset(chat.dx, chat.visible ? chat.dy : chat.dy - 12),
+                          child: Text(
+                            chat.text,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: chat.color,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              shadows: const [
+                                Shadow(color: Colors.white, blurRadius: 6),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (_isBurning)
+                    Positioned(
+                      bottom: 8,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: (_isFastBurn ? AppTheme.warning : AppTheme.primary).withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          _isFastBurn ? '2배속 ON (누르는 중)' : '누르고 있으면 2배속',
+                          style: AppTheme.labelMedium.copyWith(
+                            color: _isFastBurn ? AppTheme.warning : AppTheme.primary,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
 
-            // 연습 재생 버튼
-            GestureDetector(
-              onTapDown: (_) => _onPressStart(),
-              onTapUp: (_) => _onPressEnd(),
-              onTapCancel: _onPressEnd,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 300),
-                curve: Curves.easeInOut,
-                padding:
-                const EdgeInsets.symmetric(horizontal: 60, vertical: 20),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: _isSmoking
-                        ? [const Color(0xFFF87171), AppTheme.error]
-                        : [const Color(0xFF78716C), const Color(0xFF57534E)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: (_isSmoking ? AppTheme.error : const Color(0xFF57534E)).withValues(alpha: 0.3),
-                      blurRadius: 12,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
+            // 담타 시작 버튼
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _isBurning ? null : _onTapStart,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _isBurning ? AppTheme.textMuted : AppTheme.error,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 18),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                 ),
                 child: Text(
-                  _isSmoking ? '기록 중...' : '흔들림 기록 시작',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600,
-                  ),
+                  _isBurning ? '담타 진행 중...' : '담타 시작',
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
                 ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              decoration: BoxDecoration(
+                color: AppTheme.surfaceCard,
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: AppTheme.cardShadowSubtle,
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _chatController,
+                      focusNode: _chatFocusNode,
+                      textInputAction: TextInputAction.send,
+                      onSubmitted: (_) => _sendEphemeralChat(),
+                      decoration: const InputDecoration(
+                        hintText: '한마디 입력...',
+                        border: InputBorder.none,
+                        isDense: true,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: _sendEphemeralChat,
+                    icon: const Icon(Icons.send_rounded),
+                    tooltip: '보내기',
+                    color: AppTheme.primary,
+                  ),
+                ],
               ),
             ),
 
@@ -173,19 +371,57 @@ class _SmokingScreenState extends State<SmokingScreen>
             Padding(
               padding: const EdgeInsets.only(bottom: 16),
               child: Text(
-                _isSmoking
+                _isBurning
                     ? '한순간의 선택이 회복 시간을 늘립니다.'
-                    : '유혹을 넘길수록 폐는 천천히 회복됩니다.',
+                    : '중요한 건 완벽이 아니라 다시 복귀하는 습관입니다.',
                 textAlign: TextAlign.center,
                 style: AppTheme.bodyMedium.copyWith(
-                  color: _isSmoking ? AppTheme.error : AppTheme.textSecondary,
+                  color: _isBurning ? AppTheme.error : AppTheme.textSecondary,
                   fontStyle: FontStyle.italic,
                 ),
               ),
             ),
-          ],
+                  ],
+                ),
+              ),
+            );
+          },
         ),
       ),
+    );
+  }
+}
+
+class _EphemeralChat {
+  final int id;
+  final String text;
+  final Color color;
+  final int anchorIndex;
+  final double dx;
+  final double dy;
+  final bool visible;
+
+  const _EphemeralChat({
+    required this.id,
+    required this.text,
+    required this.color,
+    required this.anchorIndex,
+    required this.dx,
+    required this.dy,
+    required this.visible,
+  });
+
+  _EphemeralChat copyWith({
+    bool? visible,
+  }) {
+    return _EphemeralChat(
+      id: id,
+      text: text,
+      color: color,
+      anchorIndex: anchorIndex,
+      dx: dx,
+      dy: dy,
+      visible: visible ?? this.visible,
     );
   }
 }

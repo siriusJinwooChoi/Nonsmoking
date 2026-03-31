@@ -47,8 +47,8 @@ class LungSmokingMenuScreen extends StatelessWidget {
                     const SizedBox(height: 16),
                     _MenuCard(
                       icon: Icons.movie_filter_rounded,
-                      title: '흔들림 장면 (연습)',
-                      subtitle: '참지 못한 순간을 짧게 시각화해 볼 수 있어요.',
+                      title: '담타시간(실시간 커뮤니티)',
+                      subtitle: '담타 루틴을 체험하며 다시 복귀를 준비해요.',
                       color: AppTheme.error,
                       onTap: () {
                         Navigator.push(
@@ -105,7 +105,7 @@ class _MenuCard extends StatelessWidget {
                 height: 52,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.12),
+                  color: color.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Icon(icon, size: 30, color: color),

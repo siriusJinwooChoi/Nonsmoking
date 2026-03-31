@@ -115,6 +115,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   int? _justEarnedCoins;
   int? _justEarnedDay;
   bool _attendedThisSession = false;
+  bool _isCheckingIn = false;
   /// 출석 처리 후 당일 다시 출석창을 띄우지 않기 (닫을 때 prefs 저장)
   bool _hideOverlayRestOfDay = false;
 
@@ -164,35 +165,31 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   }
 
   void _onTapDayBlocked(int day, {required bool alreadyToday, required int? tappableDay}) {
+    if (alreadyToday) return;
     if (!mounted) return;
-    final msg = alreadyToday
-        ? '오늘은 이미 출석했어요. 내일 또 만나요!'
-        : (tappableDay != null
-            ? '지금은 $tappableDay일 칸을 눌러 출석할 수 있어요.'
-            : '출석할 수 없습니다.');
+    final msg = tappableDay != null
+        ? '지금은 $tappableDay일 칸을 눌러 출석할 수 있어요.'
+        : '출석할 수 없습니다.';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg), duration: const Duration(seconds: 2)),
     );
   }
 
   Future<void> _onTapDay(int day) async {
+    if (_isCheckingIn) return;
     final today = _todayString();
     if (_lastDate == today) return;
     int nextStreak = _streakDay;
     if (day != nextStreak) return;
 
     final coinsToAdd = kMilestoneDays.contains(day) ? kCoinsMilestone : kCoinsPerDay;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(kAttendanceStreakDayKey, day == 28 ? 1 : day + 1);
-    await prefs.setString(kAttendanceLastDateKey, today);
-    final newCoins = (_coins + coinsToAdd);
-    await prefs.setInt(kGoldenCoinsKey, newCoins);
+    final nextDay = day == 28 ? 1 : day + 1;
+    final newCoins = _coins + coinsToAdd;
 
-    await cancelAttendanceReminder();
-
-    if (!mounted) return;
+    // 사용자가 눌렀을 때 즉시 반응하도록 UI를 먼저 낙관적 업데이트한다.
     setState(() {
-      _streakDay = day == 28 ? 1 : day + 1;
+      _isCheckingIn = true;
+      _streakDay = nextDay;
       _lastDate = today;
       _coins = newCoins;
       _justEarnedCoins = coinsToAdd;
@@ -200,6 +197,20 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       _attendedThisSession = true;
       _hideOverlayRestOfDay = false;
     });
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(kAttendanceStreakDayKey, nextDay);
+      await prefs.setString(kAttendanceLastDateKey, today);
+      await prefs.setInt(kGoldenCoinsKey, newCoins);
+      await cancelAttendanceReminder();
+    } catch (_) {
+      // 로컬 우선 정책: 저장 실패 시에도 UI는 유지하고 다음 진입 동기화에서 보정
+    } finally {
+      if (mounted) {
+        setState(() => _isCheckingIn = false);
+      }
+    }
 
     final sync = widget.onAttendanceRecorded;
     if (sync != null) {
@@ -353,7 +364,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                     itemBuilder: (context, index) {
                       final day = index + 1;
                       final checked = day <= lastCheckedDay;
-                      final isTappable = tappableDay == day;
+                      final isTappable = !_isCheckingIn && tappableDay == day;
                       final isMilestone = kMilestoneDays.contains(day);
                       final coins = isMilestone ? kCoinsMilestone : kCoinsPerDay;
                       return _DayTile(
