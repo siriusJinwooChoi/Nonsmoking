@@ -452,10 +452,21 @@ abstract final class SupabaseSyncService {
       dw.kAttendanceReminderEnabledKey,
       row['attendance_reminder_enabled'] as bool? ?? true,
     );
-    await prefs.setBool(
-      dw.kCigaretteCollectionReminderEnabledKey,
-      row['cigarette_collection_reminder_enabled'] as bool? ?? true,
-    );
+    final hasLocalCollectionPref =
+        prefs.containsKey(dw.kCigaretteCollectionReminderEnabledKey);
+    final remoteCollectionEnabled =
+        row['cigarette_collection_reminder_enabled'] as bool?;
+    if (remoteCollectionEnabled == false && !hasLocalCollectionPref) {
+      // 최초 동기화에서 DB 기본값/과거 데이터 false가 내려온 경우, 앱 기본 정책(true)로 복구
+      // 이후 pushLocalToRemoteIfEligible()가 DB서버 값을 true로 정정합니다.
+      await prefs.setBool(dw.kCigaretteCollectionReminderEnabledKey, true);
+      unawaited(pushLocalToRemoteIfEligible());
+    } else {
+      await prefs.setBool(
+        dw.kCigaretteCollectionReminderEnabledKey,
+        remoteCollectionEnabled ?? true,
+      );
+    }
     final lastMs = row['last_app_open_time_ms'];
     if (lastMs != null) {
       await prefs.setInt(dw.kLastAppOpenTimeMsKey, (lastMs as num).toInt());

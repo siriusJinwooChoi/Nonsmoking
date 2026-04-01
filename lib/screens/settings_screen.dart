@@ -5,6 +5,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../auth/auth_service.dart';
+import '../auth/bff_auth_service.dart';
+import '../api/bff_profile_api.dart';
 import '../services/app_update_service.dart';
 import '../auth/legal_urls.dart';
 import '../supabase/supabase_config.dart';
@@ -38,6 +40,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _attendanceReminderEnabled = true;
   bool _cigaretteCollectionReminderEnabled = true;
   late List<TimeOfDay> _reminderTimes;
+  String? _displayName;
+  bool _savingDisplayName = false;
 
   @override
   void initState() {
@@ -46,6 +50,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _loadInactivitySetting();
     _loadAttendanceReminderSetting();
     _loadCigaretteCollectionReminderSetting();
+    unawaited(_loadDisplayName());
   }
 
   @override
@@ -75,6 +80,105 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadCigaretteCollectionReminderSetting() async {
     final v = await getCigaretteCollectionReminderEnabled();
     if (mounted) setState(() => _cigaretteCollectionReminderEnabled = v);
+  }
+
+  Future<void> _loadDisplayName() async {
+    if (!BffAuthService.instance.isLoggedIn) return;
+    final cached = await BffProfileApi.readCachedDisplayNameForCurrentUser();
+    if (mounted && cached != null && cached.isNotEmpty) {
+      setState(() => _displayName = cached);
+    }
+
+    final row = await BffProfileApi.fetchProfile();
+    if (!mounted || row == null) return;
+    final name = (row['display_name'] as String?)?.trim();
+    if (name != null && name.isNotEmpty) {
+      await BffProfileApi.cacheDisplayNameForCurrentUser(name);
+      if (mounted) setState(() => _displayName = name);
+    }
+  }
+
+  Future<void> _editDisplayName() async {
+    if (!BffAuthService.instance.isLoggedIn) return;
+    final controller = TextEditingController(text: _displayName ?? '');
+    String? localError;
+
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocalState) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: const Text('닉네임 변경'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: controller,
+                  maxLength: 12,
+                  autofocus: true,
+                  textInputAction: TextInputAction.done,
+                  decoration: InputDecoration(
+                    labelText: '닉네임',
+                    hintText: '2~12자',
+                    counterText: '',
+                    errorText: localError,
+                  ),
+                  onSubmitted: (_) {
+                    final v = controller.text.trim();
+                    if (v.length < 2 || v.length > 12) {
+                      setLocalState(() => localError = '닉네임은 2~12자로 입력해 주세요.');
+                      return;
+                    }
+                    Navigator.pop(ctx, v);
+                  },
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('취소'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  final v = controller.text.trim();
+                  if (v.length < 2 || v.length > 12) {
+                    setLocalState(() => localError = '닉네임은 2~12자로 입력해 주세요.');
+                    return;
+                  }
+                  Navigator.pop(ctx, v);
+                },
+                child: const Text('저장'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    controller.dispose();
+
+    if (result == null || result.trim().isEmpty) return;
+    if (result.trim() == (_displayName ?? '').trim()) return;
+
+    setState(() => _savingDisplayName = true);
+    final ok = await BffProfileApi.patchProfile(displayName: result.trim());
+    if (!mounted) return;
+    setState(() => _savingDisplayName = false);
+
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('닉네임 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.')),
+      );
+      return;
+    }
+
+    await BffProfileApi.cacheDisplayNameForCurrentUser(result.trim());
+    if (!mounted) return;
+    setState(() => _displayName = result.trim());
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('닉네임을 변경했습니다.')),
+    );
   }
 
   Widget _inactivityNotificationTile(BuildContext context) {
@@ -381,6 +485,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 24),
           _sectionTitle('일반'),
+          if (SupabaseConfig.isConfigured && BffAuthService.instance.isLoggedIn)
+            _settingsTile(
+              context,
+              icon: Icons.badge_rounded,
+              title: '닉네임 변경',
+              subtitle: _savingDisplayName
+                  ? '저장 중...'
+                  : ((_displayName == null || _displayName!.isEmpty)
+                        ? '현재 닉네임 없음'
+                        : '현재: $_displayName'),
+              onTap: _savingDisplayName ? () {} : _editDisplayName,
+            ),
           _settingsTile(
             context,
             icon: Icons.notifications_rounded,
