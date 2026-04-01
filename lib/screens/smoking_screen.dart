@@ -3,8 +3,10 @@ import 'package:lottie/lottie.dart';
 import 'dart:async';
 import 'dart:math';
 import '../api/api_config.dart';
+import '../api/damta_community_api_service.dart';
 import '../api/remote_assets.dart';
 import '../theme/app_theme.dart';
+import '../utils/profanity_filter.dart';
 
 class SmokingScreen extends StatefulWidget {
   const SmokingScreen({super.key});
@@ -22,7 +24,11 @@ class _SmokingScreenState extends State<SmokingScreen>
   final TextEditingController _chatController = TextEditingController();
   final FocusNode _chatFocusNode = FocusNode();
   final List<_EphemeralChat> _ephemeralChats = [];
+  final Set<String> _seenDamtaIds = {};
   final Random _random = Random();
+  static const DamtaCommunityApiService _damtaApi = DamtaCommunityApiService();
+  Timer? _damtaPollTimer;
+  late final int _damtaSessionStartedMs;
   static const List<Alignment> _chatAnchors = [
     Alignment(-0.9, -0.82),
     Alignment(-0.35, -0.92),
@@ -40,10 +46,16 @@ class _SmokingScreenState extends State<SmokingScreen>
   void initState() {
     super.initState();
     _controller = AnimationController(vsync: this, lowerBound: 0, upperBound: 1);
+    _damtaSessionStartedMs = DateTime.now().millisecondsSinceEpoch;
+    if (ApiConfig.isConfigured) {
+      _damtaPollTimer = Timer.periodic(const Duration(seconds: 2), (_) => _pollDamtaInbox());
+      unawaited(_pollDamtaInbox());
+    }
   }
 
   @override
   void dispose() {
+    _damtaPollTimer?.cancel();
     _burnTimer?.cancel();
     _chatController.dispose();
     _chatFocusNode.dispose();
@@ -101,21 +113,27 @@ class _SmokingScreenState extends State<SmokingScreen>
     setState(() => _isFastBurn = pressed);
   }
 
-  void _sendEphemeralChat() {
-    final text = _chatController.text.trim();
-    if (text.isEmpty) return;
-    _chatController.clear();
-    _chatFocusNode.unfocus();
+  Future<void> _pollDamtaInbox() async {
+    final list = await _damtaApi.fetchMessages();
+    if (!mounted || list == null) return;
+    for (final m in list) {
+      if (_seenDamtaIds.contains(m.id)) continue;
+      if (m.tsMs > 0 && m.tsMs < _damtaSessionStartedMs - 5000) {
+        _seenDamtaIds.add(m.id);
+        continue;
+      }
+      _seenDamtaIds.add(m.id);
+      _enqueueEphemeralBubble(id: m.id, text: m.text, color: m.color);
+    }
+  }
 
-    final color = Color.lerp(
-          const Color(0xFF22D3EE),
-          const Color(0xFFF472B6),
-          _random.nextDouble(),
-        ) ??
-        AppTheme.primary;
+  void _enqueueEphemeralBubble({
+    required String id,
+    required String text,
+    required Color color,
+  }) {
     final dx = (_random.nextDouble() * 20) - 10;
     final dy = (_random.nextDouble() * 16) - 8;
-    final id = DateTime.now().microsecondsSinceEpoch;
     final anchorIndex = _pickLeastUsedAnchorIndex();
     final chat = _EphemeralChat(
       id: id,
@@ -138,6 +156,39 @@ class _SmokingScreenState extends State<SmokingScreen>
       if (!mounted) return;
       setState(() => _ephemeralChats.removeWhere((c) => c.id == id));
     });
+  }
+
+  Future<void> _sendEphemeralChat() async {
+    final raw = _chatController.text.trim();
+    if (raw.isEmpty) return;
+    final text = ProfanityFilter.sanitize(raw).trim();
+    if (text.isEmpty) return;
+    _chatController.clear();
+    _chatFocusNode.unfocus();
+
+    final color = Color.lerp(
+          const Color(0xFF22D3EE),
+          const Color(0xFFF472B6),
+          _random.nextDouble(),
+        ) ??
+        AppTheme.primary;
+
+    if (ApiConfig.isConfigured) {
+      final posted = await _damtaApi.postMessage(text: text, color: color);
+      if (!mounted) return;
+      if (posted == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('한마디를 보내지 못했어요. 네트워크를 확인해 주세요.')),
+        );
+        return;
+      }
+      _seenDamtaIds.add(posted.id);
+      _enqueueEphemeralBubble(id: posted.id, text: posted.text, color: posted.color);
+      return;
+    }
+
+    final id = 'local_${DateTime.now().microsecondsSinceEpoch}';
+    _enqueueEphemeralBubble(id: id, text: text, color: color);
   }
 
   int _pickLeastUsedAnchorIndex() {
@@ -393,7 +444,7 @@ class _SmokingScreenState extends State<SmokingScreen>
 }
 
 class _EphemeralChat {
-  final int id;
+  final String id;
   final String text;
   final Color color;
   final int anchorIndex;
