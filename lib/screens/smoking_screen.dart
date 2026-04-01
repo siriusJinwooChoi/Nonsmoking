@@ -3,6 +3,7 @@ import 'package:lottie/lottie.dart';
 import 'dart:async';
 import 'dart:math';
 import '../api/api_config.dart';
+import '../api/bff_profile_api.dart';
 import '../api/damta_community_api_service.dart';
 import '../api/remote_assets.dart';
 import '../theme/app_theme.dart';
@@ -29,6 +30,7 @@ class _SmokingScreenState extends State<SmokingScreen>
   static const DamtaCommunityApiService _damtaApi = DamtaCommunityApiService();
   Timer? _damtaPollTimer;
   late final int _damtaSessionStartedMs;
+  String _myDisplayName = '나';
   static const List<Alignment> _chatAnchors = [
     Alignment(-0.9, -0.82),
     Alignment(-0.35, -0.92),
@@ -47,9 +49,26 @@ class _SmokingScreenState extends State<SmokingScreen>
     super.initState();
     _controller = AnimationController(vsync: this, lowerBound: 0, upperBound: 1);
     _damtaSessionStartedMs = DateTime.now().millisecondsSinceEpoch;
+    unawaited(_loadMyDisplayName());
     if (ApiConfig.isConfigured) {
       _damtaPollTimer = Timer.periodic(const Duration(seconds: 2), (_) => _pollDamtaInbox());
       unawaited(_pollDamtaInbox());
+    }
+  }
+
+  Future<void> _loadMyDisplayName() async {
+    final cached = await BffProfileApi.readCachedDisplayNameForCurrentUser();
+    if (!mounted) return;
+    if (cached != null && cached.trim().isNotEmpty) {
+      setState(() => _myDisplayName = cached.trim());
+      return;
+    }
+    final row = await BffProfileApi.fetchProfile();
+    if (!mounted || row == null) return;
+    final fromServer = (row['display_name'] as String?)?.trim();
+    if (fromServer != null && fromServer.isNotEmpty) {
+      await BffProfileApi.cacheDisplayNameForCurrentUser(fromServer);
+      if (mounted) setState(() => _myDisplayName = fromServer);
     }
   }
 
@@ -123,7 +142,12 @@ class _SmokingScreenState extends State<SmokingScreen>
         continue;
       }
       _seenDamtaIds.add(m.id);
-      _enqueueEphemeralBubble(id: m.id, text: m.text, color: m.color);
+      _enqueueEphemeralBubble(
+        id: m.id,
+        text: m.text,
+        color: m.color,
+        authorName: m.authorName,
+      );
     }
   }
 
@@ -131,6 +155,7 @@ class _SmokingScreenState extends State<SmokingScreen>
     required String id,
     required String text,
     required Color color,
+    required String authorName,
   }) {
     final dx = (_random.nextDouble() * 20) - 10;
     final dy = (_random.nextDouble() * 16) - 8;
@@ -139,6 +164,7 @@ class _SmokingScreenState extends State<SmokingScreen>
       id: id,
       text: text,
       color: color,
+      authorName: authorName,
       anchorIndex: anchorIndex,
       dx: dx,
       dy: dy,
@@ -174,7 +200,11 @@ class _SmokingScreenState extends State<SmokingScreen>
         AppTheme.primary;
 
     if (ApiConfig.isConfigured) {
-      final posted = await _damtaApi.postMessage(text: text, color: color);
+      final posted = await _damtaApi.postMessage(
+        text: text,
+        color: color,
+        authorName: _myDisplayName,
+      );
       if (!mounted) return;
       if (posted == null) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -183,12 +213,22 @@ class _SmokingScreenState extends State<SmokingScreen>
         return;
       }
       _seenDamtaIds.add(posted.id);
-      _enqueueEphemeralBubble(id: posted.id, text: posted.text, color: posted.color);
+      _enqueueEphemeralBubble(
+        id: posted.id,
+        text: posted.text,
+        color: posted.color,
+        authorName: posted.authorName,
+      );
       return;
     }
 
     final id = 'local_${DateTime.now().microsecondsSinceEpoch}';
-    _enqueueEphemeralBubble(id: id, text: text, color: color);
+    _enqueueEphemeralBubble(
+      id: id,
+      text: text,
+      color: color,
+      authorName: '나',
+    );
   }
 
   int _pickLeastUsedAnchorIndex() {
@@ -330,7 +370,7 @@ class _SmokingScreenState extends State<SmokingScreen>
                         child: Transform.translate(
                           offset: Offset(chat.dx, chat.visible ? chat.dy : chat.dy - 12),
                           child: Text(
-                            chat.text,
+                            chat.renderedText,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -447,6 +487,7 @@ class _EphemeralChat {
   final String id;
   final String text;
   final Color color;
+  final String authorName;
   final int anchorIndex;
   final double dx;
   final double dy;
@@ -456,6 +497,7 @@ class _EphemeralChat {
     required this.id,
     required this.text,
     required this.color,
+    required this.authorName,
     required this.anchorIndex,
     required this.dx,
     required this.dy,
@@ -469,10 +511,17 @@ class _EphemeralChat {
       id: id,
       text: text,
       color: color,
+      authorName: authorName,
       anchorIndex: anchorIndex,
       dx: dx,
       dy: dy,
       visible: visible ?? this.visible,
     );
+  }
+
+  String get renderedText {
+    final name = authorName.trim();
+    if (name.isEmpty) return text;
+    return '($name) $text';
   }
 }

@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import 'api_config.dart';
+import '../auth/bff_auth_service.dart';
 
 class DamtaCommunityMessage {
   final String id;
   final String text;
   final Color color;
+  final String authorName;
   /// 서버 수신 시각(ms). 세션 시작 이전 메시지 필터에 사용합니다.
   final int tsMs;
 
@@ -16,6 +18,7 @@ class DamtaCommunityMessage {
     required this.id,
     required this.text,
     required this.color,
+    required this.authorName,
     required this.tsMs,
   });
 }
@@ -28,6 +31,15 @@ class DamtaCommunityApiService {
         ? ApiConfig.baseUrl.substring(0, ApiConfig.baseUrl.length - 1)
         : ApiConfig.baseUrl;
     return Uri.parse('$base$path');
+  }
+
+  Future<Map<String, String>?> _authHeaders() async {
+    final token = await BffAuthService.instance.getValidAccessToken();
+    if (token == null || token.isEmpty) return null;
+    return {
+      'Authorization': 'Bearer $token',
+      'Accept': 'application/json',
+    };
   }
 
   static Color _parseColor(String? hex) {
@@ -52,10 +64,12 @@ class DamtaCommunityApiService {
   Future<List<DamtaCommunityMessage>?> fetchMessages() async {
     if (!ApiConfig.isConfigured) return null;
     try {
+      final headers = await _authHeaders();
+      if (headers == null) return null;
       final res = await http
           .get(
             _uri('/v1/community/damta/messages'),
-            headers: {'Accept': 'application/json'},
+            headers: headers,
           )
           .timeout(const Duration(seconds: 12));
       if (res.statusCode != 200) return null;
@@ -68,12 +82,14 @@ class DamtaCommunityApiService {
         final id = e['id']?.toString();
         final text = e['text']?.toString();
         if (id == null || text == null) continue;
+        final authorName = e['authorName']?.toString().trim();
         final ts = e['ts'];
         final tsMs = ts is num ? ts.toInt() : 0;
         out.add(DamtaCommunityMessage(
           id: id,
           text: text,
           color: _parseColor(e['color']?.toString()),
+          authorName: (authorName == null || authorName.isEmpty) ? '익명' : authorName,
           tsMs: tsMs,
         ));
       }
@@ -86,19 +102,24 @@ class DamtaCommunityApiService {
   Future<DamtaCommunityMessage?> postMessage({
     required String text,
     required Color color,
+    String? authorName,
   }) async {
     if (!ApiConfig.isConfigured) return null;
     try {
+      final headers = await _authHeaders();
+      if (headers == null) return null;
       final res = await http
           .post(
             _uri('/v1/community/damta/messages'),
             headers: {
+              ...headers,
               'Content-Type': 'application/json',
-              'Accept': 'application/json',
             },
             body: jsonEncode({
               'text': text,
               'color': colorToHex(color),
+              if (authorName != null && authorName.trim().isNotEmpty)
+                'authorName': authorName.trim(),
             }),
           )
           .timeout(const Duration(seconds: 12));
@@ -109,12 +130,16 @@ class DamtaCommunityApiService {
       final id = item['id']?.toString();
       final t = item['text']?.toString();
       if (id == null || t == null) return null;
+      final authorFromServer = item['authorName']?.toString().trim();
       final ts = item['ts'];
       final tsMs = ts is num ? ts.toInt() : DateTime.now().millisecondsSinceEpoch;
       return DamtaCommunityMessage(
         id: id,
         text: t,
         color: _parseColor(item['color']?.toString()),
+        authorName: (authorFromServer == null || authorFromServer.isEmpty)
+            ? '익명'
+            : authorFromServer,
         tsMs: tsMs,
       );
     } catch (_) {
