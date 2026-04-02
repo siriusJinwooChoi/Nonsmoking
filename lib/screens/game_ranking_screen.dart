@@ -155,111 +155,119 @@ class _GameRankingScreenState extends State<GameRankingScreen> {
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator(color: AppTheme.primary))
-          : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Text(_error!, textAlign: TextAlign.center),
-                  ),
-                )
-              : DefaultTabController(
-                  length: 4,
-                  child: Column(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
-                        child: Text(
-                          '서버에 동기화된 최고 기록 기준 실시간 랭킹입니다.',
-                          style: AppTheme.bodyMedium.copyWith(
-                            color: AppTheme.textMuted,
-                            fontSize: 12,
+      body: SafeArea(
+        child: _loading
+            ? const Center(child: CircularProgressIndicator(color: AppTheme.primary))
+            : _error != null
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(_error!, textAlign: TextAlign.center),
+                    ),
+                  )
+                : DefaultTabController(
+                    length: 4,
+                    child: Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+                          child: Text(
+                            '서버에 동기화된 최고 기록 기준 실시간 랭킹입니다.',
+                            style: AppTheme.bodyMedium.copyWith(
+                              color: AppTheme.textMuted,
+                              fontSize: 12,
+                            ),
                           ),
                         ),
-                      ),
-                      Container(
-                        margin: const EdgeInsets.symmetric(horizontal: 16),
-                        decoration: BoxDecoration(
-                          color: AppTheme.surfaceCard,
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: AppTheme.cardShadowSubtle,
+                        Container(
+                          margin: const EdgeInsets.symmetric(horizontal: 16),
+                          decoration: BoxDecoration(
+                            color: AppTheme.surfaceCard,
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: AppTheme.cardShadowSubtle,
+                          ),
+                          child: TabBar(
+                            labelPadding: const EdgeInsets.symmetric(vertical: 8),
+                            indicatorSize: TabBarIndicatorSize.tab,
+                            tabs: const [
+                              Tab(text: '1~30'),
+                              Tab(text: '단어'),
+                              Tab(text: '낙하'),
+                              Tab(text: '타이밍'),
+                            ],
+                          ),
                         ),
-                        child: TabBar(
-                          labelPadding: const EdgeInsets.symmetric(vertical: 8),
-                          indicatorSize: TabBarIndicatorSize.tab,
-                          tabs: const [
-                            Tab(text: '1~30'),
-                            Tab(text: '단어'),
-                            Tab(text: '낙하'),
-                            Tab(text: '타이밍'),
-                          ],
+                        const SizedBox(height: 8),
+                        Expanded(
+                          child: TabBarView(
+                            children: [
+                              _rankingTab(
+                                title: '1부터 30까지 빠르게!',
+                                subtitle: '최단 기록(초) 기준',
+                                rows: _seqList,
+                                uid: uid,
+                                myRank: _mySeqRank,
+                                myValueText: _mySeqSec != null &&
+                                        _mySeqSec!.isFinite
+                                    ? '${_mySeqSec!.toStringAsFixed(2)}초'
+                                    : '기록 없음',
+                                showMyRankBanner: _mySeqRank != null &&
+                                    !_inTop10(_seqList, uid),
+                                valueLabel: (r) {
+                                  final v =
+                                      r['number_sequence_best_seconds'];
+                                  if (v == null) return '-';
+                                  return '${(v as num).toDouble().toStringAsFixed(2)}초';
+                                },
+                              ),
+                              _rankingTab(
+                                title: '단어맞추기',
+                                subtitle: '최고 레벨 기준',
+                                rows: _wordList,
+                                uid: uid,
+                                myRank: _myWordRank,
+                                myValueText: 'Lv.${_myWordLevel ?? 1}',
+                                showMyRankBanner: _myWordRank != null &&
+                                    !_inTop10(_wordList, uid),
+                                valueLabel: (r) {
+                                  return 'Lv.${(r['word_game_level'] as num).toInt()}';
+                                },
+                              ),
+                              _rankingTab(
+                                title: '낙하 맞추기',
+                                subtitle: '최고 점수 기준',
+                                rows: _catchList,
+                                uid: uid,
+                                myRank: _myCatchRank,
+                                myValueText: '${_myCatchScore ?? 0}점',
+                                showMyRankBanner: _myCatchRank != null &&
+                                    !_inTop10(_catchList, uid),
+                                valueLabel: (r) {
+                                  final v = r['cigarette_catch_best_score'];
+                                  return '${(v as num?)?.toInt() ?? 0}점';
+                                },
+                              ),
+                              _rankingTab(
+                                title: '완벽 타이밍',
+                                subtitle: '최고 점수 기준',
+                                rows: _timingList,
+                                uid: uid,
+                                myRank: _myTimingRank,
+                                myValueText: '${_myTimingScore ?? 0}점',
+                                showMyRankBanner: _myTimingRank != null &&
+                                    !_inTop10(_timingList, uid),
+                                valueLabel: (r) {
+                                  final v = r['timing_tap_best_score'];
+                                  return '${(v as num?)?.toInt() ?? 0}점';
+                                },
+                              ),
+                            ],
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      Expanded(
-                        child: TabBarView(
-                          children: [
-                            _rankingTab(
-                              title: '1부터 30까지 빠르게!',
-                              subtitle: '최단 기록(초) 기준',
-                              rows: _seqList,
-                              uid: uid,
-                              myRank: _mySeqRank,
-                              myValueText: _mySeqSec != null && _mySeqSec!.isFinite
-                                  ? '${_mySeqSec!.toStringAsFixed(2)}초'
-                                  : '기록 없음',
-                              showMyRankBanner: _mySeqRank != null && !_inTop10(_seqList, uid),
-                              valueLabel: (r) {
-                                final v = r['number_sequence_best_seconds'];
-                                if (v == null) return '-';
-                                return '${(v as num).toDouble().toStringAsFixed(2)}초';
-                              },
-                            ),
-                            _rankingTab(
-                              title: '단어맞추기',
-                              subtitle: '최고 레벨 기준',
-                              rows: _wordList,
-                              uid: uid,
-                              myRank: _myWordRank,
-                              myValueText: 'Lv.${_myWordLevel ?? 1}',
-                              showMyRankBanner: _myWordRank != null && !_inTop10(_wordList, uid),
-                              valueLabel: (r) {
-                                return 'Lv.${(r['word_game_level'] as num).toInt()}';
-                              },
-                            ),
-                            _rankingTab(
-                              title: '낙하 맞추기',
-                              subtitle: '최고 점수 기준',
-                              rows: _catchList,
-                              uid: uid,
-                              myRank: _myCatchRank,
-                              myValueText: '${_myCatchScore ?? 0}점',
-                              showMyRankBanner: _myCatchRank != null && !_inTop10(_catchList, uid),
-                              valueLabel: (r) {
-                                final v = r['cigarette_catch_best_score'];
-                                return '${(v as num?)?.toInt() ?? 0}점';
-                              },
-                            ),
-                            _rankingTab(
-                              title: '완벽 타이밍',
-                              subtitle: '최고 점수 기준',
-                              rows: _timingList,
-                              uid: uid,
-                              myRank: _myTimingRank,
-                              myValueText: '${_myTimingScore ?? 0}점',
-                              showMyRankBanner: _myTimingRank != null && !_inTop10(_timingList, uid),
-                              valueLabel: (r) {
-                                final v = r['timing_tap_best_score'];
-                                return '${(v as num?)?.toInt() ?? 0}점';
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
+      ),
     );
   }
 
@@ -273,11 +281,12 @@ class _GameRankingScreenState extends State<GameRankingScreen> {
     required String myValueText,
     required bool showMyRankBanner,
   }) {
+    final bottomPad = MediaQuery.of(context).padding.bottom;
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        padding: EdgeInsets.fromLTRB(16, 8, 16, 24 + bottomPad),
         children: [
           Text(title, style: AppTheme.titleMedium.copyWith(color: AppTheme.textPrimary)),
           const SizedBox(height: 2),

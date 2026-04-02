@@ -24,11 +24,16 @@ class _Screen4StartDateState extends State<Screen4StartDate> {
 
   Future<void> _pickDate(BuildContext context) async {
     final now = DateTime.now();
+    final lastAllowed = now.add(const Duration(days: 30));
     final picked = await showDatePicker(
       context: context,
       initialDate: now,
       firstDate: DateTime(now.year - 5),
-      lastDate: now,
+      lastDate: DateTime(
+        lastAllowed.year,
+        lastAllowed.month,
+        lastAllowed.day,
+      ),
     );
     if (picked != null) {
       setState(() => selectedDate = picked);
