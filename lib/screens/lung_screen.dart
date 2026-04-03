@@ -294,7 +294,7 @@ class _LungScreenState extends State<LungScreen> with TickerProviderStateMixin {
                 child: ElevatedButton.icon(
                   onPressed: _confirmSmokeAndDamage,
                   icon: const Icon(Icons.waves_rounded, size: 20),
-                  label: const Text('흔들림 기록 (-10%)'),
+                  label: const Text('흡연 시도 (-10%)'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.error,
                     foregroundColor: Colors.white,

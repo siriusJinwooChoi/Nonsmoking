@@ -340,19 +340,12 @@ class _WordGameScreenState extends State<WordGameScreen> {
     );
   }
 
-  /// 5판마다 한 번씩만 광고 노출 후 다음 레벨로
+  /// 5판마다: 일일 코인 수령(동기화) 후 광고 → 그 외에는 바로 다음 레벨
   void _goToNextLevel() {
     final shouldShowAd = _level % 5 == 0;
     if (shouldShowAd) {
       if (_isLevelAdShowing) return;
-      _isLevelAdShowing = true;
-      AdManager.showAd(onAdClosed: () async {
-        if (!mounted) return;
-        _isLevelAdShowing = false;
-        setState(() => _level = (_level + 1).clamp(1, 100));
-        await _saveLevel(tryDailyReward: true);
-        if (mounted) _buildPuzzle();
-      });
+      unawaited(_goToNextLevelRewardThenAd());
     } else {
       setState(() => _level = (_level + 1).clamp(1, 100));
       unawaited(() async {
@@ -360,6 +353,18 @@ class _WordGameScreenState extends State<WordGameScreen> {
         if (mounted) _buildPuzzle();
       }());
     }
+  }
+
+  Future<void> _goToNextLevelRewardThenAd() async {
+    setState(() => _level = (_level + 1).clamp(1, 100));
+    await _saveLevel(tryDailyReward: true);
+    if (!mounted) return;
+    if (_isLevelAdShowing) return;
+    _isLevelAdShowing = true;
+    AdManager.showAd(onAdClosed: () {
+      _isLevelAdShowing = false;
+      if (mounted) _buildPuzzle();
+    });
   }
 
   @override

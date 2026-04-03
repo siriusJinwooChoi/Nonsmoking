@@ -1275,14 +1275,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               ],
             ),
             const SizedBox(height: 10),
-            // 흔들림 기록 / 리셋
+            // 흡연 시도 / 리셋
             Row(
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: _onSmokedTap,
                     icon: const Icon(Icons.waves_rounded, size: 16),
-                    label: const Text('흔들림 기록', style: TextStyle(fontSize: 12)),
+                    label: const Text('흡연 시도', style: TextStyle(fontSize: 12)),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: AppTheme.error,
                       side: const BorderSide(color: AppTheme.error),

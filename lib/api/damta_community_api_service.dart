@@ -61,6 +61,32 @@ class DamtaCommunityApiService {
     return '#$r$g$b'.toUpperCase();
   }
 
+  /// 담타 화면 하트비트. 성공 시 서버가 집계한 동시 접속자 수(대략).
+  Future<int?> postPresence() async {
+    if (!ApiConfig.isConfigured) return null;
+    try {
+      final headers = await _authHeaders();
+      if (headers == null) return null;
+      final res = await http
+          .post(
+            _uri('/v1/community/damta/presence'),
+            headers: {
+              ...headers,
+              'Content-Type': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 12));
+      if (res.statusCode != 200) return null;
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      if (body['ok'] != true) return null;
+      final c = body['count'];
+      if (c is num) return c.toInt();
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<List<DamtaCommunityMessage>?> fetchMessages() async {
     if (!ApiConfig.isConfigured) return null;
     try {

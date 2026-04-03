@@ -6,6 +6,7 @@ import '../theme/app_theme.dart';
 import 'attendance_screen.dart';
 import '../widgets/banner_ad_bar.dart';
 import '../api/game_reward_helper.dart';
+import '../api/game_stats_prefs.dart';
 import '../api/game_sync_helper.dart';
 
 /// 완벽 타이밍: 움직이는 표시가 중앙에 올 때 탭하는 타이밍 게임
@@ -143,6 +144,16 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
       _startRound();
       return;
     }
+    final sessionScore = _score;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(GameStatsPrefsKeys.timingTapLastSessionScore, sessionScore);
+    if (!mounted) return;
+    await syncStatsThenClaimGameRewardWithSnackBar(
+      context,
+      game: 'timing_tap',
+      proof: {'sessionScore': sessionScore},
+    );
+    if (!mounted) return;
     _resetGame();
     setState(() {
       _lastResult = '실패 후 재시작! 다시 도전해보세요.';
@@ -201,13 +212,7 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
       _bestScore = _score;
     });
     unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
-    if (mounted) {
-      unawaited(syncStatsThenClaimGameRewardWithSnackBar(
-        context,
-        game: 'timing_tap',
-        proof: {'bestScore': _score},
-      ));
-    }
+    unawaited(syncGameStatsToApiIfAvailable());
   }
 
   void _resetGame() {

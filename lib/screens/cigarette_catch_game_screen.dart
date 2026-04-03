@@ -9,6 +9,7 @@ import '../ad_manager.dart';
 import '../supabase/supabase_sync_service.dart';
 import 'attendance_screen.dart';
 import '../api/game_reward_helper.dart';
+import '../api/game_stats_prefs.dart';
 import '../api/game_sync_helper.dart';
 
 /// 낙하 맞추기: 떨어지는 목표 2개를 시간차로 맞추는 게임. 1~100단계, 단계별 속도 증가, 점수·최종단계 기록.
@@ -103,13 +104,7 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
     await prefs.setInt(_bestScoreKey, _score);
     if (mounted) setState(() => _bestScore = _score);
     unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
-    if (mounted) {
-      unawaited(syncStatsThenClaimGameRewardWithSnackBar(
-        context,
-        game: 'cigarette_catch',
-        proof: {'bestScore': _score},
-      ));
-    }
+    unawaited(syncGameStatsToApiIfAvailable());
   }
 
   void _startGame() {
@@ -298,10 +293,27 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
 
   Future<void> _finalizeGameOver() async {
     _timer?.cancel();
+    final sessionScore = _score;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(
+      GameStatsPrefsKeys.cigaretteCatchLastSessionScore,
+      sessionScore,
+    );
     await _saveBest();
-    await _saveBestScore();
+    final storedBest = prefs.getInt(_bestScoreKey) ?? 0;
+    if (_score > storedBest) {
+      await prefs.setInt(_bestScoreKey, _score);
+      if (mounted) setState(() => _bestScore = _score);
+    }
     await SupabaseSyncService.pushLocalToRemoteIfEligible();
-    unawaitedSyncGameStatsToApiIfAvailable();
+    await syncGameStatsToApiIfAvailable();
+    if (mounted) {
+      await syncStatsThenClaimGameRewardWithSnackBar(
+        context,
+        game: 'cigarette_catch',
+        proof: {'sessionScore': sessionScore},
+      );
+    }
     if (!mounted) return;
     setState(() => _gameOver = true);
     if (_isGameOverAdShowing) return;

@@ -224,7 +224,7 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('수집에 성공했습니다!'),
-          duration: const Duration(seconds: 2),
+          duration: const Duration(seconds: 3),
           behavior: SnackBarBehavior.floating,
           backgroundColor: AppTheme.primaryDark,
         ),

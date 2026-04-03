@@ -57,10 +57,13 @@ class GamesApiService {
   Future<bool> syncStats({
     required String accessToken,
     double? numberSequenceBestSeconds,
+    double? numberSequenceLastClearSeconds,
     required int wordGameLevel,
     required int timingTapBestScore,
+    int? timingTapLastSessionScore,
     required int cigaretteCatchBestStage,
     required int cigaretteCatchBestScore,
+    int? cigaretteCatchLastSessionScore,
   }) async {
     if (!ApiConfig.isConfigured) return false;
     final res = await http.put(
@@ -72,10 +75,16 @@ class GamesApiService {
       },
       body: jsonEncode({
         'numberSequenceBestSeconds': numberSequenceBestSeconds,
+        if (numberSequenceLastClearSeconds != null)
+          'numberSequenceLastClearSeconds': numberSequenceLastClearSeconds,
         'wordGameLevel': wordGameLevel,
         'timingTapBestScore': timingTapBestScore,
+        if (timingTapLastSessionScore != null)
+          'timingTapLastSessionScore': timingTapLastSessionScore,
         'cigaretteCatchBestStage': cigaretteCatchBestStage,
         'cigaretteCatchBestScore': cigaretteCatchBestScore,
+        if (cigaretteCatchLastSessionScore != null)
+          'cigaretteCatchLastSessionScore': cigaretteCatchLastSessionScore,
       }),
     );
     return res.statusCode >= 200 && res.statusCode < 300;

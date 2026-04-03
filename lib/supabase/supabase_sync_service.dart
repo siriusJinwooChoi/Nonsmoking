@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/api_config.dart';
+import '../api/game_stats_prefs.dart';
 import '../api/remote_assets.dart';
 import '../auth/bff_auth_service.dart';
 import '../notifications/daily_reminder_worker.dart' as dw;
@@ -247,7 +248,7 @@ abstract final class SupabaseSyncService {
           prefs.getStringList(_PrefsKeys.collectedCigaretteAssets) ?? <String>[],
         ),
       },
-      'game_stats': {
+      'game_stats': <String, dynamic>{
         'number_sequence_best_seconds': bestSec,
         'word_game_level': prefs.getInt(_PrefsKeys.wordGameLevel) ?? 1,
         'timing_tap_best_score': prefs.getInt(_PrefsKeys.timingTapBestScore) ?? 0,
@@ -255,6 +256,16 @@ abstract final class SupabaseSyncService {
             prefs.getInt(_PrefsKeys.cigaretteCatchBestStage) ?? 0,
         'cigarette_catch_best_score':
             prefs.getInt(_PrefsKeys.cigaretteCatchBestScore) ?? 0,
+        if (prefs.containsKey(GameStatsPrefsKeys.numberSequenceLastClearSeconds))
+          'number_sequence_last_clear_seconds': prefs.getDouble(
+            GameStatsPrefsKeys.numberSequenceLastClearSeconds,
+          ),
+        if (prefs.containsKey(GameStatsPrefsKeys.timingTapLastSessionScore))
+          'timing_tap_last_session_score':
+              prefs.getInt(GameStatsPrefsKeys.timingTapLastSessionScore),
+        if (prefs.containsKey(GameStatsPrefsKeys.cigaretteCatchLastSessionScore))
+          'cigarette_catch_last_session_score':
+              prefs.getInt(GameStatsPrefsKeys.cigaretteCatchLastSessionScore),
       },
     };
 
@@ -620,5 +631,35 @@ abstract final class SupabaseSyncService {
     final mergedCatchScore =
         remoteCatchScore > localCatchScore ? remoteCatchScore : localCatchScore;
     await prefs.setInt(_PrefsKeys.cigaretteCatchBestScore, mergedCatchScore);
+
+    final lastClear = row['number_sequence_last_clear_seconds'];
+    if (lastClear != null) {
+      await prefs.setDouble(
+        GameStatsPrefsKeys.numberSequenceLastClearSeconds,
+        (lastClear as num).toDouble(),
+      );
+    } else {
+      await prefs.remove(GameStatsPrefsKeys.numberSequenceLastClearSeconds);
+    }
+
+    final tapSess = row['timing_tap_last_session_score'];
+    if (tapSess != null) {
+      await prefs.setInt(
+        GameStatsPrefsKeys.timingTapLastSessionScore,
+        (tapSess as num).toInt(),
+      );
+    } else {
+      await prefs.remove(GameStatsPrefsKeys.timingTapLastSessionScore);
+    }
+
+    final catchSess = row['cigarette_catch_last_session_score'];
+    if (catchSess != null) {
+      await prefs.setInt(
+        GameStatsPrefsKeys.cigaretteCatchLastSessionScore,
+        (catchSess as num).toInt(),
+      );
+    } else {
+      await prefs.remove(GameStatsPrefsKeys.cigaretteCatchLastSessionScore);
+    }
   }
 }

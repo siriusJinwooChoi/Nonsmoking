@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:lottie/lottie.dart';
 import 'dart:async';
 import 'dart:math';
@@ -43,6 +44,8 @@ class _SmokingScreenState extends State<SmokingScreen>
   ];
   static const int _burnSecondsPerCigarette = 300; // 5분
   double _remainingSeconds = _burnSecondsPerCigarette.toDouble();
+  /// 서버 하트비트로 받은 동시 접속(대략). 미수신 시 null.
+  int? _damtaPresenceCount;
 
   @override
   void initState() {
@@ -134,7 +137,12 @@ class _SmokingScreenState extends State<SmokingScreen>
 
   Future<void> _pollDamtaInbox() async {
     final list = await _damtaApi.fetchMessages();
-    if (!mounted || list == null) return;
+    final presence = await _damtaApi.postPresence();
+    if (!mounted) return;
+    if (presence != null) {
+      setState(() => _damtaPresenceCount = presence);
+    }
+    if (list == null) return;
     for (final m in list) {
       if (_seenDamtaIds.contains(m.id)) continue;
       if (m.tsMs > 0 && m.tsMs < _damtaSessionStartedMs - 5000) {
@@ -343,11 +351,16 @@ class _SmokingScreenState extends State<SmokingScreen>
                     ),
                   ),
 
-                  // 메인 Lottie 애니메이션 (서버 static)
-                  GestureDetector(
-                    onTapDown: (_) => _setFastBurnPressed(true),
-                    onTapUp: (_) => _setFastBurnPressed(false),
-                    onTapCancel: () => _setFastBurnPressed(false),
+                  // 메인 Lottie (말풍선이 위에 있으면 터치를 가로채므로 말풍선은 IgnorePointer)
+                  Listener(
+                    behavior: HitTestBehavior.opaque,
+                    onPointerDown: (_) {
+                      if (!_isBurning) return;
+                      HapticFeedback.mediumImpact();
+                      _setFastBurnPressed(true);
+                    },
+                    onPointerUp: (_) => _setFastBurnPressed(false),
+                    onPointerCancel: (_) => _setFastBurnPressed(false),
                     child: ApiConfig.isConfigured
                         ? Lottie.network(
                             RemoteAssets.urlForKey('lottie/Cig.json').toString(),
@@ -360,30 +373,36 @@ class _SmokingScreenState extends State<SmokingScreen>
                           )
                         : Icon(Icons.movie_filter_rounded, size: 120, color: Colors.grey.shade600),
                   ),
-                  ..._ephemeralChats.map(
-                    (chat) => Align(
-                      alignment: _chatAnchors[chat.anchorIndex],
-                      child: AnimatedOpacity(
-                        duration: const Duration(milliseconds: 1200),
-                        curve: Curves.easeOut,
-                        opacity: chat.visible ? 1 : 0,
-                        child: Transform.translate(
-                          offset: Offset(chat.dx, chat.visible ? chat.dy : chat.dy - 12),
-                          child: Text(
-                            chat.renderedText,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: chat.color,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w800,
-                              shadows: const [
-                                Shadow(color: Colors.white, blurRadius: 6),
-                              ],
+                  IgnorePointer(
+                    ignoring: true,
+                    child: Stack(
+                      children: [
+                        for (final chat in _ephemeralChats)
+                          Align(
+                            alignment: _chatAnchors[chat.anchorIndex],
+                            child: AnimatedOpacity(
+                              duration: const Duration(milliseconds: 1200),
+                              curve: Curves.easeOut,
+                              opacity: chat.visible ? 1 : 0,
+                              child: Transform.translate(
+                                offset: Offset(chat.dx, chat.visible ? chat.dy : chat.dy - 12),
+                                child: Text(
+                                  chat.renderedText,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: chat.color,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w800,
+                                    shadows: const [
+                                      Shadow(color: Colors.white, blurRadius: 6),
+                                    ],
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
-                        ),
-                      ),
+                      ],
                     ),
                   ),
                   if (_isBurning)
@@ -459,6 +478,19 @@ class _SmokingScreenState extends State<SmokingScreen>
             ),
 
             // 하단 문구
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(
+                ApiConfig.isConfigured
+                    ? '지금 동시 접속자수 : ${_damtaPresenceCount ?? '-'}명'
+                    : '지금 동시 접속자수 : -명',
+                textAlign: TextAlign.center,
+                style: AppTheme.labelMedium.copyWith(
+                  color: AppTheme.textMuted,
+                  fontSize: 12,
+                ),
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.only(bottom: 16),
               child: Text(

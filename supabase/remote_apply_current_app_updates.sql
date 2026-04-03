@@ -150,3 +150,15 @@ grant execute on function public.refresh_game_leaderboard_daily(date) to service
 select public.refresh_game_leaderboard_daily();
 
 -- 자정 자동 갱신은 cron_optional_schedule_leaderboard.sql 참고 (pg_cron 확장 필요)
+
+-- ---------------------------------------------------------------------------
+-- game_stats: 일일 게임 보상(클리어·세션 종료 검증용 보조 컬럼)
+-- ---------------------------------------------------------------------------
+alter table public.game_stats
+  add column if not exists number_sequence_last_clear_seconds double precision;
+
+alter table public.game_stats
+  add column if not exists timing_tap_last_session_score int;
+
+alter table public.game_stats
+  add column if not exists cigarette_catch_last_session_score int;
