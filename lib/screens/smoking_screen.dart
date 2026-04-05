@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lottie/lottie.dart';
+import 'package:vibration/vibration.dart';
 import 'dart:async';
 import 'dart:math';
 import '../api/api_config.dart';
@@ -21,6 +22,9 @@ class _SmokingScreenState extends State<SmokingScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   Timer? _burnTimer;
+  Timer? _holdHapticTimer;
+  bool _canVibrate = false;
+  bool _canCustomAmplitude = false;
   bool _isBurning = false;
   bool _isFastBurn = false;
   final TextEditingController _chatController = TextEditingController();
@@ -52,6 +56,7 @@ class _SmokingScreenState extends State<SmokingScreen>
     super.initState();
     _controller = AnimationController(vsync: this, lowerBound: 0, upperBound: 1);
     _damtaSessionStartedMs = DateTime.now().millisecondsSinceEpoch;
+    unawaited(_initHaptics());
     unawaited(_loadMyDisplayName());
     if (ApiConfig.isConfigured) {
       _damtaPollTimer = Timer.periodic(const Duration(seconds: 2), (_) => _pollDamtaInbox());
@@ -79,6 +84,7 @@ class _SmokingScreenState extends State<SmokingScreen>
   void dispose() {
     _damtaPollTimer?.cancel();
     _burnTimer?.cancel();
+    _holdHapticTimer?.cancel();
     _chatController.dispose();
     _chatFocusNode.dispose();
     _controller.dispose();
@@ -116,6 +122,7 @@ class _SmokingScreenState extends State<SmokingScreen>
 
       if (nextRemaining <= 0) {
         timer.cancel();
+        _stopHoldHaptic();
         setState(() {
           _isBurning = false;
           _isFastBurn = false;
@@ -133,6 +140,56 @@ class _SmokingScreenState extends State<SmokingScreen>
     if (!_isBurning) return;
     if (_isFastBurn == pressed) return;
     setState(() => _isFastBurn = pressed);
+  }
+
+  Future<void> _initHaptics() async {
+    final hasVibrator = await Vibration.hasVibrator();
+    final hasAmplitude = await Vibration.hasAmplitudeControl();
+    if (!mounted) return;
+    _canVibrate = hasVibrator;
+    _canCustomAmplitude = hasAmplitude;
+  }
+
+  Future<void> _vibratePress() async {
+    if (_canVibrate) {
+      await Vibration.vibrate(
+        duration: 45,
+        amplitude: _canCustomAmplitude ? 220 : -1,
+      );
+      return;
+    }
+    HapticFeedback.heavyImpact();
+  }
+
+  Future<void> _vibrateHoldTick() async {
+    if (_canVibrate) {
+      await Vibration.vibrate(
+        duration: 24,
+        amplitude: _canCustomAmplitude ? 170 : -1,
+      );
+      return;
+    }
+    HapticFeedback.selectionClick();
+  }
+
+  void _startHoldHaptic() {
+    _holdHapticTimer?.cancel();
+    unawaited(_vibratePress());
+    _holdHapticTimer = Timer.periodic(const Duration(milliseconds: 220), (_) {
+      if (!mounted || !_isBurning || !_isFastBurn) {
+        _stopHoldHaptic();
+        return;
+      }
+      unawaited(_vibrateHoldTick());
+    });
+  }
+
+  void _stopHoldHaptic() {
+    _holdHapticTimer?.cancel();
+    _holdHapticTimer = null;
+    if (_canVibrate) {
+      unawaited(Vibration.cancel());
+    }
   }
 
   Future<void> _pollDamtaInbox() async {
@@ -356,11 +413,17 @@ class _SmokingScreenState extends State<SmokingScreen>
                     behavior: HitTestBehavior.opaque,
                     onPointerDown: (_) {
                       if (!_isBurning) return;
-                      HapticFeedback.mediumImpact();
                       _setFastBurnPressed(true);
+                      _startHoldHaptic();
                     },
-                    onPointerUp: (_) => _setFastBurnPressed(false),
-                    onPointerCancel: (_) => _setFastBurnPressed(false),
+                    onPointerUp: (_) {
+                      _setFastBurnPressed(false);
+                      _stopHoldHaptic();
+                    },
+                    onPointerCancel: (_) {
+                      _setFastBurnPressed(false);
+                      _stopHoldHaptic();
+                    },
                     child: ApiConfig.isConfigured
                         ? Lottie.network(
                             RemoteAssets.urlForKey('lottie/Cig.json').toString(),

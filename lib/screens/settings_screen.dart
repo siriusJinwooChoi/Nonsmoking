@@ -236,7 +236,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           style: AppTheme.titleMedium.copyWith(fontSize: 16, color: AppTheme.textPrimary),
         ),
         subtitle: const Text(
-          '저녁 6시까지 미출석 시 10분마다 알림',
+          '저녁 6시까지 미출석 시 1시간마다 알림',
           style: AppTheme.bodyMedium,
         ),
         trailing: Switch(

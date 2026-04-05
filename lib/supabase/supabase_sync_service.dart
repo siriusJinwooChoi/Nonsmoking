@@ -10,6 +10,7 @@ import '../api/game_stats_prefs.dart';
 import '../api/remote_assets.dart';
 import '../auth/bff_auth_service.dart';
 import '../notifications/daily_reminder_worker.dart' as dw;
+import '../data/dream_car_prefs.dart';
 import '../screens/attendance_screen.dart' as att;
 import 'supabase_config.dart';
 
@@ -239,6 +240,10 @@ abstract final class SupabaseSyncService {
             DateTime.now().millisecondsSinceEpoch,
         'saved_trees_count': prefs.getInt(_PrefsKeys.savedTreesCount) ?? 0,
       },
+      'dream_car_progress': {
+        'dream_car_brand': prefs.getString(DreamCarPrefsKeys.brand),
+        'dream_car_stage': prefs.getInt(DreamCarPrefsKeys.stage) ?? 1,
+      },
       'cigarette_collection': {
         'last_collection_window': prefs.getString(_PrefsKeys.lastCollectionWindow),
         'session_window': prefs.getString(_PrefsKeys.sessionWindow),
@@ -309,6 +314,10 @@ abstract final class SupabaseSyncService {
     );
     await _applyTreeProgress(
       map['tree_progress'] as Map<String, dynamic>?,
+      prefs,
+    );
+    await _applyDreamCarProgress(
+      map['dream_car_progress'] as Map<String, dynamic>?,
       prefs,
     );
     await _applyCigaretteCollection(
@@ -550,6 +559,24 @@ abstract final class SupabaseSyncService {
     await prefs.setInt(
       _PrefsKeys.savedTreesCount,
       (row['saved_trees_count'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  static Future<void> _applyDreamCarProgress(
+    Map<String, dynamic>? row,
+    SharedPreferences prefs,
+  ) async {
+    if (row == null) return;
+    final b = row['dream_car_brand'] as String?;
+    if (b == 'hyundai' || b == 'kia') {
+      await prefs.setString(DreamCarPrefsKeys.brand, b!);
+    } else {
+      await prefs.remove(DreamCarPrefsKeys.brand);
+    }
+    final st = (row['dream_car_stage'] as num?)?.toInt() ?? 1;
+    await prefs.setInt(
+      DreamCarPrefsKeys.stage,
+      st.clamp(1, 10),
     );
   }
 

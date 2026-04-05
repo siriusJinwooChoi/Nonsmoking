@@ -738,7 +738,7 @@ Future<bool> getInactivityNotificationEnabled() async {
   return prefs.getBool(kInactivityNotificationEnabledKey) ?? true;
 }
 
-// ─── 출석체크 알림 (저녁 6시 이후 미출석 시 10분마다) ───────────────────────
+// ─── 출석체크 알림 (저녁 6시 이후 미출석 시 1시간마다) ───────────────────────
 
 String _todayString() {
   final n = DateTime.now();
@@ -791,9 +791,9 @@ Future<bool> _handleAttendanceReminder(Map<String, dynamic>? inputData) async {
   return true;
 }
 
-/// 10분 후 출석 알림 1회 예약 (작업 실행 시 다시 10분 후 예약하여 반복)
+/// 1시간 후 출석 알림 1회 예약 (작업 실행 시 다시 1시간 후 예약하여 반복)
 Future<void> scheduleAttendanceReminderOnce() async {
-  const delay = Duration(minutes: 10);
+  const delay = Duration(hours: 1);
   await Workmanager().registerOneOffTask(
     kAttendanceReminderUniqueWork,
     kAttendanceReminderTaskName,
@@ -834,7 +834,7 @@ Future<bool> getAttendanceReminderEnabled() async {
   return prefs.getBool(kAttendanceReminderEnabledKey) ?? true;
 }
 
-/// 앱 열릴 때: 18시 이후이고 오늘 미출석이면 10분 후 출석 알림 예약
+/// 앱 열릴 때: 18시 이후이고 오늘 미출석이면 1시간 후 출석 알림 예약
 Future<void> scheduleAttendanceReminderIfNeeded() async {
   final enabled = await getAttendanceReminderEnabled();
   if (!enabled) return;

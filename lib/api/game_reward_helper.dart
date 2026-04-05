@@ -30,7 +30,8 @@ Future<GameRewardClaimResult?> claimGameDailyRewardIfAvailable({
       proof: proof,
     );
     if (r != null) {
-      await setGoldenCoins(r.coins);
+      // 코인 저장/원격 push를 기다리지 않고 즉시 반환해 UI 반응 지연을 줄입니다.
+      unawaited(setGoldenCoins(r.coins));
       unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
     }
     return r;
@@ -44,11 +45,43 @@ Future<void> syncStatsThenClaimGameRewardWithSnackBar(
   required String game,
   Map<String, dynamic>? proof,
 }) async {
+  final messenger = ScaffoldMessenger.of(context);
+  messenger.hideCurrentSnackBar();
+  messenger.showSnackBar(
+    const SnackBar(
+      duration: Duration(seconds: 20),
+      content: Text('보상 확인 중...'),
+    ),
+  );
+
   final r = await claimGameDailyRewardIfAvailable(game: game, proof: proof);
-  if (!context.mounted || r == null) return;
-  if (r.granted > 0) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('게임 보상! 금연코인 +${r.granted}')),
+  if (!context.mounted) return;
+  messenger.hideCurrentSnackBar();
+
+  if (r == null) {
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('보상 확인이 지연되고 있어요. 잠시 후 다시 확인해 주세요.'),
+        duration: Duration(seconds: 2),
+      ),
     );
+    return;
   }
+
+  if (r.granted > 0) {
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text('보상 확정! 금연코인 +${r.granted} (보유 ${r.coins})'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+    return;
+  }
+
+  messenger.showSnackBar(
+    SnackBar(
+      content: Text('오늘은 이미 수령했어요. 현재 보유 코인 ${r.coins}'),
+      duration: const Duration(seconds: 2),
+    ),
+  );
 }

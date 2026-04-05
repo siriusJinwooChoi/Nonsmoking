@@ -26,7 +26,7 @@ import 'screens/intro/screen9_summary.dart';
 // 주요 앱 화면
 import 'screens/main_screen.dart';
 import 'screens/game_menu_screen.dart';
-import 'screens/tree_screen.dart';
+import 'screens/growth_hub_screen.dart';
 import 'screens/lung_smoking_menu_screen.dart';
 import 'screens/cigarette_collect_screen.dart';
 import 'screens/health_screen.dart';
@@ -559,7 +559,7 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
         pricePerPack: widget.pricePerPack,
       ),
       const GameMenuScreen(),
-      const TreeScreen(),
+      const GrowthHubScreen(),
       const LungSmokingMenuScreen(),
       const CigaretteCollectScreen(),
       const HealthScreen(),
@@ -586,7 +586,7 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
               children: [
                 _NavItem(icon: Icons.home_rounded, label: '메인', index: 0, current: currentIndex, onTap: _showAdThenNavigate),
                 _NavItem(icon: Icons.sports_esports_rounded, label: '게임', index: 1, current: currentIndex, onTap: _showAdThenNavigate),
-                _NavItem(icon: Icons.eco_rounded, label: '나무', index: 2, current: currentIndex, onTap: _showAdThenNavigate),
+                _NavItem(icon: Icons.auto_awesome_rounded, label: '성장시키기', index: 2, current: currentIndex, onTap: _showAdThenNavigate),
                 _NavItem(icon: Icons.favorite_rounded, label: '폐·건강', index: 3, current: currentIndex, onTap: _showAdThenNavigate),
                 _NavItem(icon: Icons.inventory_2_rounded, label: '수집·도감', index: 4, current: currentIndex, onTap: _showAdThenNavigate),
                 _NavItem(icon: Icons.favorite_border_rounded, label: '건강', index: 5, current: currentIndex, onTap: _showAdThenNavigate),
