@@ -280,7 +280,7 @@ abstract final class SupabaseSyncService {
       body: jsonEncode(body),
     );
     if (res.statusCode != 200 && kDebugMode) {
-      debugPrint('sync push failed ${res.statusCode} ${res.body}');
+      debugPrint('sync push failed: HTTP ${res.statusCode}');
     }
   }
 

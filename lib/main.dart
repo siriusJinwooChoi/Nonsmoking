@@ -506,10 +506,6 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
     _clickCount++;
     await _saveClickCount();
 
-    if (kDebugMode) {
-      debugPrint('menu click=$_clickCount, adLoaded=${_interstitialAd != null}');
-    }
-
     // ✅ 20번마다 광고
     if (_clickCount % _showEvery == 0 && _interstitialAd != null) {
       _interstitialAd!.fullScreenContentCallback = FullScreenContentCallback(

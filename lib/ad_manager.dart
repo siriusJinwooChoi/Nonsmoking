@@ -5,13 +5,7 @@ import 'package:google_mobile_ads/google_mobile_ads.dart';
 class AdManager {
   AdManager._(); // 인스턴스화 방지
 
-  // NOTE: 개발중에는 테스트 광고 ID를 사용하세요.
-  // 실제 배포 시 자신의 Interstitial Ad Unit ID 로 변경하세요.
-  // 앱 ID (ca-app-pub-...~...) 와는 다른 값입니다.
-  // 테스트 interstitial id: Android: ca-app-pub-3940256099942544/1033173712
-
-  static String interstitialUnitId ='ca-app-pub-2294312189421130/4538637779'; //실제 앱 광고 ID
-  //static String interstitialUnitId ='ca-app-pub-3940256099942544/1033173712'; //테스트 앱 광고 ID
+  static String interstitialUnitId = 'ca-app-pub-2294312189421130/4538637779';
 
   static InterstitialAd? _interstitialAd;
   static bool _isLoading = false;
@@ -39,7 +33,6 @@ class AdManager {
         onAdFailedToLoad: (LoadAdError error) {
           _interstitialAd = null;
           _isLoading = false;
-          // 필요 시 디버그 로그: print('InterstitialAd failed to load: $error');
         },
       ),
     );

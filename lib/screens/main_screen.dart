@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // ✅ SystemNavigator.pop
 import 'package:shared_preferences/shared_preferences.dart';
@@ -241,7 +242,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         try {
           await bootstrapCoreReminderSchedulesOnAppOpen();
         } catch (e, st) {
-          debugPrint('MainScreen: bootstrap reminders failed: $e\n$st');
+          if (kDebugMode) {
+            debugPrint('MainScreen: bootstrap reminders failed: $e\n$st');
+          }
         }
       }());
     });

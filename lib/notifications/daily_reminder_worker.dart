@@ -399,8 +399,7 @@ Future<void> scheduleAllDailyReminders() async {
   final maps = _reminderMapsFromDecodedList(list);
   if (maps.isEmpty && list.isNotEmpty && kDebugMode) {
     debugPrint(
-      'scheduleAllDailyReminders: 알림 JSON을 Map으로 읽지 못해 예약이 0건입니다. '
-      'raw=${raw.length > 200 ? "${raw.substring(0, 200)}..." : raw}',
+      'scheduleAllDailyReminders: 알림 JSON을 Map으로 읽지 못해 예약이 0건입니다.',
     );
   }
   for (var i = 0; i < maps.length; i++) {
