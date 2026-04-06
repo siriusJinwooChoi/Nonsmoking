@@ -23,7 +23,7 @@ class DreamCarScreen extends StatefulWidget {
 
 class _DreamCarScreenState extends State<DreamCarScreen>
     with TickerProviderStateMixin, WidgetsBindingObserver {
-  String? _brand; // 'hyundai' | 'kia'
+  String? _brand; // 'hcompany' | 'kcompany'
   int _stage = 1;
   int? _startMs;
 
@@ -68,9 +68,14 @@ class _DreamCarScreenState extends State<DreamCarScreen>
 
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
+    final rawBrand = prefs.getString(DreamCarPrefsKeys.brand);
+    final normalizedBrand = _normalizeDreamCarBrand(rawBrand);
+    if (normalizedBrand != null && normalizedBrand != rawBrand) {
+      await prefs.setString(DreamCarPrefsKeys.brand, normalizedBrand);
+    }
     if (!mounted) return;
     setState(() {
-      _brand = prefs.getString(DreamCarPrefsKeys.brand);
+      _brand = normalizedBrand;
       _stage = (prefs.getInt(DreamCarPrefsKeys.stage) ?? 1)
           .clamp(1, DreamCarCatalog.maxStage);
       _startMs = prefs.getInt('startTime');
@@ -268,17 +273,15 @@ class _BrandPicker extends StatelessWidget {
         ),
         const SizedBox(height: 24),
         _BrandButton(
-          label: 'H사',
-          sub: 'hyun*',
+          label: 'H Company',
           color: const Color(0xFF002C5F),
-          onTap: () => onPick('hyundai'),
+          onTap: () => onPick('hcompany'),
         ),
         const SizedBox(height: 12),
         _BrandButton(
-          label: 'K사',
-          sub: 'k*',
+          label: 'K Company',
           color: const Color(0xFF05141F),
-          onTap: () => onPick('kia'),
+          onTap: () => onPick('kcompany'),
         ),
       ],
     );
@@ -288,13 +291,11 @@ class _BrandPicker extends StatelessWidget {
 class _BrandButton extends StatelessWidget {
   const _BrandButton({
     required this.label,
-    required this.sub,
     required this.color,
     required this.onTap,
   });
 
   final String label;
-  final String sub;
   final Color color;
   final VoidCallback onTap;
 
@@ -313,25 +314,13 @@ class _BrandButton extends StatelessWidget {
               Icon(Icons.directions_car_filled_rounded,
                   color: Colors.white.withValues(alpha: 0.95), size: 36),
               const SizedBox(width: 16),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  Text(
-                    sub,
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.85),
-                      fontSize: 14,
-                    ),
-                  ),
-                ],
+              Text(
+                label,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ],
           ),
@@ -339,6 +328,14 @@ class _BrandButton extends StatelessWidget {
       ),
     );
   }
+}
+
+String? _normalizeDreamCarBrand(String? brand) {
+  final b = brand?.trim().toLowerCase();
+  if (b == null || b.isEmpty) return null;
+  if (b == 'hcompany' || b == 'hyundai') return 'hcompany';
+  if (b == 'kcompany' || b == 'kia') return 'kcompany';
+  return null;
 }
 
 class _InfoCard extends StatelessWidget {

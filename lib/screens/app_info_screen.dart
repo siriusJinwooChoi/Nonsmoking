@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import '../auth/legal_urls.dart';
 import '../theme/app_theme.dart';
 
 /// 앱 정보 화면 (버전 자동 동기화, 이메일 문의 포함)
@@ -48,6 +49,32 @@ class _AppInfoScreenState extends State<AppInfoScreen> {
     }
   }
 
+  Future<void> _openPrivacyPolicy(BuildContext context) async {
+    final uri = Uri.parse(LegalUrls.privacyPolicy);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('링크를 열 수 없습니다.')),
+        );
+      }
+    }
+  }
+
+  Future<void> _openTermsOfService(BuildContext context) async {
+    final uri = Uri.parse(LegalUrls.termsOfService);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('링크를 열 수 없습니다.')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -81,6 +108,20 @@ class _AppInfoScreenState extends State<AppInfoScreen> {
             title: '이메일 문의',
             subtitle: _email,
             onTap: () => _launchEmail(context),
+          ),
+          _infoTile(
+            context,
+            icon: Icons.shield_rounded,
+            title: '개인정보처리방침',
+            subtitle: '개인정보 처리 방침 보기',
+            onTap: () => _openPrivacyPolicy(context),
+          ),
+          _infoTile(
+            context,
+            icon: Icons.description_rounded,
+            title: '이용약관',
+            subtitle: '서비스 이용약관 보기',
+            onTap: () => _openTermsOfService(context),
           ),
           const SizedBox(height: 24),
           Center(

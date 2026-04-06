@@ -2,13 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../auth/auth_service.dart';
 import '../auth/bff_auth_service.dart';
 import '../api/bff_profile_api.dart';
 import '../services/app_update_service.dart';
-import '../auth/legal_urls.dart';
 import '../supabase/supabase_config.dart';
 import '../supabase/supabase_sync_service.dart';
 import '../theme/app_theme.dart';
@@ -16,6 +14,7 @@ import '../notifications/daily_reminder_worker.dart';
 import 'app_info_screen.dart';
 import 'help_screen.dart';
 import 'badge_screen.dart';
+import 'notification_opt_out_screen.dart';
 import 'reminder_settings_screen.dart';
 
 /// 설정 화면: 알림, 초기 설정으로 돌아가기, 앱 정보
@@ -100,63 +99,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _editDisplayName() async {
     if (!BffAuthService.instance.isLoggedIn) return;
-    final controller = TextEditingController(text: _displayName ?? '');
-    String? localError;
-
     final result = await showDialog<String>(
       context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setLocalState) => AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            title: const Text('닉네임 변경'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: controller,
-                  maxLength: 12,
-                  autofocus: true,
-                  textInputAction: TextInputAction.done,
-                  decoration: InputDecoration(
-                    labelText: '닉네임',
-                    hintText: '2~12자',
-                    counterText: '',
-                    errorText: localError,
-                  ),
-                  onSubmitted: (_) {
-                    final v = controller.text.trim();
-                    if (v.length < 2 || v.length > 12) {
-                      setLocalState(() => localError = '닉네임은 2~12자로 입력해 주세요.');
-                      return;
-                    }
-                    Navigator.pop(ctx, v);
-                  },
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('취소'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  final v = controller.text.trim();
-                  if (v.length < 2 || v.length > 12) {
-                    setLocalState(() => localError = '닉네임은 2~12자로 입력해 주세요.');
-                    return;
-                  }
-                  Navigator.pop(ctx, v);
-                },
-                child: const Text('저장'),
-              ),
-            ],
-          ),
-        );
-      },
+      builder: (ctx) => _NicknameEditDialog(initialValue: _displayName ?? ''),
     );
-    controller.dispose();
 
     if (result == null || result.trim().isEmpty) return;
     if (result.trim() == (_displayName ?? '').trim()) return;
@@ -181,124 +127,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _inactivityNotificationTile(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceCard,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: AppTheme.cardShadowSubtle,
-      ),
-      child: ListTile(
-        leading: const Icon(Icons.notifications_active_rounded, color: AppTheme.primary, size: 24),
-        title: Text(
-          '비접속 시 알림',
-          style: AppTheme.titleMedium.copyWith(fontSize: 16, color: AppTheme.textPrimary),
-        ),
-        subtitle: const Text(
-          '3일 이상 앱을 열지 않으면 매일 알림',
-          style: AppTheme.bodyMedium,
-        ),
-        trailing: Switch(
-          value: _inactivityNotificationEnabled,
-          onChanged: (value) {
-            setState(() => _inactivityNotificationEnabled = value);
-            unawaited(() async {
-              await setInactivityNotificationEnabled(value);
-              if (!context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(value ? '비접속 시 알림을 켰습니다.' : '비접속 시 알림을 껐습니다.'),
-                  duration: const Duration(seconds: 1),
-                ),
-              );
-            }());
-          },
-          activeThumbColor: AppTheme.primary,
-        ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+  Future<void> _setInactivityNotification(bool value) async {
+    if (!mounted) return;
+    setState(() => _inactivityNotificationEnabled = value);
+    await setInactivityNotificationEnabled(value);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(value ? '비접속 시 알림을 켰습니다.' : '비접속 시 알림을 껐습니다.'),
+        duration: const Duration(seconds: 1),
       ),
     );
   }
 
-  Widget _attendanceReminderTile(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceCard,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: AppTheme.cardShadowSubtle,
-      ),
-      child: ListTile(
-        leading: const Icon(Icons.today_rounded, color: AppTheme.primary, size: 24),
-        title: Text(
-          '출석 알림',
-          style: AppTheme.titleMedium.copyWith(fontSize: 16, color: AppTheme.textPrimary),
-        ),
-        subtitle: const Text(
-          '저녁 6시까지 미출석 시 1시간마다 알림',
-          style: AppTheme.bodyMedium,
-        ),
-        trailing: Switch(
-          value: _attendanceReminderEnabled,
-          onChanged: (value) {
-            setState(() => _attendanceReminderEnabled = value);
-            unawaited(() async {
-              await setAttendanceReminderEnabled(value);
-              if (!context.mounted) return;
-              unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(value ? '출석 알림을 켰습니다.' : '출석 알림을 껐습니다.'),
-                  duration: const Duration(seconds: 1),
-                ),
-              );
-            }());
-          },
-          activeThumbColor: AppTheme.primary,
-        ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+  Future<void> _setAttendanceReminder(bool value) async {
+    if (!mounted) return;
+    setState(() => _attendanceReminderEnabled = value);
+    await setAttendanceReminderEnabled(value);
+    if (!mounted) return;
+    unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(value ? '출석 알림을 켰습니다.' : '출석 알림을 껐습니다.'),
+        duration: const Duration(seconds: 1),
       ),
     );
   }
 
-  Widget _cigaretteCollectionReminderTile(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceCard,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: AppTheme.cardShadowSubtle,
-      ),
-      child: ListTile(
-        leading: const Icon(Icons.inventory_2_rounded, color: AppTheme.primary, size: 24),
-        title: Text(
-          '수집 시간 알림',
-          style: AppTheme.titleMedium.copyWith(fontSize: 16, color: AppTheme.textPrimary),
-        ),
-        subtitle: const Text(
-          '09:00·12:00·18:00·22:00 정각에 도감 수집 가능 안내',
-          style: AppTheme.bodyMedium,
-        ),
-        trailing: Switch(
-          value: _cigaretteCollectionReminderEnabled,
-          onChanged: (value) {
-            setState(() => _cigaretteCollectionReminderEnabled = value);
-            unawaited(() async {
-              await setCigaretteCollectionReminderEnabled(value);
-              if (!context.mounted) return;
-              unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(value ? '수집 시간 알림을 켰습니다.' : '수집 시간 알림을 껐습니다.'),
-                  duration: const Duration(seconds: 1),
-                ),
-              );
-            }());
-          },
-          activeThumbColor: AppTheme.primary,
-        ),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+  Future<void> _setCigaretteCollectionReminder(bool value) async {
+    if (!mounted) return;
+    setState(() => _cigaretteCollectionReminderEnabled = value);
+    await setCigaretteCollectionReminderEnabled(value);
+    if (!mounted) return;
+    unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(value ? '수집 시간 알림을 켰습니다.' : '수집 시간 알림을 껐습니다.'),
+        duration: const Duration(seconds: 1),
       ),
     );
   }
@@ -346,32 +211,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     if (confirmed == true) {
       await widget.onGoToFirstSetup();
-    }
-  }
-
-  Future<void> _openPrivacyPolicy(BuildContext context) async {
-    final uri = Uri.parse(LegalUrls.privacyPolicy);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('링크를 열 수 없습니다.')),
-        );
-      }
-    }
-  }
-
-  Future<void> _openTermsOfService(BuildContext context) async {
-    final uri = Uri.parse(LegalUrls.termsOfService);
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('링크를 열 수 없습니다.')),
-        );
-      }
     }
   }
 
@@ -506,9 +345,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 : '${_reminderTimes.length}개 설정됨',
             onTap: () => _openReminderSettings(context),
           ),
-          _inactivityNotificationTile(context),
-          _attendanceReminderTile(context),
-          _cigaretteCollectionReminderTile(context),
+          _settingsTile(
+            context,
+            icon: Icons.notifications_off_rounded,
+            title: '알림 해지',
+            subtitle: '비접속·출석·수집 시간 알림 설정',
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => NotificationOptOutScreen(
+                    inactivityNotificationEnabled: _inactivityNotificationEnabled,
+                    attendanceReminderEnabled: _attendanceReminderEnabled,
+                    cigaretteCollectionReminderEnabled: _cigaretteCollectionReminderEnabled,
+                    onInactivityChanged: _setInactivityNotification,
+                    onAttendanceChanged: _setAttendanceReminder,
+                    onCigaretteCollectionChanged: _setCigaretteCollectionReminder,
+                  ),
+                ),
+              );
+            },
+          ),
           const SizedBox(height: 24),
           _sectionTitle('데이터'),
           _settingsTile(
@@ -551,20 +408,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 MaterialPageRoute(builder: (_) => const HelpScreen()),
               );
             },
-          ),
-          _settingsTile(
-            context,
-            icon: Icons.shield_rounded,
-            title: '개인정보처리방침',
-            subtitle: '개인정보 처리 방침 보기',
-            onTap: () => _openPrivacyPolicy(context),
-          ),
-          _settingsTile(
-            context,
-            icon: Icons.description_rounded,
-            title: '이용약관',
-            subtitle: '서비스 이용약관 보기',
-            onTap: () => _openTermsOfService(context),
           ),
           if (SupabaseConfig.isConfigured) ...[
             const SizedBox(height: 24),
@@ -653,6 +496,77 @@ class _SettingsScreenState extends State<SettingsScreen> {
         onTap: onTap,
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       ),
+    );
+  }
+}
+
+class _NicknameEditDialog extends StatefulWidget {
+  final String initialValue;
+
+  const _NicknameEditDialog({required this.initialValue});
+
+  @override
+  State<_NicknameEditDialog> createState() => _NicknameEditDialogState();
+}
+
+class _NicknameEditDialogState extends State<_NicknameEditDialog> {
+  late final TextEditingController _controller;
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialValue);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final v = _controller.text.trim();
+    if (v.length < 2 || v.length > 12) {
+      setState(() => _errorText = '닉네임은 2~12자로 입력해 주세요.');
+      return;
+    }
+    Navigator.pop(context, v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: const Text('닉네임 변경'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _controller,
+            maxLength: 12,
+            autofocus: true,
+            textInputAction: TextInputAction.done,
+            decoration: InputDecoration(
+              labelText: '닉네임',
+              hintText: '2~12자',
+              counterText: '',
+              errorText: _errorText,
+            ),
+            onSubmitted: (_) => _submit(),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('취소'),
+        ),
+        ElevatedButton(
+          onPressed: _submit,
+          child: const Text('저장'),
+        ),
+      ],
     );
   }
 }

@@ -3,8 +3,8 @@ import 'dart:math' as math;
 /// 나의 드림카 — 브랜드별 단계 이름·원격 이미지 키.
 ///
 /// 서버 `public/app-assets` 가 `/static/` 으로 노출될 때 아래 경로에 파일을 올려주세요.
-/// 예: `dreamcar/hyundai/stage_1.png` … `dreamcar/hyundai/stage_10.png`
-///     `dreamcar/kia/stage_1.png` … `dreamcar/kia/stage_10.png`
+/// 예: `dreamcar/hcompany/stage_1.png` … `dreamcar/hcompany/stage_10.png`
+///     `dreamcar/kcompany/stage_1.png` … `dreamcar/kcompany/stage_10.png`
 /// (로컬 `D:\...\2. 현대`, `1. 기아` 폴더의 1~10단계 이미지를 위 이름으로 업로드)
 abstract final class DreamCarCatalog {
   static const int maxStage = 10;
@@ -72,7 +72,7 @@ abstract final class DreamCarCatalog {
     return 'dreamcar/$brand/stage_$s.png';
   }
 
-  static const List<String> hyundaiModelNames = [
+  static const List<String> hcompanyModelNames = [
     '캐스퍼',
     'i20',
     '코나',
@@ -85,7 +85,7 @@ abstract final class DreamCarCatalog {
     '제네시스',
   ];
 
-  static const List<String> kiaModelNames = [
+  static const List<String> kcompanyModelNames = [
     '모닝',
     '레이',
     '셀토스',
@@ -100,7 +100,7 @@ abstract final class DreamCarCatalog {
 
   static String modelName(String brand, int stage) {
     final idx = (stage - 1).clamp(0, maxStage - 1);
-    if (brand == 'hyundai') return hyundaiModelNames[idx];
-    return kiaModelNames[idx];
+    if (brand == 'hcompany' || brand == 'hyundai') return hcompanyModelNames[idx];
+    return kcompanyModelNames[idx];
   }
 }

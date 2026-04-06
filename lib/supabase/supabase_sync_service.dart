@@ -567,9 +567,11 @@ abstract final class SupabaseSyncService {
     SharedPreferences prefs,
   ) async {
     if (row == null) return;
-    final b = row['dream_car_brand'] as String?;
-    if (b == 'hyundai' || b == 'kia') {
-      await prefs.setString(DreamCarPrefsKeys.brand, b!);
+    final b = (row['dream_car_brand'] as String?)?.trim().toLowerCase();
+    if (b == 'hcompany' || b == 'hyundai') {
+      await prefs.setString(DreamCarPrefsKeys.brand, 'hcompany');
+    } else if (b == 'kcompany' || b == 'kia') {
+      await prefs.setString(DreamCarPrefsKeys.brand, 'kcompany');
     } else {
       await prefs.remove(DreamCarPrefsKeys.brand);
     }
