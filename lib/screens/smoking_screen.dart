@@ -29,12 +29,13 @@ class _SmokingScreenState extends State<SmokingScreen>
   bool _isFastBurn = false;
   final TextEditingController _chatController = TextEditingController();
   final FocusNode _chatFocusNode = FocusNode();
-  final List<_EphemeralChat> _ephemeralChats = [];
-  final Set<String> _seenDamtaIds = {};
+  /// 서버에서 가져온 이번 주 메시지(주간 유지, 자동 소멸 없음).
+  final List<_EphemeralChat> _serverDamtaChats = [];
+  /// API 미설정 시 데모용 말풍선(수 초 후 제거).
+  final List<_EphemeralChat> _localDamtaChats = [];
   final Random _random = Random();
   static const DamtaCommunityApiService _damtaApi = DamtaCommunityApiService();
   Timer? _damtaPollTimer;
-  late final int _damtaSessionStartedMs;
   String _myDisplayName = '나';
   static const List<Alignment> _chatAnchors = [
     Alignment(-0.9, -0.82),
@@ -55,7 +56,6 @@ class _SmokingScreenState extends State<SmokingScreen>
   void initState() {
     super.initState();
     _controller = AnimationController(vsync: this, lowerBound: 0, upperBound: 1);
-    _damtaSessionStartedMs = DateTime.now().millisecondsSinceEpoch;
     unawaited(_initHaptics());
     unawaited(_loadMyDisplayName());
     if (ApiConfig.isConfigured) {
@@ -200,23 +200,33 @@ class _SmokingScreenState extends State<SmokingScreen>
       setState(() => _damtaPresenceCount = presence);
     }
     if (list == null) return;
-    for (final m in list) {
-      if (_seenDamtaIds.contains(m.id)) continue;
-      if (m.tsMs > 0 && m.tsMs < _damtaSessionStartedMs - 5000) {
-        _seenDamtaIds.add(m.id);
-        continue;
-      }
-      _seenDamtaIds.add(m.id);
-      _enqueueEphemeralBubble(
-        id: m.id,
-        text: m.text,
-        color: m.color,
-        authorName: m.authorName,
-      );
-    }
+    final sorted = [...list]..sort((a, b) => a.tsMs.compareTo(b.tsMs));
+    setState(() {
+      _serverDamtaChats
+        ..clear()
+        ..addAll(sorted.map(_chatBubbleFromMessage));
+    });
   }
 
-  void _enqueueEphemeralBubble({
+  _EphemeralChat _chatBubbleFromMessage(DamtaCommunityMessage m) {
+    final h = Object.hash(m.id, m.tsMs);
+    final anchorIndex = h.abs() % _chatAnchors.length;
+    final dx = ((h >> 3) % 200) / 10.0 - 10;
+    final dy = ((h >> 7) % 160) / 10.0 - 8;
+    return _EphemeralChat(
+      id: m.id,
+      text: m.text,
+      color: m.color,
+      authorName: m.authorName,
+      anchorIndex: anchorIndex,
+      dx: dx,
+      dy: dy,
+      visible: true,
+    );
+  }
+
+  /// 로컬 데모 전용: 잠시 후 사라지는 말풍선.
+  void _enqueueLocalEphemeralBubble({
     required String id,
     required String text,
     required Color color,
@@ -235,17 +245,17 @@ class _SmokingScreenState extends State<SmokingScreen>
       dy: dy,
       visible: true,
     );
-    setState(() => _ephemeralChats.add(chat));
+    setState(() => _localDamtaChats.add(chat));
 
     Future.delayed(const Duration(seconds: 3), () {
       if (!mounted) return;
-      final idx = _ephemeralChats.indexWhere((c) => c.id == id);
+      final idx = _localDamtaChats.indexWhere((c) => c.id == id);
       if (idx < 0) return;
-      setState(() => _ephemeralChats[idx] = _ephemeralChats[idx].copyWith(visible: false));
+      setState(() => _localDamtaChats[idx] = _localDamtaChats[idx].copyWith(visible: false));
     });
     Future.delayed(const Duration(milliseconds: 4300), () {
       if (!mounted) return;
-      setState(() => _ephemeralChats.removeWhere((c) => c.id == id));
+      setState(() => _localDamtaChats.removeWhere((c) => c.id == id));
     });
   }
 
@@ -277,18 +287,12 @@ class _SmokingScreenState extends State<SmokingScreen>
         );
         return;
       }
-      _seenDamtaIds.add(posted.id);
-      _enqueueEphemeralBubble(
-        id: posted.id,
-        text: posted.text,
-        color: posted.color,
-        authorName: posted.authorName,
-      );
+      unawaited(_pollDamtaInbox());
       return;
     }
 
     final id = 'local_${DateTime.now().microsecondsSinceEpoch}';
-    _enqueueEphemeralBubble(
+    _enqueueLocalEphemeralBubble(
       id: id,
       text: text,
       color: color,
@@ -298,7 +302,7 @@ class _SmokingScreenState extends State<SmokingScreen>
 
   int _pickLeastUsedAnchorIndex() {
     final counts = List<int>.filled(_chatAnchors.length, 0);
-    for (final chat in _ephemeralChats) {
+    for (final chat in [..._serverDamtaChats, ..._localDamtaChats]) {
       if (!chat.visible) continue;
       if (chat.anchorIndex >= 0 && chat.anchorIndex < counts.length) {
         counts[chat.anchorIndex] += 1;
@@ -319,7 +323,7 @@ class _SmokingScreenState extends State<SmokingScreen>
     return Scaffold(
       backgroundColor: AppTheme.surface,
       appBar: AppBar(
-        title: const Text('담타시간(실시간 커뮤니티)'),
+        title: const Text('담타시간(커뮤니티)'),
       ),
       body: SafeArea(
         child: LayoutBuilder(
@@ -440,7 +444,7 @@ class _SmokingScreenState extends State<SmokingScreen>
                     ignoring: true,
                     child: Stack(
                       children: [
-                        for (final chat in _ephemeralChats)
+                        for (final chat in [..._serverDamtaChats, ..._localDamtaChats])
                           Align(
                             alignment: _chatAnchors[chat.anchorIndex],
                             child: AnimatedOpacity(
@@ -554,6 +558,18 @@ class _SmokingScreenState extends State<SmokingScreen>
                 ),
               ),
             ),
+            if (ApiConfig.isConfigured)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  '매주 일요일 밤 24:00에 올린 글은 초기화됩니다.',
+                  textAlign: TextAlign.center,
+                  style: AppTheme.labelMedium.copyWith(
+                    color: AppTheme.textMuted,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
             Padding(
               padding: const EdgeInsets.only(bottom: 16),
               child: Text(

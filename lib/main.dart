@@ -583,7 +583,7 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
                 _NavItem(icon: Icons.home_rounded, label: '메인', index: 0, current: currentIndex, onTap: _showAdThenNavigate),
                 _NavItem(icon: Icons.sports_esports_rounded, label: '게임', index: 1, current: currentIndex, onTap: _showAdThenNavigate),
                 _NavItem(icon: Icons.auto_awesome_rounded, label: '성장시키기', index: 2, current: currentIndex, onTap: _showAdThenNavigate),
-                _NavItem(icon: Icons.favorite_rounded, label: '폐·건강', index: 3, current: currentIndex, onTap: _showAdThenNavigate),
+                _NavItem(icon: Icons.favorite_rounded, label: '폐·커뮤니티', index: 3, current: currentIndex, onTap: _showAdThenNavigate),
                 _NavItem(icon: Icons.inventory_2_rounded, label: '수집·도감', index: 4, current: currentIndex, onTap: _showAdThenNavigate),
                 _NavItem(icon: Icons.favorite_border_rounded, label: '건강', index: 5, current: currentIndex, onTap: _showAdThenNavigate),
               ],

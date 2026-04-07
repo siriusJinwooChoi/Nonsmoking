@@ -13,6 +13,7 @@ import '../data/dream_car_models.dart';
 import '../data/dream_car_prefs.dart';
 import '../supabase/supabase_sync_service.dart';
 import '../theme/app_theme.dart';
+import 'attendance_screen.dart';
 
 class DreamCarScreen extends StatefulWidget {
   const DreamCarScreen({super.key});
@@ -26,6 +27,7 @@ class _DreamCarScreenState extends State<DreamCarScreen>
   String? _brand; // 'hcompany' | 'kcompany'
   int _stage = 1;
   int? _startMs;
+  int _coinBalance = 0;
 
   Timer? _tick;
   late AnimationController _celebrationController;
@@ -41,7 +43,7 @@ class _DreamCarScreenState extends State<DreamCarScreen>
     );
     _load();
     _tick = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
+      unawaited(_refreshCoins());
     });
   }
 
@@ -60,10 +62,16 @@ class _DreamCarScreenState extends State<DreamCarScreen>
     }
   }
 
+  Future<void> _refreshCoins() async {
+    final c = await getGoldenCoins();
+    if (mounted) setState(() => _coinBalance = c);
+  }
+
   Future<void> _loadStartOnly() async {
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
     setState(() => _startMs = prefs.getInt('startTime'));
+    await _refreshCoins();
   }
 
   Future<void> _load() async {
@@ -80,28 +88,19 @@ class _DreamCarScreenState extends State<DreamCarScreen>
           .clamp(1, DreamCarCatalog.maxStage);
       _startMs = prefs.getInt('startTime');
     });
+    await _refreshCoins();
   }
-
-  int get _elapsedMs {
-    final s = _startMs;
-    if (s == null) return 0;
-    final now = DateTime.now().millisecondsSinceEpoch;
-    return math.max(0, now - s);
-  }
-
-  int get _quitMoney =>
-      DreamCarCatalog.quitMoneyFromElapsedMs(_elapsedMs);
 
   bool get _canUpgrade {
     if (_brand == null) return false;
-    return DreamCarCatalog.canUpgradeWithMoney(_stage, _quitMoney);
+    return DreamCarCatalog.canUpgradeWithCoins(_stage, _coinBalance);
   }
 
   double get _gaugeProgress =>
-      DreamCarCatalog.moneyGaugeProgress(_stage, _quitMoney);
+      DreamCarCatalog.coinGaugeProgressForNextUpgrade(_stage, _coinBalance);
 
-  int get _wonRemaining =>
-      DreamCarCatalog.wonRemainingUntilNextUpgrade(_stage, _quitMoney);
+  int get _coinsRemaining =>
+      DreamCarCatalog.coinsRemainingForNextUpgrade(_stage, _coinBalance);
 
   Future<void> _setBrand(String brand) async {
     final prefs = await SharedPreferences.getInstance();
@@ -117,11 +116,29 @@ class _DreamCarScreenState extends State<DreamCarScreen>
 
   Future<void> _upgrade() async {
     if (!_canUpgrade || _brand == null) return;
+    final remaining =
+        await consumeCoinsIfPossible(DreamCarCatalog.coinsPerUpgrade);
+    if (remaining == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '금연코인이 부족합니다. (${DreamCarCatalog.coinsPerUpgrade}코인 필요)',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
     final prefs = await SharedPreferences.getInstance();
     final next = _stage + 1;
     await prefs.setInt(DreamCarPrefsKeys.stage, next);
     if (!mounted) return;
-    setState(() => _stage = next);
+    setState(() {
+      _stage = next;
+      _coinBalance = remaining;
+    });
     unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
 
     unawaited(AppAnalytics.log('dream_car_upgrade', params: {
@@ -224,9 +241,9 @@ class _DreamCarScreenState extends State<DreamCarScreen>
                       brand: _brand!,
                       stage: _stage,
                       startMs: _startMs,
-                      quitMoney: _quitMoney,
+                      coinBalance: _coinBalance,
                       gaugeProgress: _gaugeProgress,
-                      wonRemaining: _wonRemaining,
+                      coinsRemaining: _coinsRemaining,
                       canUpgrade: _canUpgrade,
                       onUpgrade: _upgrade,
                     ),
@@ -353,11 +370,12 @@ class _InfoCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Icons.savings_rounded, color: AppTheme.primary, size: 22),
+              Icon(Icons.monetization_on_rounded,
+                  color: AppTheme.primary, size: 22),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  '금연 머니를 모아 드림카를 키워보세요.',
+                  '금연 코인을 모아 드림카를 단계별로 업그레이드해 보세요.',
                   style: AppTheme.titleMedium.copyWith(color: AppTheme.primary),
                 ),
               ),
@@ -369,19 +387,14 @@ class _InfoCard extends StatelessWidget {
   }
 }
 
-String _formatKrw(int won) {
-  final f = NumberFormat('#,###', 'ko_KR');
-  return '${f.format(won)}원';
-}
-
 class _CarPanel extends StatelessWidget {
   const _CarPanel({
     required this.brand,
     required this.stage,
     required this.startMs,
-    required this.quitMoney,
+    required this.coinBalance,
     required this.gaugeProgress,
-    required this.wonRemaining,
+    required this.coinsRemaining,
     required this.canUpgrade,
     required this.onUpgrade,
   });
@@ -389,9 +402,9 @@ class _CarPanel extends StatelessWidget {
   final String brand;
   final int stage;
   final int? startMs;
-  final int quitMoney;
+  final int coinBalance;
   final double gaugeProgress;
-  final int wonRemaining;
+  final int coinsRemaining;
   final bool canUpgrade;
   final VoidCallback onUpgrade;
 
@@ -399,6 +412,7 @@ class _CarPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final assetKey = DreamCarCatalog.assetKey(brand, stage);
     final maxed = stage >= DreamCarCatalog.maxStage;
+    final nf = NumberFormat.decimalPattern('ko_KR');
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -436,7 +450,7 @@ class _CarPanel extends StatelessWidget {
               if (startMs == null) ...[
                 const SizedBox(height: 12),
                 Text(
-                  '메인 화면에서 금연 시작일이 설정되어 있어야 금연 머니가 쌓여요.',
+                  '메인 화면에서 금연 시작일이 설정되어 있어야 절약·코인 환전이 가능해요.',
                   style: AppTheme.labelMedium.copyWith(
                     fontSize: 12,
                     color: AppTheme.error,
@@ -445,35 +459,43 @@ class _CarPanel extends StatelessWidget {
               ],
               const SizedBox(height: 12),
               Text(
-                '모은 금연 머니',
+                '보유 금연코인',
                 style: AppTheme.labelMedium.copyWith(
                   color: AppTheme.textSecondary,
                 ),
               ),
               const SizedBox(height: 4),
-              Text(
-                _formatKrw(quitMoney),
-                style: AppTheme.titleLarge.copyWith(
-                  color: AppTheme.primary,
-                  fontWeight: FontWeight.w800,
-                ),
+              Row(
+                children: [
+                  RemoteAssetImage(
+                    assetKey: 'scoin.png',
+                    width: 28,
+                    height: 28,
+                    error: Icon(Icons.monetization_on_rounded,
+                        color: AppTheme.primary, size: 28),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${nf.format(coinBalance)}개',
+                    style: AppTheme.titleLarge.copyWith(
+                      color: AppTheme.primary,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 6),
               Text(
-                DreamCarCatalog.kDreamCarRapidMoneyTestEnabled
-                    ? '테스트: 1초당 ${_formatKrw(DreamCarCatalog.rapidTestWonPerSecond)} 적립 · 최대 ${_formatKrw(DreamCarCatalog.maxTotalWon)}까지'
-                    : '하루 ${_formatKrw(DreamCarCatalog.wonPerDay)} 적립 · 최대 ${_formatKrw(DreamCarCatalog.maxTotalWon)}까지 누적',
+                '단계마다 ${nf.format(DreamCarCatalog.coinsPerUpgrade)}코인으로 업그레이드할 수 있어요. 출석·게임·메인에서 절약 금액 환전 등으로 코인을 모을 수 있습니다.',
                 style: AppTheme.labelMedium.copyWith(
                   fontSize: 12,
-                  color: DreamCarCatalog.kDreamCarRapidMoneyTestEnabled
-                      ? AppTheme.warning
-                      : AppTheme.textMuted,
+                  color: AppTheme.textMuted,
                 ),
               ),
               const SizedBox(height: 14),
               if (!maxed) ...[
                 Text(
-                  '다음 업그레이드까지 (${_formatKrw(DreamCarCatalog.thresholdWonForUpgradeFromStage(stage))} 누적 시)',
+                  '다음 단계까지 ${nf.format(DreamCarCatalog.coinsPerUpgrade)}코인',
                   style: AppTheme.labelMedium.copyWith(
                     color: AppTheme.textSecondary,
                   ),
@@ -492,7 +514,7 @@ class _CarPanel extends StatelessWidget {
                 Text(
                   canUpgrade
                       ? '업그레이드할 수 있어요!'
-                      : '이번 단계까지 ${_formatKrw(wonRemaining)} 더 모으면 돼요',
+                      : '이번 단계까지 ${nf.format(coinsRemaining)}코인 더 모으면 돼요',
                   style: AppTheme.labelMedium.copyWith(
                     color: canUpgrade ? AppTheme.success : AppTheme.textSecondary,
                     fontWeight: canUpgrade ? FontWeight.w700 : FontWeight.w500,
@@ -500,7 +522,7 @@ class _CarPanel extends StatelessWidget {
                 ),
               ] else ...[
                 Text(
-                  '최대 ${_formatKrw(DreamCarCatalog.maxTotalWon)}까지 모두 모았어요!',
+                  '최대 ${DreamCarCatalog.maxStage}단계까지 모두 업그레이드했어요!',
                   style: AppTheme.labelMedium.copyWith(
                     color: AppTheme.success,
                     fontWeight: FontWeight.w600,
@@ -556,7 +578,9 @@ class _CarPanel extends StatelessWidget {
                   child: Text(
                     maxed
                         ? '차를 최대로 업그레이드 시켰습니다.'
-                        : (canUpgrade ? '업그레이드' : '금연 머니를 더 모아주세요'),
+                        : (canUpgrade
+                            ? '업그레이드 (${nf.format(DreamCarCatalog.coinsPerUpgrade)}코인)'
+                            : '금연코인을 더 모아주세요'),
                   ),
                 ),
               ),

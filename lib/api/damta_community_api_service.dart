@@ -11,7 +11,7 @@ class DamtaCommunityMessage {
   final String text;
   final Color color;
   final String authorName;
-  /// 서버 수신 시각(ms). 세션 시작 이전 메시지 필터에 사용합니다.
+  /// 서버 수신 시각(ms).
   final int tsMs;
 
   const DamtaCommunityMessage({

@@ -64,7 +64,7 @@ class _GrowthHubScreenState extends State<GrowthHubScreen> {
                 icon: Icons.directions_car_filled_rounded,
                 iconColor: AppTheme.primary,
                 title: '나의 드림카',
-                subtitle: '금연 머니를 모아 차를 업그레이드해요',
+                subtitle: '금연 코인을 모아 차를 업그레이드해요',
                 onTap: () {
                   Navigator.of(context).push(
                     MaterialPageRoute<void>(

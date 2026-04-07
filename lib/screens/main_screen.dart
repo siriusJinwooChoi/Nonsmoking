@@ -10,9 +10,11 @@ import 'package:url_launcher/url_launcher.dart';
 import '../api/remote_assets.dart';
 import '../auth/bff_auth_service.dart';
 
+import '../data/savings_coin_exchange.dart';
 import 'reason_why_screen.dart';
 import 'nonsmoke_helper_screen.dart';
 import 'reminder_settings_screen.dart';
+import 'savings_coin_exchange_screen.dart';
 import 'settings_screen.dart';
 import 'attendance_screen.dart';
 import '../theme/app_theme.dart';
@@ -65,6 +67,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   int _failureCount = 0;
   int? _goalDays;
   int _goldenCoins = 0;
+  /// 절약 금액 중 코인으로 이미 바꾼 누적 원화(메인·환전 화면 동기화).
+  int _savingsExchangedToCoinsWon = 0;
   Timer? _timer;
   List<TimeOfDay> _reminderTimes = [];
   String _mainReason = '';
@@ -127,6 +131,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.refreshTrigger != widget.refreshTrigger) {
       _loadGoldenCoins();
+      unawaited(_reloadSavingsExchangePrefs());
       unawaited(_reloadReminderTimesFromPrefs());
     }
     if (oldWidget.dailyCigarettes != widget.dailyCigarettes ||
@@ -147,6 +152,36 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   static const String _failureCountKey = 'failureCount';
+
+  Future<void> _reloadSavingsExchangePrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _savingsExchangedToCoinsWon =
+          prefs.getInt(kSavingsExchangedToCoinsWonKey) ?? 0;
+    });
+  }
+
+  Future<void> _openSavingsCoinExchange() async {
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => SavingsCoinExchangeScreen(
+          dailyCigarettes: widget.dailyCigarettes,
+          cigarettesPerPack: widget.cigarettesPerPack,
+          pricePerPack: widget.pricePerPack,
+        ),
+      ),
+    );
+    await _loadGoldenCoins();
+    await _reloadSavingsExchangePrefs();
+    if (mounted) setState(() {});
+  }
+
+  int get _totalSavedWon => _savedMoney.floor().clamp(0, 0x7fffffff);
+
+  int get _exchangeableWon =>
+      (_totalSavedWon - _savingsExchangedToCoinsWon).clamp(0, 0x7fffffff);
 
   Future<void> _loadGoldenCoins() async {
     final coins = await getGoldenCoins();
@@ -212,6 +247,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final millis = prefs.getInt('startTime');
     _failureCount = prefs.getInt(_failureCountKey) ?? 0;
     _goldenCoins = prefs.getInt(kGoldenCoinsKey) ?? 0;
+    _savingsExchangedToCoinsWon =
+        prefs.getInt(kSavingsExchangedToCoinsWonKey) ?? 0;
     _mainReason = prefs.getString('pinnedReasonText') ?? '';
     _reasonController.text = _mainReason;
     _showReasonEditor = _mainReason.isEmpty;
@@ -899,37 +936,80 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     _startTime != null ? DateFormat('yyyy년 MM월 dd일').format(_startTime!) : '';
     final days = _startTime != null ? DateTime.now().difference(_startTime!).inDays : 0;
     final savedMoneyStr = _moneyFormatter.format(_savedMoney.round());
+    final exchangeableStr = _moneyFormatter.format(_exchangeableWon);
+    final appBarFg =
+        Theme.of(context).appBarTheme.foregroundColor ?? Colors.white;
 
     return Scaffold(
       backgroundColor: AppTheme.surface,
       appBar: AppBar(
-        title: const Text('금연 현황'),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 8, top: 8, bottom: 8),
-            child: Center(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  RemoteAssetImage(
-                    assetKey: 'scoin.png',
-                    width: 24,
-                    height: 24,
-                    error: const Icon(Icons.monetization_on_rounded, color: Colors.amber, size: 24),
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    '$_goldenCoins',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
+        titleSpacing: 0,
+        title: Row(
+          children: [
+            Flexible(
+              flex: 5,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: _openSavingsCoinExchange,
+                  borderRadius: BorderRadius.circular(10),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            '금연코인',
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                            style: TextStyle(
+                              color: appBarFg,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        RemoteAssetImage(
+                          assetKey: 'scoin.png',
+                          width: 22,
+                          height: 22,
+                          error: Icon(Icons.monetization_on_rounded,
+                              color: appBarFg.withValues(alpha: 0.95), size: 22),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '$_goldenCoins',
+                          style: TextStyle(
+                            color: appBarFg,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
+                ),
               ),
             ),
-          ),
+            Expanded(
+              flex: 4,
+              child: Text(
+                '금연 현황',
+                textAlign: TextAlign.center,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: appBarFg,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
+        ),
+        actions: [
           IconButton(
             icon: const Icon(Icons.settings_rounded),
             tooltip: '설정',
@@ -1000,8 +1080,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                       Expanded(
                         child: Text(
                           _mainReason.isEmpty
-                              ? '금연할 이유(대표): 아직 입력된 이유가 없습니다.'
-                              : '금연할 이유(대표): $_mainReason',
+                              ? '금연할 이유: 아직 입력된 이유가 없습니다.'
+                              : '금연할 이유: $_mainReason',
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: AppTheme.bodyMedium.copyWith(
@@ -1093,6 +1173,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('참은 담배 개수', style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 13)),
+                      Text('$_skippedCigarettes개비', style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500)),
+                    ],
+                  ),
                   const SizedBox(height: 24),
                   Container(height: 1, color: Colors.white24),
                   const SizedBox(height: 22),
@@ -1131,7 +1219,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('절약 금액', style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 12)),
+                              Text('총 절약 금액', style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 12)),
                               Text('₩$savedMoneyStr', style: const TextStyle(color: Colors.amberAccent, fontSize: 16, fontWeight: FontWeight.w700)),
                             ],
                           ),
@@ -1139,15 +1227,50 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                       ),
                       const SizedBox(width: 10),
                       Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-                          decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(10)),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('넘긴 개비', style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 12)),
-                              Text('$_skippedCigarettes개비', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
-                            ],
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            onTap: _openSavingsCoinExchange,
+                            borderRadius: BorderRadius.circular(10),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                              decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(10)),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          '환전 가능 금액',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            color: Colors.white.withValues(alpha: 0.9),
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Icon(
+                                        Icons.touch_app_rounded,
+                                        size: 12,
+                                        color: Colors.white.withValues(alpha: 0.65),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '₩$exchangeableStr',
+                                    style: TextStyle(
+                                      color: Colors.lightGreenAccent.shade100,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                           ),
                         ),
                       ),

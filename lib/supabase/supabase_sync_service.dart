@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:http/http.dart' as http;
@@ -11,6 +12,7 @@ import '../api/remote_assets.dart';
 import '../auth/bff_auth_service.dart';
 import '../notifications/daily_reminder_worker.dart' as dw;
 import '../data/dream_car_prefs.dart';
+import '../data/savings_coin_exchange.dart';
 import '../screens/attendance_screen.dart' as att;
 import 'supabase_config.dart';
 
@@ -231,6 +233,8 @@ abstract final class SupabaseSyncService {
         'golden_coins': prefs.getInt(att.kGoldenCoinsKey) ?? 0,
         'attendance_streak_day': prefs.getInt(att.kAttendanceStreakDayKey) ?? 1,
         'attendance_last_date': lastDateStr,
+        'savings_exchanged_to_coins_won':
+            prefs.getInt(kSavingsExchangedToCoinsWonKey) ?? 0,
       },
       'tree_progress': {
         'growth_stage': prefs.getInt(_PrefsKeys.growthStage) ?? 1,
@@ -520,6 +524,13 @@ abstract final class SupabaseSyncService {
       final localCoins = prefs.getInt(att.kGoldenCoinsKey) ?? 0;
       final merged = remoteCoins > localCoins ? remoteCoins : localCoins;
       await prefs.setInt(att.kGoldenCoinsKey, merged);
+      final localEx = prefs.getInt(kSavingsExchangedToCoinsWonKey) ?? 0;
+      final remoteEx =
+          (row['savings_exchanged_to_coins_won'] as num?)?.toInt() ?? 0;
+      await prefs.setInt(
+        kSavingsExchangedToCoinsWonKey,
+        math.max(localEx, remoteEx),
+      );
       return;
     }
 
@@ -532,6 +543,10 @@ abstract final class SupabaseSyncService {
     await prefs.setString(
       att.kAttendanceLastDateKey,
       s.length >= 10 ? s.substring(0, 10) : s,
+    );
+    await prefs.setInt(
+      kSavingsExchangedToCoinsWonKey,
+      (row['savings_exchanged_to_coins_won'] as num?)?.toInt() ?? 0,
     );
   }
 
