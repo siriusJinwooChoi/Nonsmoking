@@ -117,6 +117,19 @@ const String kCigaretteCollectionLastNotifiedWindowKey = 'cigarette_collection_l
 const int kCigaretteCollectionWindowMinutes = 20;
 const List<int> _cigaretteCollectionHours = [9, 12, 18, 22];
 
+const InitializationSettings _initSettings = InitializationSettings(
+  android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+  iOS: DarwinInitializationSettings(),
+  macOS: DarwinInitializationSettings(),
+);
+
+const DarwinNotificationDetails _defaultDarwinNotificationDetails =
+    DarwinNotificationDetails(
+  presentAlert: true,
+  presentBadge: true,
+  presentSound: true,
+);
+
 /// ✅ WorkManager 백그라운드 엔트리포인트 (반드시 top-level)
 @pragma('vm:entry-point')
 void callbackDispatcher() {
@@ -158,9 +171,7 @@ Future<bool> _handleReasonReminder(Map<String, dynamic>? inputData) async {
   if (!enabled) return true;
 
   final plugin = FlutterLocalNotificationsPlugin();
-  const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-  const initSettings = InitializationSettings(android: androidInit);
-  await plugin.initialize(initSettings);
+  await plugin.initialize(_initSettings);
 
   const channel = AndroidNotificationChannel(
     'reason_reminder_channel',
@@ -186,7 +197,11 @@ Future<bool> _handleReasonReminder(Map<String, dynamic>? inputData) async {
     kReasonReminderNotificationId,
     '🌿 금연할 이유',
     reasonText,
-    const NotificationDetails(android: androidDetails),
+    const NotificationDetails(
+      android: androidDetails,
+      iOS: _defaultDarwinNotificationDetails,
+      macOS: _defaultDarwinNotificationDetails,
+    ),
   );
 
   await scheduleReasonReminder();
@@ -195,9 +210,7 @@ Future<bool> _handleReasonReminder(Map<String, dynamic>? inputData) async {
 
 Future<bool> _handleDailyReminder(Map<String, dynamic>? inputData) async {
   final plugin = FlutterLocalNotificationsPlugin();
-  const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-  const initSettings = InitializationSettings(android: androidInit);
-  await plugin.initialize(initSettings);
+  await plugin.initialize(_initSettings);
 
   const channel = AndroidNotificationChannel(
     'daily_reminder_channel',
@@ -229,7 +242,11 @@ Future<bool> _handleDailyReminder(Map<String, dynamic>? inputData) async {
     kDailyReminderNotificationIdBase + slotIndex,
     '금연 리마인더 🌿',
     '오늘도 한 걸음! 금연을 이어가볼까요?',
-    const NotificationDetails(android: androidDetails),
+    const NotificationDetails(
+      android: androidDetails,
+      iOS: _defaultDarwinNotificationDetails,
+      macOS: _defaultDarwinNotificationDetails,
+    ),
   );
 
   final mode = await resolveAndroidReminderScheduleMode();
@@ -276,9 +293,7 @@ Future<void> scheduleZonedDailyReminderForSlot({
       androidScheduleMode ?? await resolveAndroidReminderScheduleMode();
 
   final plugin = FlutterLocalNotificationsPlugin();
-  const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-  const initSettings = InitializationSettings(android: androidInit);
-  await plugin.initialize(initSettings);
+  await plugin.initialize(_initSettings);
 
   const channel = AndroidNotificationChannel(
     'daily_reminder_channel',
@@ -307,7 +322,11 @@ Future<void> scheduleZonedDailyReminderForSlot({
         '금연 리마인더 🌿',
         '오늘도 한 걸음! 금연을 이어가볼까요?',
         _nextInstanceAtTime(hour, minute),
-        const NotificationDetails(android: androidDetails),
+        const NotificationDetails(
+          android: androidDetails,
+          iOS: _defaultDarwinNotificationDetails,
+          macOS: _defaultDarwinNotificationDetails,
+        ),
         androidScheduleMode: m,
         matchDateTimeComponents: DateTimeComponents.time,
         uiLocalNotificationDateInterpretation:
@@ -442,9 +461,7 @@ Future<void> scheduleReasonReminder() async {
 
   final reasonText = prefs.getString(kSelectedReasonTextKey) ?? '오늘도 금연을 이어가세요!';
   final plugin = FlutterLocalNotificationsPlugin();
-  const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-  const initSettings = InitializationSettings(android: androidInit);
-  await plugin.initialize(initSettings);
+  await plugin.initialize(_initSettings);
 
   const channel = AndroidNotificationChannel(
     'reason_reminder_channel',
@@ -475,7 +492,11 @@ Future<void> scheduleReasonReminder() async {
         '🌿 금연할 이유',
         reasonText,
         _nextInstanceAtTime(12, 1),
-        const NotificationDetails(android: androidDetails),
+        const NotificationDetails(
+          android: androidDetails,
+          iOS: _defaultDarwinNotificationDetails,
+          macOS: _defaultDarwinNotificationDetails,
+        ),
         androidScheduleMode: m,
         matchDateTimeComponents: DateTimeComponents.time,
         uiLocalNotificationDateInterpretation:
@@ -493,9 +514,35 @@ Future<void> scheduleReasonReminder() async {
   }
 }
 
-/// Android 13+ 알림 권한 요청
+/// 플랫폼별 알림 권한 요청
 Future<bool> requestNotificationPermissionIfNeeded() async {
   final plugin = FlutterLocalNotificationsPlugin();
+  if (kIsWeb) return true;
+
+  if (defaultTargetPlatform == TargetPlatform.iOS) {
+    final iosImpl = plugin.resolvePlatformSpecificImplementation<
+        IOSFlutterLocalNotificationsPlugin>();
+    if (iosImpl == null) return true;
+    final granted = await iosImpl.requestPermissions(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+    return granted ?? false;
+  }
+
+  if (defaultTargetPlatform == TargetPlatform.macOS) {
+    final macImpl = plugin.resolvePlatformSpecificImplementation<
+        MacOSFlutterLocalNotificationsPlugin>();
+    if (macImpl == null) return true;
+    final granted = await macImpl.requestPermissions(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+    return granted ?? false;
+  }
+
   final androidImpl = plugin.resolvePlatformSpecificImplementation<
       AndroidFlutterLocalNotificationsPlugin>();
   if (androidImpl == null) return true;
@@ -526,6 +573,14 @@ Future<void> ensureAndroidAlarmPermissionsForScheduling() async {
 }
 
 Future<bool> _ensureNotificationPermissionGranted() async {
+  if (kIsWeb) return true;
+
+  if (defaultTargetPlatform == TargetPlatform.iOS ||
+      defaultTargetPlatform == TargetPlatform.macOS) {
+    // iOS/macOS는 상태 조회 API가 제한적이라 요청 API를 통해 현재 승인 상태를 확인합니다.
+    return requestNotificationPermissionIfNeeded();
+  }
+
   final plugin = FlutterLocalNotificationsPlugin();
   final androidImpl = plugin.resolvePlatformSpecificImplementation<
       AndroidFlutterLocalNotificationsPlugin>();
@@ -610,9 +665,7 @@ Future<void> showGoalReachedNotificationIfNeeded(int currentDays, int? goalDays)
   if (last != null && last >= goalDays) return;
 
   final plugin = FlutterLocalNotificationsPlugin();
-  const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-  const initSettings = InitializationSettings(android: androidInit);
-  await plugin.initialize(initSettings);
+  await plugin.initialize(_initSettings);
 
   const channel = AndroidNotificationChannel(
     'goal_channel',
@@ -636,6 +689,8 @@ Future<void> showGoalReachedNotificationIfNeeded(int currentDays, int? goalDays)
         importance: Importance.high,
         priority: Priority.high,
       ),
+      iOS: _defaultDarwinNotificationDetails,
+      macOS: _defaultDarwinNotificationDetails,
     ),
   );
   await prefs.setInt(kGoalCongratulatedDayKey, currentDays);
@@ -654,9 +709,7 @@ Future<bool> _handleInactivityReminder(Map<String, dynamic>? inputData) async {
   if (daysSinceOpen < kInactivityDaysThreshold) return true;
 
   final plugin = FlutterLocalNotificationsPlugin();
-  const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-  const initSettings = InitializationSettings(android: androidInit);
-  await plugin.initialize(initSettings);
+  await plugin.initialize(_initSettings);
 
   const channel = AndroidNotificationChannel(
     'inactivity_channel',
@@ -680,6 +733,8 @@ Future<bool> _handleInactivityReminder(Map<String, dynamic>? inputData) async {
         importance: Importance.high,
         priority: Priority.high,
       ),
+      iOS: _defaultDarwinNotificationDetails,
+      macOS: _defaultDarwinNotificationDetails,
     ),
   );
 
@@ -783,6 +838,8 @@ Future<bool> _handleAttendanceReminder(Map<String, dynamic>? inputData) async {
         importance: Importance.high,
         priority: Priority.high,
       ),
+      iOS: _defaultDarwinNotificationDetails,
+      macOS: _defaultDarwinNotificationDetails,
     ),
   );
 
@@ -873,9 +930,7 @@ Future<bool> _handleCigaretteCollectionReminder(Map<String, dynamic>? inputData)
   }
 
   final plugin = FlutterLocalNotificationsPlugin();
-  const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-  const initSettings = InitializationSettings(android: androidInit);
-  await plugin.initialize(initSettings);
+  await plugin.initialize(_initSettings);
 
   const channel = AndroidNotificationChannel(
     'cigarette_collection_reminder_channel',
@@ -899,6 +954,8 @@ Future<bool> _handleCigaretteCollectionReminder(Map<String, dynamic>? inputData)
         importance: Importance.high,
         priority: Priority.high,
       ),
+      iOS: _defaultDarwinNotificationDetails,
+      macOS: _defaultDarwinNotificationDetails,
     ),
   );
 
@@ -925,9 +982,7 @@ tz.TZDateTime _nextInstanceAtTime(int hour, int minute) {
 Future<void> scheduleCigaretteCollectionReminderForHour(int hour) async {
   ensureNotificationTimezoneInitialized();
   final plugin = FlutterLocalNotificationsPlugin();
-  const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-  const initSettings = InitializationSettings(android: androidInit);
-  await plugin.initialize(initSettings);
+  await plugin.initialize(_initSettings);
 
   const channel = AndroidNotificationChannel(
     'cigarette_collection_reminder_channel',
@@ -952,6 +1007,8 @@ Future<void> scheduleCigaretteCollectionReminderForHour(int hour) async {
         importance: Importance.high,
         priority: Priority.high,
       ),
+      iOS: _defaultDarwinNotificationDetails,
+      macOS: _defaultDarwinNotificationDetails,
     ),
     // 제조사/OS 정책에서 exact 알람이 누락되는 경우가 있어,
     // 담배수집은 20분 윈도우 특성상 inexact가 실사용 안정성이 더 높음.
@@ -1054,9 +1111,7 @@ Future<void> maybeNotifyCigaretteCollectionWindowOpened() async {
   if (lastNotified == windowId) return;
 
   final plugin = FlutterLocalNotificationsPlugin();
-  const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-  const initSettings = InitializationSettings(android: androidInit);
-  await plugin.initialize(initSettings);
+  await plugin.initialize(_initSettings);
 
   const channel = AndroidNotificationChannel(
     'cigarette_collection_reminder_channel',
@@ -1081,6 +1136,8 @@ Future<void> maybeNotifyCigaretteCollectionWindowOpened() async {
         importance: Importance.high,
         priority: Priority.high,
       ),
+      iOS: _defaultDarwinNotificationDetails,
+      macOS: _defaultDarwinNotificationDetails,
     ),
   );
 

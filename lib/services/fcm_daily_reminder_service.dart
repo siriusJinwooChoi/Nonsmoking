@@ -37,7 +37,11 @@ class FcmDailyReminderService {
     if (_started) return;
     _started = true;
     if (!ApiConfig.isConfigured) return;
-    if (defaultTargetPlatform != TargetPlatform.android) {
+    if (kIsWeb) {
+      return;
+    }
+    if (defaultTargetPlatform != TargetPlatform.android &&
+        defaultTargetPlatform != TargetPlatform.iOS) {
       return;
     }
 
@@ -66,11 +70,15 @@ class FcmDailyReminderService {
   Future<void> _uploadCurrentDeviceToken() async {
     final messaging = FirebaseMessaging.instance;
     await messaging.setAutoInitEnabled(true);
-    await messaging.requestPermission(
+    final settings = await messaging.requestPermission(
       alert: true,
       badge: true,
       sound: true,
     );
+    if (settings.authorizationStatus == AuthorizationStatus.denied) return;
+    if (defaultTargetPlatform == TargetPlatform.iOS) {
+      await messaging.getAPNSToken();
+    }
     final token = await messaging.getToken();
     if (token == null || token.isEmpty) return;
     await _uploadToken(token);

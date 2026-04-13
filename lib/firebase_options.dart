@@ -2,10 +2,29 @@
 // ignore_for_file: lines_longer_than_80_chars, avoid_classes_with_only_static_members
 
 import 'package:firebase_core/firebase_core.dart' show FirebaseOptions;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kIsWeb, TargetPlatform;
 
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
-    return android;
+    if (kIsWeb) {
+      throw UnsupportedError(
+        'DefaultFirebaseOptions have not been configured for web.',
+      );
+    }
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+        return android;
+      case TargetPlatform.iOS:
+        return ios;
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+      case TargetPlatform.linux:
+      case TargetPlatform.fuchsia:
+        throw UnsupportedError(
+          'DefaultFirebaseOptions are only set up for Android and iOS.',
+        );
+    }
   }
 
   static const FirebaseOptions android = FirebaseOptions(

@@ -47,3 +47,7 @@ app.*.map.json
 # 로컬/비밀 설정 (GitHub에 올리면 안 됨)
 android/key.properties
 *.jks
+ios/Runner/GoogleService-Info.plist
+**/.env
+**/.env.*
+*.secret
