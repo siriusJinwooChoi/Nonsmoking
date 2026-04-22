@@ -19,6 +19,7 @@ import 'settings_screen.dart';
 import 'attendance_screen.dart';
 import '../theme/app_theme.dart';
 import '../ad_manager.dart';
+import '../ad_unit_ids.dart';
 
 // ✅ Analytics helper
 import '../analytics/app_analytics.dart';
@@ -78,6 +79,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   BannerAd? _bannerAd;
   bool _isBannerReady = false;
+  Timer? _bannerRetryTimer;
 
   final _moneyFormatter = NumberFormat.decimalPattern('ko_KR');
   final ReasonsApiService _reasonsApi = const ReasonsApiService();
@@ -101,8 +103,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   void _loadBannerAd() {
+    _bannerRetryTimer?.cancel();
     final banner = BannerAd(
-      adUnitId: 'ca-app-pub-2294312189421130/2526201037',
+      adUnitId: AdUnitIds.banner,
       size: AdSize.banner,
       request: const AdRequest(),
       listener: BannerAdListener(
@@ -118,12 +121,29 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         },
         onAdFailedToLoad: (ad, error) {
           ad.dispose();
+          if (kDebugMode) {
+            debugPrint(
+              'Banner failed to load: code=${error.code} domain=${error.domain} message=${error.message}',
+            );
+          }
           if (!mounted) return;
-          setState(() => _isBannerReady = false);
+          setState(() {
+            _bannerAd = null;
+            _isBannerReady = false;
+          });
+          _scheduleBannerRetry();
         },
       ),
     );
     banner.load();
+  }
+
+  void _scheduleBannerRetry() {
+    if (_bannerRetryTimer?.isActive ?? false) return;
+    _bannerRetryTimer = Timer(const Duration(seconds: 30), () {
+      if (!mounted || _isBannerReady) return;
+      _loadBannerAd();
+    });
   }
 
   @override
@@ -145,6 +165,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
+    _bannerRetryTimer?.cancel();
     _bannerAd?.dispose();
     _reasonController.dispose();
     _reasonFocusNode.dispose();
@@ -1045,18 +1066,26 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 border: Border.all(color: AppTheme.primary.withValues(alpha: 0.2), width: 1),
               ),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Row(
-                    children: [
-                      Icon(Icons.timer_outlined, color: AppTheme.primary, size: 24),
-                      const SizedBox(width: 10),
-                      Text('금연 시간', style: AppTheme.labelMedium.copyWith(color: AppTheme.textSecondary)),
-                    ],
-                  ),
-                  Text(
-                    formatDurationLong(_elapsed),
-                    style: AppTheme.titleLarge.copyWith(color: AppTheme.primary, fontSize: 16, letterSpacing: 0.2),
+                  Icon(Icons.timer_outlined, color: AppTheme.primary, size: 24),
+                  const SizedBox(width: 10),
+                  Text('금연 시간', style: AppTheme.labelMedium.copyWith(color: AppTheme.textSecondary)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      formatDurationLong(_elapsed),
+                      textAlign: TextAlign.right,
+                      maxLines: 2,
+                      softWrap: true,
+                      overflow: TextOverflow.ellipsis,
+                      style: AppTheme.titleLarge.copyWith(
+                        color: AppTheme.primary,
+                        fontSize: 13,
+                        height: 1.25,
+                        letterSpacing: 0.1,
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -1184,7 +1213,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   const SizedBox(height: 24),
                   Container(height: 1, color: Colors.white24),
                   const SizedBox(height: 22),
-                  Text(formatDurationLong(_elapsed), style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
+                  Text(
+                    formatDurationLong(_elapsed),
+                    style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.25, fontWeight: FontWeight.w700),
+                  ),
                   if (_failureCount > 0) ...[
                     const SizedBox(height: 8),
                     Align(

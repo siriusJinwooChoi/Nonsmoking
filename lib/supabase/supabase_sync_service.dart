@@ -93,6 +93,64 @@ abstract final class SupabaseSyncService {
     }
   }
 
+  /// 로그아웃/계정 전환 시 이전 계정 로컬 기록이 다음 계정으로 섞여 들어가는 것을 방지.
+  /// 이후 로그인 시 서버 데이터가 있으면 pull로 복원되고, 신규 계정이면 온보딩부터 시작한다.
+  static Future<void> clearLocalStateForAccountSwitch() async {
+    final prefs = await SharedPreferences.getInstance();
+    final keysToRemove = <String>[
+      _PrefsKeys.isConfigured,
+      _PrefsKeys.dailyCigarettes,
+      _PrefsKeys.cigarettesPerPack,
+      _PrefsKeys.pricePerPack,
+      _PrefsKeys.durationDays,
+      _PrefsKeys.startTime,
+      _PrefsKeys.failureCount,
+      _PrefsKeys.lungHealth,
+      _PrefsKeys.lastUpdatedTime,
+      _PrefsKeys.pinnedReasonText,
+      _PrefsKeys.quitReasonsV1,
+      _PrefsKeys.selectedReasonId,
+      _PrefsKeys.lastCollectionWindow,
+      _PrefsKeys.sessionWindow,
+      _PrefsKeys.sessionAsset,
+      _PrefsKeys.sessionAttempts,
+      _PrefsKeys.collectedCigaretteAssets,
+      _PrefsKeys.growthStage,
+      _PrefsKeys.water,
+      _PrefsKeys.currentWater,
+      _PrefsKeys.lastWaterUpdateTime,
+      _PrefsKeys.savedTreesCount,
+      _PrefsKeys.bestRecord,
+      _PrefsKeys.wordGameLevel,
+      _PrefsKeys.timingTapBestScore,
+      _PrefsKeys.cigaretteCatchBestStage,
+      _PrefsKeys.cigaretteCatchBestScore,
+      _PrefsKeys.pullPendingAfterLogin,
+      att.kGoldenCoinsKey,
+      att.kAttendanceStreakDayKey,
+      att.kAttendanceLastDateKey,
+      dw.kGoalDaysKey,
+      dw.kGoalCongratulatedDayKey,
+      dw.kReminderTimesKey,
+      dw.kSelectedReasonTextKey,
+      dw.kReasonNotificationEnabledKey,
+      dw.kInactivityNotificationEnabledKey,
+      dw.kAttendanceReminderEnabledKey,
+      dw.kCigaretteCollectionReminderEnabledKey,
+      dw.kLastAppOpenTimeMsKey,
+      DreamCarPrefsKeys.brand,
+      DreamCarPrefsKeys.stage,
+      kSavingsExchangedToCoinsWonKey,
+      GameStatsPrefsKeys.numberSequenceLastClearSeconds,
+      GameStatsPrefsKeys.timingTapLastSessionScore,
+      GameStatsPrefsKeys.cigaretteCatchLastSessionScore,
+    ];
+
+    for (final key in keysToRemove) {
+      await prefs.remove(key);
+    }
+  }
+
   static Future<void> runPostLoginPullIfNeeded() async {
     final existing = _postLoginPullInFlight;
     if (existing != null) {
@@ -124,8 +182,10 @@ abstract final class SupabaseSyncService {
       final remoteOnboardingDone = await _remoteOnboardingCompleted();
       if (remoteOnboardingDone) {
         await _pullAll(prefs);
-      } else if (prefs.getBool(_PrefsKeys.isConfigured) ?? false) {
-        await _pushAll(prefs);
+      } else {
+        // 신규 계정 첫 로그인에서는 로컬 잔존 데이터를 절대 서버로 푸시하지 않는다.
+        // (이전 계정 값이 섞여 온보딩이 건너뛰는 문제 방지)
+        await clearLocalStateForAccountSwitch();
       }
       await prefs.setBool(_initialPullDoneKey(uid), true);
       await prefs.setBool(_PrefsKeys.pullPendingAfterLogin, false);

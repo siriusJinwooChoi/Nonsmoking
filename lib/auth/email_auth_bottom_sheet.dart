@@ -231,15 +231,11 @@ class _EmailAuthSheetState extends State<_EmailAuthSheet>
       if (isSignUp) {
         final res = await AuthService.signUpWithEmail(email: id, password: pw);
         final session = res['session'];
-        if (session == null) {
-          setState(() {
-            _error = '가입은 되었으나 바로 로그인할 수 없습니다. '
-                '이메일 인증이 필요한 경우 메일을 확인하거나, '
-                '잠시 후 「로그인」에서 다시 시도해 주세요.';
-          });
-          return;
+        // 회원가입 직후에는 자동 로그인하지 않고, 로그인 탭에서 명시적으로 로그인하게 유지한다.
+        // (계정 전환 시 기존 사용자 데이터가 섞여 보이는 UX를 방지)
+        if (session != null) {
+          await AuthService.signOut();
         }
-        await AuthService.signOut();
         if (!mounted) return;
         _password.clear();
         _tab.animateTo(0);

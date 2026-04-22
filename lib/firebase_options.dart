@@ -36,8 +36,8 @@ class DefaultFirebaseOptions {
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyBWLMMyXbswXWG19KBuZ3MQ_-feBdvHBOI',
-    appId: '1:813289650706:ios:b3e218d04ea5ef573036cb',
+    apiKey: 'AIzaSyCv3Ga7W3qcYavHEjJpfw4OD-Kx9V6NxMs',
+    appId: '1:813289650706:ios:208485f2c8a7799e3036cb',
     messagingSenderId: '813289650706',
     projectId: 'nonsmoking-ef941',
     storageBucket: 'nonsmoking-ef941.firebasestorage.app',

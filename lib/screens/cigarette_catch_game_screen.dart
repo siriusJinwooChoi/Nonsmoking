@@ -318,7 +318,9 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
     setState(() => _gameOver = true);
     if (_isGameOverAdShowing) return;
     _isGameOverAdShowing = true;
-    AdManager.showAd(onAdClosed: () {});
+    AdManager.showAd(onAdClosed: () {
+      _isGameOverAdShowing = false;
+    });
   }
 
   @override

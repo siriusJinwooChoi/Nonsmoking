@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'theme/app_theme.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'ad_manager.dart';
+import 'ad_unit_ids.dart';
 import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
@@ -44,6 +45,7 @@ import 'dart:convert';
 
 import 'package:app_links/app_links.dart';
 
+import 'app_nav.dart';
 import 'auth/auth_gate.dart';
 import 'auth/bff_auth_service.dart';
 import 'auth/bff_oauth_service.dart';
@@ -72,6 +74,11 @@ void main() async {
 
     // ✅ 광고 초기화
     await MobileAds.instance.initialize();
+    if (kDebugMode) {
+      debugPrint(
+        'Ad units(debug): banner=${AdUnitIds.banner}, interstitial=${AdUnitIds.interstitial}',
+      );
+    }
     AdManager.loadAd();
 
     // ✅ WorkManager 초기화
@@ -107,6 +114,25 @@ class _QuitSmokingAppState extends State<QuitSmokingApp>
     with WidgetsBindingObserver {
   StreamSubscription<Uri>? _appLinkSub;
 
+  bool _isOAuthCallbackUri(Uri uri) {
+    if (uri.scheme != 'com.cjw.nonsmoking') return false;
+    if (uri.host == 'login-callback') return true;
+    final path = uri.path.toLowerCase();
+    return path == '/login-callback' || path == '/login-callback/';
+  }
+
+  String? _extractOAuthCode(Uri uri) {
+    final queryCode = uri.queryParameters['code'];
+    if (queryCode != null && queryCode.isNotEmpty) return queryCode;
+    if (uri.fragment.isNotEmpty) {
+      try {
+        final fromFragment = Uri.splitQueryString(uri.fragment)['code'];
+        if (fromFragment != null && fromFragment.isNotEmpty) return fromFragment;
+      } catch (_) {}
+    }
+    return null;
+  }
+
   Future<bool> checkIfConfigured() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool('isConfigured') ?? false;
@@ -138,16 +164,16 @@ class _QuitSmokingAppState extends State<QuitSmokingApp>
     if (!SupabaseConfig.isConfigured) return;
     final appLinks = AppLinks();
     _appLinkSub = appLinks.uriLinkStream.listen((uri) {
-      if (uri.scheme == 'com.cjw.nonsmoking' && uri.host == 'login-callback') {
-        BffOAuthService.completeWithAuthCode(uri.queryParameters['code']);
+      if (_isOAuthCallbackUri(uri)) {
+        unawaited(BffOAuthService.completeWithAuthCode(_extractOAuthCode(uri)));
       }
     });
     try {
       final initial = await appLinks.getInitialLink();
-      if (initial != null &&
-          initial.scheme == 'com.cjw.nonsmoking' &&
-          initial.host == 'login-callback') {
-        BffOAuthService.completeWithAuthCode(initial.queryParameters['code']);
+      if (initial != null && _isOAuthCallbackUri(initial)) {
+        unawaited(
+          BffOAuthService.completeWithAuthCode(_extractOAuthCode(initial)),
+        );
       }
     } catch (_) {}
   }
@@ -178,6 +204,7 @@ class _QuitSmokingAppState extends State<QuitSmokingApp>
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: appRootNavigatorKey,
       debugShowCheckedModeBanner: false,
       title: '금연뱅크',
       theme: AppTheme.lightTheme,
@@ -459,6 +486,7 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
 
   // ✅ 전면광고
   InterstitialAd? _interstitialAd;
+  Timer? _interstitialRetryTimer;
 
   // ✅ 클릭 카운트(20번마다 노출)
   int _clickCount = 0;
@@ -486,10 +514,12 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
   void _loadInterstitialAd() {
     InterstitialAd.load(
       // ✅ 실제 광고 ID
-      adUnitId: 'ca-app-pub-2294312189421130/4538637779',
+      adUnitId: AdUnitIds.interstitial,
       request: const AdRequest(),
       adLoadCallback: InterstitialAdLoadCallback(
         onAdLoaded: (ad) {
+          _interstitialRetryTimer?.cancel();
+          _interstitialRetryTimer = null;
           _interstitialAd = ad;
         },
         onAdFailedToLoad: (error) {
@@ -497,9 +527,19 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
           if (kDebugMode) {
             debugPrint('Interstitial failed to load: $error');
           }
+          // no fill/네트워크 오류 시 자동 재시도
+          _scheduleInterstitialRetry();
         },
       ),
     );
+  }
+
+  void _scheduleInterstitialRetry() {
+    if (_interstitialRetryTimer?.isActive ?? false) return;
+    _interstitialRetryTimer = Timer(const Duration(seconds: 20), () {
+      if (!mounted || _interstitialAd != null) return;
+      _loadInterstitialAd();
+    });
   }
 
   void _showAdThenNavigate(int index) async {
@@ -536,6 +576,7 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
 
   @override
   void dispose() {
+    _interstitialRetryTimer?.cancel();
     _interstitialAd?.dispose();
     super.dispose();
   }

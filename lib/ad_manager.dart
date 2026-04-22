@@ -1,18 +1,27 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart'; // VoidCallback
 import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'dart:async';
+
+import 'ad_unit_ids.dart';
 
 /// AdManager: 전면 광고(interstitial) 로드/표시 전용 싱글턴 스타일 헬퍼
 class AdManager {
   AdManager._(); // 인스턴스화 방지
 
-  static String interstitialUnitId = 'ca-app-pub-2294312189421130/4538637779';
+  static String? _interstitialOverride;
+
+  /// [AdUnitIds.interstitial] 사용 (Android / iOS 각각 AdMob에서 발급한 ID).
+  static String get interstitialUnitId =>
+      _interstitialOverride ?? AdUnitIds.interstitial;
 
   static InterstitialAd? _interstitialAd;
   static bool _isLoading = false;
+  static Timer? _retryTimer;
 
   /// (선택) 런타임에 광고 단위 ID 변경할 수 있게 제공
   static void setAdUnitId(String id) {
-    interstitialUnitId = id;
+    _interstitialOverride = id;
   }
 
   /// 전면광고 로드
@@ -25,6 +34,8 @@ class AdManager {
       request: const AdRequest(),
       adLoadCallback: InterstitialAdLoadCallback(
         onAdLoaded: (InterstitialAd ad) {
+          _retryTimer?.cancel();
+          _retryTimer = null;
           _interstitialAd = ad;
           _isLoading = false;
           // 안전을 위해 광고가 로드되면 한 번만 사용되도록 콜백 비우는 등 준비.
@@ -33,9 +44,23 @@ class AdManager {
         onAdFailedToLoad: (LoadAdError error) {
           _interstitialAd = null;
           _isLoading = false;
+          if (kDebugMode) {
+            debugPrint(
+              'AdManager interstitial load failed: ${error.code} ${error.message}',
+            );
+          }
+          _scheduleRetry();
         },
       ),
     );
+  }
+
+  static void _scheduleRetry() {
+    if (_retryTimer?.isActive ?? false) return;
+    _retryTimer = Timer(const Duration(seconds: 20), () {
+      if (_interstitialAd != null || _isLoading) return;
+      loadAd();
+    });
   }
 
   /// 광고 표시. 광고가 없으면 즉시 onAdClosed 호출.
@@ -69,6 +94,7 @@ class AdManager {
         } catch (_) {}
         _interstitialAd = null;
         loadAd();
+        _scheduleRetry();
         onAdClosed();
       },
     );
@@ -80,6 +106,7 @@ class AdManager {
       // 안전장치: 실패 시 콜백 호출
       _interstitialAd = null;
       loadAd();
+      _scheduleRetry();
       onAdClosed();
     }
   }

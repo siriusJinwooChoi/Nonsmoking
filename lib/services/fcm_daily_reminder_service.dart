@@ -101,9 +101,17 @@ class FcmDailyReminderService {
       );
       if (res.statusCode == 200) {
         _lastUploadedToken = token;
-        await dw.setFcmRemotePushEnabled(true);
+        // 서버 원격 푸시는 현재 Android 경로를 기준으로 운영한다.
+        // iOS는 APNs/서버 라우팅 준비 상태에 따라 공백이 생길 수 있어
+        // 로컬 예약(수집/출석/리마인더)을 유지한다.
+        await dw.setFcmRemotePushEnabled(
+          defaultTargetPlatform == TargetPlatform.android,
+        );
         if (kDebugMode) {
-          debugPrint('FcmDailyReminderService: token registered, remote push (daily/attendance/collection) on');
+          debugPrint(
+            'FcmDailyReminderService: token registered, '
+            'remotePush=${defaultTargetPlatform == TargetPlatform.android}',
+          );
         }
       }
     } catch (e, st) {

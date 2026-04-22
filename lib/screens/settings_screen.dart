@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../app_nav.dart';
 import '../auth/auth_service.dart';
 import '../auth/bff_auth_service.dart';
 import '../api/bff_profile_api.dart';
@@ -420,6 +421,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               titleColor: AppTheme.error,
               onTap: () => _confirmSignOut(context),
             ),
+            _settingsTile(
+              context,
+              icon: Icons.person_remove_alt_1_rounded,
+              title: '계정 삭제',
+              subtitle: '계정 및 동기화 데이터를 삭제합니다.',
+              titleColor: AppTheme.error,
+              onTap: _confirmDeleteAccount,
+            ),
           ],
         ],
       ),
@@ -450,9 +459,70 @@ class _SettingsScreenState extends State<SettingsScreen> {
     unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
     await AuthService.signOut();
     if (!context.mounted) return;
-    // 설정 화면이 스택에 남아 로그인 화면이 가려지는 것을 방지 (AuthGate는 세션만 없애고 라우트는 유지될 수 있음)
-    Navigator.of(context).popUntil((route) => route.isFirst);
-}
+    await _returnToAuthGateRoot();
+  }
+
+  Future<void> _confirmDeleteAccount() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('계정 삭제'),
+        content: const Text(
+          '계정을 삭제하면 서버에 저장된 계정 및 동기화 데이터가 삭제되며 복구할 수 없습니다.\n\n'
+          '정말 계정을 삭제하시겠습니까?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('계정 삭제'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    if (!mounted) return;
+
+    showDialog<void>(
+      context: context,
+      useRootNavigator: true,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      await AuthService.deleteAccount();
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop(); // loading
+      // 세션은 이미 끊김 — 설정·그 위 푸시 스택을 먼저 비워야 AuthGate 아래 로그인 화면이 보임
+      await _returnToAuthGateRoot();
+      final rootCtx = appRootNavigatorKey.currentContext;
+      if (rootCtx != null && rootCtx.mounted) {
+        ScaffoldMessenger.of(rootCtx).showSnackBar(
+          const SnackBar(content: Text('계정이 삭제되었습니다.')),
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      Navigator.of(context, rootNavigator: true).pop(); // loading
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('계정 삭제에 실패했습니다. 잠시 후 다시 시도해 주세요.')),
+      );
+    }
+  }
+
+  /// 로그아웃/계정삭제 후 [AuthGate]가 있는 루트로 돌아가 세션 변화를 반영한다.
+  /// `LoginScreen`만 단독으로 쌓으면 OAuth 복귀 후에도 화면이 갱신되지 않는다.
+  Future<void> _returnToAuthGateRoot() async {
+    final nav = appRootNavigatorKey.currentState;
+    if (nav == null) return;
+    nav.popUntil((route) => route.isFirst);
+  }
 
   Widget _sectionTitle(String text) {
     return Padding(
