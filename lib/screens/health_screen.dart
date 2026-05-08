@@ -31,42 +31,67 @@ class _HealthScreenState extends State<HealthScreen> {
     HealthStage(
       label: '20분',
       minutes: 20,
-      description: '혈압과 맥박이 정상으로 회복됩니다.',
+      description: '심박수와 혈압이 내려가 금연 전보다 안정화되기 시작합니다.',
     ),
     HealthStage(
       label: '8시간',
       minutes: 8 * 60,
-      description: '혈액 내 산소 수치가 정상으로 돌아옵니다.',
+      description: '혈중 일산화탄소 농도가 감소하고 산소 운반이 개선됩니다.',
     ),
     HealthStage(
       label: '24시간',
       minutes: 24 * 60,
-      description: '심장마비 위험이 감소합니다.',
+      description: '심혈관 부담이 줄기 시작하며 심장질환 위험 감소가 시작됩니다.',
     ),
     HealthStage(
       label: '48시간',
       minutes: 48 * 60,
-      description: '후각과 미각이 향상됩니다.',
+      description: '니코틴이 대부분 배출되고 후각·미각 회복이 시작됩니다.',
     ),
     HealthStage(
       label: '72시간',
       minutes: 72 * 60,
-      description: '기관지가 이완되고 폐기능이 향상됩니다.',
+      description: '기관지가 이완되며 호흡이 이전보다 편해지는 경우가 많습니다.',
     ),
     HealthStage(
-      label: '2주~3개월',
+      label: '2주',
       minutes: 14 * 24 * 60,
-      description: '혈액순환과 폐기능이 눈에 띄게 개선됩니다.',
+      description: '혈액순환 개선이 본격화되어 활동 시 숨참이 완화될 수 있습니다.',
     ),
     HealthStage(
-      label: '1~9개월',
+      label: '1개월',
       minutes: 30 * 24 * 60,
-      description: '기침, 피로감, 호흡곤란이 줄어듭니다.',
+      description: '기침·가래가 줄고 폐의 섬모 기능 회복이 진행됩니다.',
+    ),
+    HealthStage(
+      label: '3개월',
+      minutes: 90 * 24 * 60,
+      description: '폐기능이 유의하게 개선되어 일상 체력이 좋아질 수 있습니다.',
+    ),
+    HealthStage(
+      label: '6개월',
+      minutes: 180 * 24 * 60,
+      description: '호흡기 증상이 더 완화되고 회복 체감이 커지는 시기입니다.',
+    ),
+    HealthStage(
+      label: '9개월',
+      minutes: 270 * 24 * 60,
+      description: '기침/숨가쁨 완화가 지속되고 감염 대응력이 좋아질 수 있습니다.',
     ),
     HealthStage(
       label: '1년',
       minutes: 365 * 24 * 60,
       description: '관상동맥 심장질환 위험이 절반으로 감소합니다.',
+    ),
+    HealthStage(
+      label: '5년',
+      minutes: 365 * 24 * 60 * 5,
+      description: '뇌졸중 위험이 비흡연자 수준에 가까워질 수 있습니다.',
+    ),
+    HealthStage(
+      label: '10년',
+      minutes: 365 * 24 * 60 * 10,
+      description: '폐암 사망 위험이 흡연 지속 대비 약 절반으로 감소합니다.',
     ),
   ];
 
@@ -122,7 +147,7 @@ class _HealthScreenState extends State<HealthScreen> {
   @override
   Widget build(BuildContext context) {
     final totalMinutes = quitDuration.inMinutes;
-    const maxMinutes = 525600; // 1년
+    const maxMinutes = 5256000; // 10년
     final progress = (totalMinutes / maxMinutes).clamp(0.0, 1.0);
     final percent = (progress * 100).toStringAsFixed(1);
 
@@ -172,7 +197,12 @@ class _HealthScreenState extends State<HealthScreen> {
           const SizedBox(height: 8),
           Expanded(
             child: ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              padding: EdgeInsets.fromLTRB(
+                16,
+                8,
+                16,
+                MediaQuery.of(context).padding.bottom + 28,
+              ),
               itemCount: healthStages.length,
               itemBuilder: (context, index) {
                 final stage = healthStages[index];

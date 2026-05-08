@@ -9,16 +9,16 @@ import '../notifications/daily_reminder_worker.dart';
 import '../supabase/supabase_config.dart';
 import '../api/attendance_api_service.dart';
 import '../api/coins_api_service.dart';
-/// 출석체크 1~28일, 7x4 그리드. 금연코인 10/20(7,14,21,28일).
+/// 출석체크 1~28일, 7x4 그리드. 기본 15코인, 주말(토/일) 20코인.
 const String kAttendanceStreakDayKey = 'attendance_streak_day';
 const String kAttendanceLastDateKey = 'attendance_last_date';
+const String kAttendanceHistoryDatesKey = 'attendance_history_dates_v1';
 const String kGoldenCoinsKey = 'golden_coins';
 /// 이 날짜(yyyy-MM-dd)에 "오늘 하루 출석 화면 안 보기"를 선택한 경우, 당일 재실행 시 출석 오버레이 생략
 const String kAttendanceSkipOverlayDateKey = 'attendance_skip_overlay_date';
 const int kAttendanceDays = 28;
 const int kCoinsPerDay = 15;
-const int kCoinsMilestone = 20;
-const List<int> kMilestoneDays = [7, 14, 21, 28];
+const int kCoinsWeekend = 20;
 
 Future<int> getAttendanceStreakDay() async {
   final prefs = await SharedPreferences.getInstance();
@@ -76,6 +76,9 @@ String _todayString() {
   return '${n.year}-${n.month.toString().padLeft(2, '0')}-${n.day.toString().padLeft(2, '0')}';
 }
 
+bool _isWeekend(DateTime dt) =>
+    dt.weekday == DateTime.saturday || dt.weekday == DateTime.sunday;
+
 /// 오늘 출석했는지
 Future<bool> hasAttendedToday() async {
   final last = await getAttendanceLastDate();
@@ -118,10 +121,14 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   bool _isCheckingIn = false;
   /// 출석 처리 후 당일 다시 출석창을 띄우지 않기 (닫을 때 prefs 저장)
   bool _hideOverlayRestOfDay = false;
+  Set<String> _attendedDates = <String>{};
+  late DateTime _displayMonth;
 
   @override
   void initState() {
     super.initState();
+    final now = DateTime.now();
+    _displayMonth = DateTime(now.year, now.month, 1);
     _load();
   }
 
@@ -140,28 +147,62 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
     final prefs = await SharedPreferences.getInstance();
     final last = prefs.getString(kAttendanceLastDateKey);
-    final today = _todayString();
     int streak = _clampStreakDay(prefs.getInt(kAttendanceStreakDayKey) ?? 1);
 
-    if (last != null) {
-      final lastDt = DateTime.tryParse(last);
-      final todayDt = DateTime.parse(today);
-      if (lastDt != null) {
-        final diff = todayDt.difference(lastDt).inDays;
-        if (diff > 1) {
-          streak = 1;
-          await prefs.setInt(kAttendanceStreakDayKey, 1);
-        }
-      }
-    }
+    final history = prefs.getStringList(kAttendanceHistoryDatesKey) ?? const <String>[];
+    final normalizedHistory = await _backfillAttendanceHistoryFromQuitStart(
+      prefs,
+      history.toSet(),
+    );
 
     if (!mounted) return;
     setState(() {
       _streakDay = _clampStreakDay(streak);
       _lastDate = last;
       _coins = prefs.getInt(kGoldenCoinsKey) ?? 0;
+      _attendedDates = normalizedHistory;
       _loading = false;
     });
+  }
+
+  Future<Set<String>> _backfillAttendanceHistoryFromQuitStart(
+    SharedPreferences prefs,
+    Set<String> currentHistory,
+  ) async {
+    final startMs = prefs.getInt('startTime');
+    if (startMs == null) return currentHistory;
+    final now = DateTime.now();
+    final start = DateTime.fromMillisecondsSinceEpoch(startMs);
+    var day = DateTime(start.year, start.month, start.day);
+    final end = DateTime(now.year, now.month, now.day).subtract(const Duration(days: 1));
+    if (day.isAfter(end)) return currentHistory;
+    bool changed = false;
+    while (!day.isAfter(end)) {
+      final ymd =
+          '${day.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}';
+      if (!currentHistory.contains(ymd)) {
+        currentHistory.add(ymd);
+        changed = true;
+      }
+      day = day.add(const Duration(days: 1));
+    }
+    if (changed) {
+      final sorted = currentHistory.toList()..sort();
+      await prefs.setStringList(kAttendanceHistoryDatesKey, sorted);
+    }
+    return currentHistory;
+  }
+
+  DateTime get _earliestVisibleMonth {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month - 2, 1);
+  }
+
+  bool get _canGoPrevMonth => _displayMonth.isAfter(_earliestVisibleMonth);
+  bool get _canGoNextMonth {
+    final now = DateTime.now();
+    final thisMonth = DateTime(now.year, now.month, 1);
+    return _displayMonth.isBefore(thisMonth);
   }
 
   void _onTapDayBlocked(int day, {required bool alreadyToday, required int? tappableDay}) {
@@ -182,7 +223,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     int nextStreak = _streakDay;
     if (day != nextStreak) return;
 
-    final coinsToAdd = kMilestoneDays.contains(day) ? kCoinsMilestone : kCoinsPerDay;
+    final coinsToAdd = _isWeekend(DateTime.now()) ? kCoinsWeekend : kCoinsPerDay;
     final nextDay = day == 28 ? 1 : day + 1;
     final newCoins = _coins + coinsToAdd;
 
@@ -192,6 +233,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       _streakDay = nextDay;
       _lastDate = today;
       _coins = newCoins;
+      _attendedDates = {..._attendedDates, today};
       _justEarnedCoins = coinsToAdd;
       _justEarnedDay = day;
       _attendedThisSession = true;
@@ -203,6 +245,9 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       await prefs.setInt(kAttendanceStreakDayKey, nextDay);
       await prefs.setString(kAttendanceLastDateKey, today);
       await prefs.setInt(kGoldenCoinsKey, newCoins);
+      final history = (prefs.getStringList(kAttendanceHistoryDatesKey) ?? <String>[]).toSet();
+      history.add(today);
+      await prefs.setStringList(kAttendanceHistoryDatesKey, history.toList()..sort());
       await cancelAttendanceReminder();
     } catch (_) {
       // 로컬 우선 정책: 저장 실패 시에도 UI는 유지하고 다음 진입 동기화에서 보정
@@ -301,10 +346,12 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
     final today = _todayString();
     final alreadyToday = _lastDate == today;
-    final lastCheckedDay = alreadyToday
-        ? (_streakDay == 1 ? 28 : _streakDay - 1)
-        : _streakDay - 1;
     final tappableDay = alreadyToday ? null : _streakDay;
+    final now = DateTime.now();
+    final firstOfMonth = _displayMonth;
+    final daysInMonth = DateTime(_displayMonth.year, _displayMonth.month + 1, 0).day;
+    final leadingEmpty = firstOfMonth.weekday % 7; // 일요일 시작
+    final totalCells = leadingEmpty + daysInMonth;
 
     return Material(
       color: const Color(0xFF1E3A5F),
@@ -351,36 +398,171 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                   ],
                 ),
                 const SizedBox(height: 16),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2A4365),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.white24),
+                    ),
+                    child: Text(
+                      '출석 보상 안내: 매일 +$kCoinsPerDay코인'
+                      ' (주말 토/일은 +$kCoinsWeekend코인)',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        onPressed: _canGoPrevMonth
+                            ? () {
+                                setState(() {
+                                  _displayMonth = DateTime(
+                                    _displayMonth.year,
+                                    _displayMonth.month - 1,
+                                    1,
+                                  );
+                                });
+                              }
+                            : null,
+                        icon: const Icon(Icons.chevron_left_rounded, color: Colors.white),
+                      ),
+                      Expanded(
+                        child: Text(
+                          '${_displayMonth.year}년 ${_displayMonth.month}월 출석 달력',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: _canGoNextMonth
+                            ? () {
+                                setState(() {
+                                  _displayMonth = DateTime(
+                                    _displayMonth.year,
+                                    _displayMonth.month + 1,
+                                    1,
+                                  );
+                                });
+                              }
+                            : null,
+                        icon: const Icon(Icons.chevron_right_rounded, color: Colors.white),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 12),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _WeekLabel('일'),
+                      _WeekLabel('월'),
+                      _WeekLabel('화'),
+                      _WeekLabel('수'),
+                      _WeekLabel('목'),
+                      _WeekLabel('금'),
+                      _WeekLabel('토'),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
                 Expanded(
                   child: GridView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                     gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                       crossAxisCount: 7,
                       mainAxisSpacing: 8,
                       crossAxisSpacing: 8,
-                      childAspectRatio: 0.75,
+                      childAspectRatio: 1.0,
                     ),
-                    itemCount: kAttendanceDays,
+                    itemCount: totalCells,
                     itemBuilder: (context, index) {
-                      final day = index + 1;
-                      final checked = day <= lastCheckedDay;
-                      final isTappable = !_isCheckingIn && tappableDay == day;
-                      final isMilestone = kMilestoneDays.contains(day);
-                      final coins = isMilestone ? kCoinsMilestone : kCoinsPerDay;
-                      return _DayTile(
-                        day: day,
-                        coins: coins,
-                        checked: checked,
-                        isTappable: isTappable,
-                        isMilestone: isMilestone,
-                        onTap: () => _onTapDay(day),
-                        onTapDisabled: () => _onTapDayBlocked(
-                          day,
-                          alreadyToday: alreadyToday,
-                          tappableDay: tappableDay,
+                      if (index < leadingEmpty) {
+                        return const SizedBox.shrink();
+                      }
+                      final day = index - leadingEmpty + 1;
+                      final dateStr =
+                          '${_displayMonth.year}-${_displayMonth.month.toString().padLeft(2, '0')}-${day.toString().padLeft(2, '0')}';
+                      final isToday = day == now.day &&
+                          _displayMonth.year == now.year &&
+                          _displayMonth.month == now.month;
+                      final checked = _attendedDates.contains(dateStr) || (alreadyToday && isToday);
+                      return Container(
+                        decoration: BoxDecoration(
+                          color: checked
+                              ? const Color(0xFFD4A84B)
+                              : const Color(0xFF2A4365),
+                          borderRadius: BorderRadius.circular(10),
+                          border: isToday
+                              ? Border.all(color: const Color(0xFF5FC3E8), width: 2)
+                              : null,
+                        ),
+                        child: Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                '$day',
+                                style: TextStyle(
+                                  color: checked ? Colors.black87 : Colors.white,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Icon(
+                                checked
+                                    ? Icons.check_circle_rounded
+                                    : Icons.circle_outlined,
+                                size: 14,
+                                color: checked
+                                    ? const Color(0xFF0D9488)
+                                    : Colors.white38,
+                              ),
+                            ],
+                          ),
                         ),
                       );
                     },
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: (_isCheckingIn || alreadyToday)
+                          ? null
+                          : () => _onTapDay(_streakDay),
+                      icon: const Icon(Icons.check_circle_outline_rounded),
+                      label: Text(
+                        alreadyToday
+                            ? '오늘 출석 완료'
+                            : '오늘 출석하기 (${tappableDay}일차, +${_isWeekend(now) ? kCoinsWeekend : kCoinsPerDay} 코인)',
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF5FC3E8),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                    ),
                   ),
                 ),
                 if (alreadyToday || _attendedThisSession)
@@ -391,9 +573,22 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                         if (alreadyToday)
                           Padding(
                             padding: const EdgeInsets.only(bottom: 10),
-                            child: Text(
-                              '오늘 출석을 완료했어요!',
-                              style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 13),
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFD4A84B),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Text(
+                                '오늘 출석 완료! 금연코인이 지급되었습니다.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: Colors.black87,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
                             ),
                           ),
                         Row(
@@ -459,6 +654,27 @@ class _CoinEarnedOverlay extends StatefulWidget {
 
   @override
   State<_CoinEarnedOverlay> createState() => _CoinEarnedOverlayState();
+}
+
+class _WeekLabel extends StatelessWidget {
+  final String text;
+  const _WeekLabel(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 32,
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: Colors.white70,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
 }
 
 class _CoinEarnedOverlayState extends State<_CoinEarnedOverlay>

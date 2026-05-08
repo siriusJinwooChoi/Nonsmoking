@@ -30,7 +30,6 @@ import 'screens/game_menu_screen.dart';
 import 'screens/growth_hub_screen.dart';
 import 'screens/lung_smoking_menu_screen.dart';
 import 'screens/cigarette_collect_screen.dart';
-import 'screens/health_screen.dart';
 import 'screens/attendance_screen.dart';
 
 // firebase
@@ -94,6 +93,8 @@ void main() async {
       await BffAuthService.instance.restoreSession();
     }
     await RemoteAssets.migrateLegacyCigarettePathsInPrefs();
+    // 수집/도감 진입 시 첫 렌더 지연을 줄이기 위해 담배갑 목록을 백그라운드로 워밍업
+    unawaited(RemoteAssets.fetchCigarettePackKeysCached());
     // 첫 프레임·스플래시를 막지 않도록 전체 push 는 백그라운드 (로그인·온보딩 완료 시에만 동작)
     unawaited(SupabaseSyncService.runStartupPushOnlyIfEligible());
 
@@ -133,20 +134,6 @@ class _QuitSmokingAppState extends State<QuitSmokingApp>
     return null;
   }
 
-  Future<bool> checkIfConfigured() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('isConfigured') ?? false;
-  }
-
-  Future<Map<String, int>> loadUserSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    return {
-      'dailyCigarettes': prefs.getInt('dailyCigarettes') ?? 0,
-      'cigarettesPerPack': prefs.getInt('cigarettesPerPack') ?? 20,
-      'pricePerPack': prefs.getInt('pricePerPack') ?? 4500,
-    };
-  }
-
   @override
   void initState() {
     super.initState();
@@ -165,15 +152,37 @@ class _QuitSmokingAppState extends State<QuitSmokingApp>
     final appLinks = AppLinks();
     _appLinkSub = appLinks.uriLinkStream.listen((uri) {
       if (_isOAuthCallbackUri(uri)) {
-        unawaited(BffOAuthService.completeWithAuthCode(_extractOAuthCode(uri)));
+        unawaited(() async {
+          try {
+            await BffOAuthService.completeWithAuthCode(_extractOAuthCode(uri));
+          } catch (e, st) {
+            if (kDebugMode) {
+              debugPrint('OAuth deep link handling failed: $e\n$st');
+            }
+            await FirebaseCrashlytics.instance.recordError(
+              e,
+              st,
+              reason: 'oauth_deep_link',
+            );
+          }
+        }());
       }
     });
     try {
       final initial = await appLinks.getInitialLink();
       if (initial != null && _isOAuthCallbackUri(initial)) {
-        unawaited(
-          BffOAuthService.completeWithAuthCode(_extractOAuthCode(initial)),
-        );
+        try {
+          await BffOAuthService.completeWithAuthCode(_extractOAuthCode(initial));
+        } catch (e, st) {
+          if (kDebugMode) {
+            debugPrint('OAuth initial deep link handling failed: $e\n$st');
+          }
+          await FirebaseCrashlytics.instance.recordError(
+            e,
+            st,
+            reason: 'oauth_initial_deep_link',
+          );
+        }
       }
     } catch (_) {}
   }
@@ -211,40 +220,77 @@ class _QuitSmokingAppState extends State<QuitSmokingApp>
       navigatorObservers: [
         FirebaseAnalyticsObserver(analytics: FirebaseAnalytics.instance),
       ],
-      home: AuthGate(
-        child: FutureBuilder<bool>(
-          future: checkIfConfigured(),
-          builder: (context, snapshot) {
-            if (!snapshot.hasData) {
-              return const Scaffold(
-                body: Center(child: CircularProgressIndicator()),
-              );
-            }
+      home: const AppRootScreen(),
+    );
+  }
+}
 
-            final isConfigured = snapshot.data!;
-            if (!isConfigured) {
-              return const IntroFlowWrapper();
-            }
+Future<bool> _checkIfConfigured() async {
+  if (SupabaseConfig.isConfigured && BffAuthService.instance.isLoggedIn) {
+    // 계정 전환 직후에는 로컬값(isConfigured)이 이전 계정 상태일 수 있어
+    // 화면 분기 전에 한 번 동기화 상태를 강제 점검한다.
+    await SupabaseSyncService.prepareLocalStateForCurrentUser();
 
-            return FutureBuilder<Map<String, int>>(
-              future: loadUserSettings(),
-              builder: (context, userSnapshot) {
-                if (!userSnapshot.hasData) {
-                  return const Scaffold(
-                    body: Center(child: CircularProgressIndicator()),
-                  );
-                }
+    final prefs = await SharedPreferences.getInstance();
+    final localConfigured = prefs.getBool('isConfigured') ?? false;
+    if (!localConfigured) {
+      // 로컬이 미완료면 서버 기준으로 한 번 더 pull 시도.
+      await SupabaseSyncService.markPullRequiredOnNextLogin();
+    }
+    await SupabaseSyncService.runPostLoginPullIfNeeded();
+  }
 
-                final settings = userSnapshot.data!;
-                return AttendanceGate(
-                  dailyCigarettes: settings['dailyCigarettes']!,
-                  cigarettesPerPack: settings['cigarettesPerPack']!,
-                  pricePerPack: settings['pricePerPack']!,
-                );
-              },
+  final prefs = await SharedPreferences.getInstance();
+  return prefs.getBool('isConfigured') ?? false;
+}
+
+Future<Map<String, int>> _loadUserSettings() async {
+  final prefs = await SharedPreferences.getInstance();
+  return {
+    'dailyCigarettes': prefs.getInt('dailyCigarettes') ?? 0,
+    'cigarettesPerPack': prefs.getInt('cigarettesPerPack') ?? 20,
+    'pricePerPack': prefs.getInt('pricePerPack') ?? 4500,
+  };
+}
+
+class AppRootScreen extends StatelessWidget {
+  const AppRootScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return AuthGate(
+      child: FutureBuilder<bool>(
+        future: _checkIfConfigured(),
+        builder: (context, snapshot) {
+          if (!snapshot.hasData) {
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
             );
-          },
-        ),
+          }
+
+          final isConfigured = snapshot.data!;
+          if (!isConfigured) {
+            return const IntroFlowWrapper();
+          }
+
+          return FutureBuilder<Map<String, int>>(
+            future: _loadUserSettings(),
+            builder: (context, userSnapshot) {
+              if (!userSnapshot.hasData) {
+                return const Scaffold(
+                  body: Center(child: CircularProgressIndicator()),
+                );
+              }
+
+              final settings = userSnapshot.data!;
+              return AttendanceGate(
+                dailyCigarettes: settings['dailyCigarettes']!,
+                cigarettesPerPack: settings['cigarettesPerPack']!,
+                pricePerPack: settings['pricePerPack']!,
+              );
+            },
+          );
+        },
       ),
     );
   }
@@ -362,15 +408,14 @@ class _IntroFlowWrapperState extends State<IntroFlowWrapper> {
 
             if (!mounted) return;
 
-            Navigator.pushReplacement(
+            Navigator.pushAndRemoveUntil(
               context,
               MaterialPageRoute(
-                builder: (_) => MainScreenWrapper(
-                  dailyCigarettes: dailyCigarettes,
-                  cigarettesPerPack: cigarettesPerPack,
-                  pricePerPack: pricePerPack,
-                ),
+                // 루트(AuthGate)를 유지한 채 재진입해야 로그아웃/계정삭제 시
+                // 로그인 화면으로 정확히 복귀하고, 재로그인 게이트도 일관된다.
+                builder: (_) => const AppRootScreen(),
               ),
+              (_) => false,
             );
           },
           dailyCigarettes: dailyCigarettes,
@@ -599,7 +644,6 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
       const GrowthHubScreen(),
       const LungSmokingMenuScreen(),
       const CigaretteCollectScreen(),
-      const HealthScreen(),
     ];
 
     return Scaffold(
@@ -624,9 +668,8 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
                 _NavItem(icon: Icons.home_rounded, label: '메인', index: 0, current: currentIndex, onTap: _showAdThenNavigate),
                 _NavItem(icon: Icons.sports_esports_rounded, label: '게임', index: 1, current: currentIndex, onTap: _showAdThenNavigate),
                 _NavItem(icon: Icons.auto_awesome_rounded, label: '성장시키기', index: 2, current: currentIndex, onTap: _showAdThenNavigate),
-                _NavItem(icon: Icons.favorite_rounded, label: '폐·커뮤니티', index: 3, current: currentIndex, onTap: _showAdThenNavigate),
+                _NavItem(icon: Icons.favorite_rounded, label: '건강/커뮤니티', index: 3, current: currentIndex, onTap: _showAdThenNavigate),
                 _NavItem(icon: Icons.inventory_2_rounded, label: '수집·도감', index: 4, current: currentIndex, onTap: _showAdThenNavigate),
-                _NavItem(icon: Icons.favorite_border_rounded, label: '건강', index: 5, current: currentIndex, onTap: _showAdThenNavigate),
               ],
             ),
           ),

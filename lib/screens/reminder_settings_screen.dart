@@ -19,15 +19,32 @@ class ReminderSettingsScreen extends StatefulWidget {
   State<ReminderSettingsScreen> createState() => _ReminderSettingsScreenState();
 }
 
-class _ReminderSettingsScreenState extends State<ReminderSettingsScreen> {
+class _ReminderSettingsScreenState extends State<ReminderSettingsScreen>
+    with SingleTickerProviderStateMixin {
   late List<TimeOfDay> _times;
+  List<TimeOfDay> _patternTimes = const [];
   bool _hasLocalEdits = false;
+  int _selectedTab = 0;
+  late final TabController _tabController;
 
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(() {
+      if (!_tabController.indexIsChanging && mounted && _selectedTab != _tabController.index) {
+        setState(() => _selectedTab = _tabController.index);
+      }
+    });
     _times = List.from(widget.initialTimes);
     unawaited(_reloadTimesFromPrefs());
+    unawaited(_reloadPatternTimesFromPrefs());
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   /// 부모가 넘긴 목록은 첫 프레임용이며, 저장소와 동기화해 재진입 시에도 최신 목록을 보여준다.
@@ -40,6 +57,15 @@ class _ReminderSettingsScreenState extends State<ReminderSettingsScreen> {
     setState(() {
       _times = t;
       _sortTimes();
+    });
+  }
+
+  Future<void> _reloadPatternTimesFromPrefs() async {
+    final times = await getPatternReminderSlots();
+    if (!mounted) return;
+    setState(() {
+      _patternTimes = List<TimeOfDay>.from(times)
+        ..sort((a, b) => (a.hour * 60 + a.minute).compareTo(b.hour * 60 + b.minute));
     });
   }
 
@@ -122,67 +148,142 @@ class _ReminderSettingsScreenState extends State<ReminderSettingsScreen> {
           onPressed: () => Navigator.pop(context, List<TimeOfDay>.from(_times)),
         ),
       ),
-      body: ListView(
-        padding: EdgeInsets.only(
-          left: 16,
-          right: 16,
-          top: 16,
-          bottom: MediaQuery.of(context).padding.bottom + 24,
-        ),
-        children: [
-          Text(
-            '설정한 시간마다 금연 리마인더 알림이 옵니다. 여러 개 추가할 수 있습니다.',
-            style: AppTheme.bodyMedium.copyWith(color: AppTheme.textSecondary),
-          ),
-          const SizedBox(height: 20),
-          if (_times.isEmpty)
-            Center(
-              child: Padding(
-                padding: const EdgeInsets.all(32),
-                child: Column(
-                  children: [
-                    Icon(Icons.notifications_none_rounded, size: 56, color: AppTheme.textMuted),
-                    const SizedBox(height: 12),
-                    Text('등록된 알림이 없습니다.', style: AppTheme.titleMedium),
-                    const SizedBox(height: 8),
-                    Text(
-                      '아래 + 버튼으로 알림 시간을 추가하세요.',
-                      style: AppTheme.bodyMedium.copyWith(color: AppTheme.textSecondary),
-                      textAlign: TextAlign.center,
+      body: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: AppTheme.surfaceCard,
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                  ],
-                ),
-              ),
-            )
-          else
-            ...List.generate(_times.length, (i) {
-              final t = _times[i];
-              return Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                decoration: BoxDecoration(
-                  color: AppTheme.surfaceCard,
-                  borderRadius: BorderRadius.circular(14),
-                  boxShadow: AppTheme.cardShadowSubtle,
-                ),
-                child: ListTile(
-                  leading: Icon(Icons.schedule_rounded, color: AppTheme.primary),
-                  title: Text('매일 ${t.format(context)}', style: AppTheme.titleMedium),
-                  subtitle: const Text('탭하면 시간 변경', style: TextStyle(fontSize: 12, color: AppTheme.textMuted)),
-                  onTap: () => _editAt(i),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.close_rounded, color: AppTheme.error),
-                    onPressed: () => _removeAt(i),
-                    tooltip: '삭제',
+                    child: TabBar(
+                      controller: _tabController,
+                      tabs: [
+                        Tab(text: '사용자 설정 알림'),
+                        Tab(text: '패턴 알림'),
+                      ],
+                    ),
                   ),
                 ),
-              );
-            }),
-        ],
-      ),
+                Expanded(
+                  child: TabBarView(
+                    controller: _tabController,
+                    children: [
+                      ListView(
+                        padding: EdgeInsets.only(
+                          left: 16,
+                          right: 16,
+                          top: 16,
+                          bottom: MediaQuery.of(context).padding.bottom + 24,
+                        ),
+                        children: [
+                          Text(
+                            '설정한 시간마다 금연 리마인더 알림이 옵니다. 여러 개 추가할 수 있습니다.',
+                            style: AppTheme.bodyMedium.copyWith(color: AppTheme.textSecondary),
+                          ),
+                          const SizedBox(height: 20),
+                          if (_times.isEmpty)
+                            Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(32),
+                                child: Column(
+                                  children: [
+                                    Icon(Icons.notifications_none_rounded, size: 56, color: AppTheme.textMuted),
+                                    const SizedBox(height: 12),
+                                    Text('등록된 알림이 없습니다.', style: AppTheme.titleMedium),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      '오른쪽 아래 + 버튼으로 알림 시간을 추가하세요.',
+                                      style: AppTheme.bodyMedium.copyWith(color: AppTheme.textSecondary),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          else
+                            ...List.generate(_times.length, (i) {
+                              final t = _times[i];
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.surfaceCard,
+                                  borderRadius: BorderRadius.circular(14),
+                                  boxShadow: AppTheme.cardShadowSubtle,
+                                ),
+                                child: ListTile(
+                                  leading: Icon(Icons.schedule_rounded, color: AppTheme.primary),
+                                  title: Text('매일 ${t.format(context)}', style: AppTheme.titleMedium),
+                                  subtitle: const Text('탭하면 시간 변경', style: TextStyle(fontSize: 12, color: AppTheme.textMuted)),
+                                  onTap: () => _editAt(i),
+                                  trailing: IconButton(
+                                    icon: const Icon(Icons.close_rounded, color: AppTheme.error),
+                                    onPressed: () => _removeAt(i),
+                                    tooltip: '삭제',
+                                  ),
+                                ),
+                              );
+                            }),
+                        ],
+                      ),
+                      ListView(
+                        padding: EdgeInsets.only(
+                          left: 16,
+                          right: 16,
+                          top: 16,
+                          bottom: MediaQuery.of(context).padding.bottom + 24,
+                        ),
+                        children: [
+                          Text(
+                            '방금 피움 기록을 분석해 자동으로 생성되는 예방 알림 시간대입니다.',
+                            style: AppTheme.bodyMedium.copyWith(color: AppTheme.textSecondary),
+                          ),
+                          const SizedBox(height: 10),
+                          if (_patternTimes.isEmpty)
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: AppTheme.surfaceCard,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Text(
+                                '아직 생성된 패턴 알림이 없습니다.\n방금 피움 기록 5건 이상부터 자동 생성됩니다.',
+                                style: AppTheme.bodyMedium.copyWith(color: AppTheme.textSecondary),
+                              ),
+                            )
+                          else
+                            ...List.generate(_patternTimes.length, (i) {
+                              final t = _patternTimes[i];
+                              return Container(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.surfaceCard,
+                                  borderRadius: BorderRadius.circular(14),
+                                  boxShadow: AppTheme.cardShadowSubtle,
+                                ),
+                                child: ListTile(
+                                  leading: Icon(Icons.auto_awesome_rounded, color: AppTheme.primary),
+                                  title: Text('매일 ${t.format(context)} (3분 전 발송)', style: AppTheme.titleMedium),
+                                  subtitle: const Text(
+                                    '자동 생성된 패턴 알림 (직접 수정 불가)',
+                                    style: TextStyle(fontSize: 12, color: AppTheme.textMuted),
+                                  ),
+                                ),
+                              );
+                            }),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _addReminder,
-        tooltip: '알림 추가',
-        child: const Icon(Icons.add_rounded),
+        onPressed: _selectedTab == 0 ? _addReminder : null,
+        tooltip: _selectedTab == 0 ? '알림 추가' : '사용자 설정 알림 탭에서 추가 가능',
+        child: Icon(_selectedTab == 0 ? Icons.add_rounded : Icons.lock_outline_rounded),
       ),
     );
   }

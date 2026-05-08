@@ -12,6 +12,7 @@ import '../api/remote_assets.dart';
 import '../auth/bff_auth_service.dart';
 import '../notifications/daily_reminder_worker.dart' as dw;
 import '../data/dream_car_prefs.dart';
+import '../data/cigarette_collection_prefs.dart';
 import '../data/savings_coin_exchange.dart';
 import '../screens/attendance_screen.dart' as att;
 import 'supabase_config.dart';
@@ -46,6 +47,8 @@ abstract final class _PrefsKeys {
   static const cigaretteCatchBestStage = 'cigarette_catch_best_stage';
   static const cigaretteCatchBestScore = 'cigarette_catch_best_score';
   static const pullPendingAfterLogin = 'supabase_pull_pending_after_login';
+  static const lastAuthUid = 'supabase_last_auth_uid';
+  static const forceOnboardingOnce = 'supabase_force_onboarding_once';
 }
 
 String _initialPullDoneKey(String uid) => 'supabase_initial_pull_done_$uid';
@@ -77,6 +80,21 @@ abstract final class SupabaseSyncService {
     await prefs.setBool(_PrefsKeys.pullPendingAfterLogin, true);
   }
 
+  /// 회원가입 직후 첫 로그인에서는 서버 상태와 무관하게 온보딩을 먼저 진행시킨다.
+  static Future<void> markForceOnboardingOnce() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_PrefsKeys.forceOnboardingOnce, true);
+  }
+
+  /// 로그아웃 직전에 현재 로그인 UID를 기록해 다음 로그인 시 계정 전환을 정확히 감지한다.
+  static Future<void> rememberCurrentAuthUidBeforeSignOut() async {
+    if (!SupabaseConfig.isConfigured) return;
+    final uid = BffAuthService.instance.userId;
+    if (uid == null || uid.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_PrefsKeys.lastAuthUid, uid);
+  }
+
   static Future<void> runStartupPushOnlyIfEligible() async {
     if (!SupabaseConfig.isConfigured) return;
     if (!BffAuthService.instance.isLoggedIn) return;
@@ -98,6 +116,7 @@ abstract final class SupabaseSyncService {
   static Future<void> clearLocalStateForAccountSwitch() async {
     final prefs = await SharedPreferences.getInstance();
     final keysToRemove = <String>[
+      kTermsAgreedPrefsKey,
       _PrefsKeys.isConfigured,
       _PrefsKeys.dailyCigarettes,
       _PrefsKeys.cigarettesPerPack,
@@ -115,6 +134,7 @@ abstract final class SupabaseSyncService {
       _PrefsKeys.sessionAsset,
       _PrefsKeys.sessionAttempts,
       _PrefsKeys.collectedCigaretteAssets,
+      CigaretteCollectionPrefs.countsJsonKey,
       _PrefsKeys.growthStage,
       _PrefsKeys.water,
       _PrefsKeys.currentWater,
@@ -152,18 +172,57 @@ abstract final class SupabaseSyncService {
   }
 
   static Future<void> runPostLoginPullIfNeeded() async {
-    final existing = _postLoginPullInFlight;
-    if (existing != null) {
-      await existing;
+    while (true) {
+      final existing = _postLoginPullInFlight;
+      if (existing != null) {
+        await existing;
+        // 다른 세션의 pull을 기다린 뒤에는 현재 세션 기준으로
+        // 실제 처리 필요 여부를 다시 확인해 누락을 막는다.
+        if (await _needsPostLoginPullNow()) {
+          continue;
+        }
+        return;
+      }
+
+      final done = _runPostLoginPullIfNeededBody();
+      _postLoginPullInFlight = done;
+      try {
+        await done;
+      } finally {
+        _postLoginPullInFlight = null;
+      }
       return;
     }
-    final done = _runPostLoginPullIfNeededBody();
-    _postLoginPullInFlight = done;
-    try {
-      await done;
-    } finally {
-      _postLoginPullInFlight = null;
+  }
+
+  static Future<bool> _needsPostLoginPullNow() async {
+    if (!SupabaseConfig.isConfigured) return false;
+    if (!BffAuthService.instance.isLoggedIn) return false;
+    final uid = BffAuthService.instance.userId;
+    if (uid == null || uid.isEmpty) return false;
+
+    final prefs = await SharedPreferences.getInstance();
+    final forceOnboarding = prefs.getBool(_PrefsKeys.forceOnboardingOnce) ?? false;
+    final pending = prefs.getBool(_PrefsKeys.pullPendingAfterLogin) ?? false;
+    final initialDone = prefs.getBool(_initialPullDoneKey(uid)) ?? false;
+    return forceOnboarding || pending || !initialDone;
+  }
+
+  /// 로그인 직후 UI 게이트 진입 전에 현재 사용자 기준으로 로컬 상태를 정렬한다.
+  /// 계정 전환이면 잔존 로컬 데이터를 지우고, 같은 계정이면 그대로 유지한다.
+  static Future<void> prepareLocalStateForCurrentUser() async {
+    if (!SupabaseConfig.isConfigured) return;
+    if (!BffAuthService.instance.isLoggedIn) return;
+    final uid = BffAuthService.instance.userId;
+    if (uid == null || uid.isEmpty) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final lastUid = prefs.getString(_PrefsKeys.lastAuthUid);
+    if (lastUid != null && lastUid.isNotEmpty && lastUid != uid) {
+      await clearLocalStateForAccountSwitch();
+      await prefs.setBool(_PrefsKeys.pullPendingAfterLogin, true);
     }
+    await prefs.setString(_PrefsKeys.lastAuthUid, uid);
   }
 
   static Future<void> _runPostLoginPullIfNeededBody() async {
@@ -174,21 +233,45 @@ abstract final class SupabaseSyncService {
     final uid = BffAuthService.instance.userId;
     if (uid == null) return;
 
+    final forceOnboarding = prefs.getBool(_PrefsKeys.forceOnboardingOnce) ?? false;
+    if (forceOnboarding) {
+      await clearLocalStateForAccountSwitch();
+      await prefs.setBool(_PrefsKeys.isConfigured, false);
+      await prefs.setBool(_PrefsKeys.pullPendingAfterLogin, false);
+      await prefs.setBool(_initialPullDoneKey(uid), true);
+      await prefs.setString(_PrefsKeys.lastAuthUid, uid);
+      await prefs.setBool(_PrefsKeys.forceOnboardingOnce, false);
+      return;
+    }
+
+    final lastUid = prefs.getString(_PrefsKeys.lastAuthUid);
+    final isAccountSwitched =
+        lastUid != null && lastUid.isNotEmpty && lastUid != uid;
+    if (isAccountSwitched) {
+      await clearLocalStateForAccountSwitch();
+      await prefs.setBool(_PrefsKeys.pullPendingAfterLogin, true);
+    }
+
     final pending = prefs.getBool(_PrefsKeys.pullPendingAfterLogin) ?? false;
     final initialDone = prefs.getBool(_initialPullDoneKey(uid)) ?? false;
     if (!pending && initialDone) return;
 
     try {
       final remoteOnboardingDone = await _remoteOnboardingCompleted();
+      if (remoteOnboardingDone == null) {
+        // 네트워크/서버 일시 오류 시에는 상태를 확정하지 않고 다음 기회에 재시도한다.
+        return;
+      }
+
       if (remoteOnboardingDone) {
         await _pullAll(prefs);
       } else {
-        // 신규 계정 첫 로그인에서는 로컬 잔존 데이터를 절대 서버로 푸시하지 않는다.
-        // (이전 계정 값이 섞여 온보딩이 건너뛰는 문제 방지)
-        await clearLocalStateForAccountSwitch();
+        // 신규 계정(원격 온보딩 미완료): 자동 push 금지.
+        // 사용자가 온보딩을 완료하기 전까지는 초기 상태를 유지한다.
       }
       await prefs.setBool(_initialPullDoneKey(uid), true);
       await prefs.setBool(_PrefsKeys.pullPendingAfterLogin, false);
+      await prefs.setString(_PrefsKeys.lastAuthUid, uid);
     } catch (e, st) {
       if (kDebugMode) {
         debugPrint('SupabaseSyncService.runPostLoginPullIfNeeded: $e\n$st');
@@ -211,11 +294,11 @@ abstract final class SupabaseSyncService {
     }
   }
 
-  static Future<bool> _remoteOnboardingCompleted() async {
+  static Future<bool?> _remoteOnboardingCompleted() async {
     final headers = await _authHeader();
-    if (headers.isEmpty) return false;
+    if (headers.isEmpty) return null;
     final res = await http.get(_bffUri('/v1/sync/onboarding'), headers: headers);
-    if (res.statusCode != 200) return false;
+    if (res.statusCode != 200) return null;
     final map = jsonDecode(res.body) as Map<String, dynamic>;
     return map['is_configured'] == true;
   }
@@ -247,6 +330,15 @@ abstract final class SupabaseSyncService {
       } catch (_) {}
     }
     final reminderList = reminderDecoded is List ? reminderDecoded : <dynamic>[];
+    dynamic patternSlotsDecoded;
+    final patternSlotsRaw = prefs.getString(dw.kPatternReminderSlotsKey);
+    if (patternSlotsRaw != null && patternSlotsRaw.trim().isNotEmpty) {
+      try {
+        patternSlotsDecoded = jsonDecode(patternSlotsRaw);
+      } catch (_) {}
+    }
+    final patternSlotsList =
+        patternSlotsDecoded is List ? patternSlotsDecoded : <dynamic>[];
 
     final lastDateStr = prefs.getString(att.kAttendanceLastDateKey);
 
@@ -254,6 +346,8 @@ abstract final class SupabaseSyncService {
         DateTime.now().millisecondsSinceEpoch;
     final lungLast =
         prefs.getInt(_PrefsKeys.lastUpdatedTime) ?? startMs;
+
+    final cigCounts = await CigaretteCollectionPrefs.readCounts(prefs);
 
     final body = <String, dynamic>{
       'user_settings': {
@@ -287,6 +381,9 @@ abstract final class SupabaseSyncService {
             prefs.getBool(dw.kAttendanceReminderEnabledKey) ?? true,
         'cigarette_collection_reminder_enabled':
             prefs.getBool(dw.kCigaretteCollectionReminderEnabledKey) ?? true,
+        'pattern_reminder_enabled':
+            prefs.getBool(dw.kPatternReminderEnabledKey) ?? true,
+        'pattern_reminder_slots_json': patternSlotsList,
         'last_app_open_time_ms': prefs.getInt(dw.kLastAppOpenTimeMsKey),
       },
       'coins_and_attendance': {
@@ -313,8 +410,9 @@ abstract final class SupabaseSyncService {
         'session_window': prefs.getString(_PrefsKeys.sessionWindow),
         'session_asset': prefs.getString(_PrefsKeys.sessionAsset),
         'session_attempts': prefs.getInt(_PrefsKeys.sessionAttempts) ?? 0,
-        'collected_asset_paths': RemoteAssets.normalizeCigaretteKeyList(
-          prefs.getStringList(_PrefsKeys.collectedCigaretteAssets) ?? <String>[],
+        'collected_asset_paths':
+            RemoteAssets.normalizeCigaretteKeyPathsPreserveDuplicates(
+          CigaretteCollectionPrefs.expandPathsForSync(cigCounts),
         ),
       },
       'game_stats': <String, dynamic>{
@@ -551,6 +649,39 @@ abstract final class SupabaseSyncService {
         remoteCollectionEnabled ?? true,
       );
     }
+    await prefs.setBool(
+      dw.kPatternReminderEnabledKey,
+      row['pattern_reminder_enabled'] as bool? ?? true,
+    );
+    final remotePatternSlots = row['pattern_reminder_slots_json'];
+    if (remotePatternSlots != null) {
+      try {
+        await prefs.setString(
+          dw.kPatternReminderSlotsKey,
+          jsonEncode(remotePatternSlots),
+        );
+      } catch (_) {}
+    } else {
+      await prefs.remove(dw.kPatternReminderSlotsKey);
+    }
+    if ((row['pattern_reminder_enabled'] as bool?) == false) {
+      try {
+        await dw.cancelPatternReminders();
+      } catch (_) {}
+      await prefs.remove(dw.kPatternReminderSlotsKey);
+    } else {
+      try {
+        final slots = await dw.getPatternReminderSlots();
+        if (slots.isEmpty) {
+          await dw.cancelPatternReminders();
+        } else {
+          await dw.schedulePatternRemindersFromSlots(
+            slots: slots,
+            nickname: '회원',
+          );
+        }
+      } catch (_) {}
+    }
     final lastMs = row['last_app_open_time_ms'];
     if (lastMs != null) {
       await prefs.setInt(dw.kLastAppOpenTimeMsKey, (lastMs as num).toInt());
@@ -688,16 +819,14 @@ abstract final class SupabaseSyncService {
       (row['session_attempts'] as num?)?.toInt() ?? 0,
     );
     final paths = row['collected_asset_paths'];
-    final localCollected =
-        prefs.getStringList(_PrefsKeys.collectedCigaretteAssets) ?? <String>[];
     if (paths is List && paths.isNotEmpty) {
-      final remote = paths
-          .map((e) => RemoteAssets.normalizeCigaretteKey(e.toString()))
-          .toList();
-      final localNorm =
-          localCollected.map(RemoteAssets.normalizeCigaretteKey).toList();
-      final merged = {...localNorm, ...remote}.toList()..sort();
-      await prefs.setStringList(_PrefsKeys.collectedCigaretteAssets, merged);
+      final remoteCounts = CigaretteCollectionPrefs.countsFromRemotePaths(paths);
+      final localCounts = await CigaretteCollectionPrefs.readCounts(prefs);
+      final merged = CigaretteCollectionPrefs.mergeCountsMax(
+        localCounts,
+        remoteCounts,
+      );
+      await CigaretteCollectionPrefs.writeCounts(prefs, merged);
     }
   }
 

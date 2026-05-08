@@ -114,6 +114,10 @@ const String kCigaretteCollectionReminderUniqueWorkPrefix = 'cigarette_collectio
 const int kCigaretteCollectionReminderNotificationIdBase = 6001;
 const String kCigaretteCollectionReminderEnabledKey = 'cigaretteCollectionReminderEnabled';
 const String kCigaretteCollectionLastNotifiedWindowKey = 'cigarette_collection_last_notified_window';
+const int kPatternReminderNotificationIdBase = 7001;
+const String kPatternReminderEnabledKey = 'patternReminderEnabled';
+const int kPatternReminderSlotMax = 5;
+const String kPatternReminderSlotsKey = 'pattern_reminder_slots_v1';
 const int kCigaretteCollectionWindowMinutes = 20;
 const List<int> _cigaretteCollectionHours = [9, 12, 18, 22];
 
@@ -1180,4 +1184,187 @@ Future<void> bootstrapCoreReminderSchedulesOnAppOpen() async {
   await scheduleAttendanceReminderIfNeeded();
   await scheduleCigaretteCollectionReminders();
   await maybeNotifyCigaretteCollectionWindowOpened();
+}
+
+/// 사용자가 흡연/강한 욕구를 기록한 시각의 "다음날부터 매일 3분 전" 알림 예약
+Future<void> schedulePatternReminder({
+  required int patternId,
+  required int hour,
+  required int minute,
+  required String nickname,
+}) async {
+  final enabled = await getPatternReminderEnabled();
+  if (!enabled) return;
+  ensureNotificationTimezoneInitialized();
+  await ensureAndroidAlarmPermissionsForScheduling();
+  final granted = await _ensureNotificationPermissionGranted();
+  if (!granted) return;
+
+  var notifyHour = hour;
+  var notifyMinute = minute - 3;
+  if (notifyMinute < 0) {
+    notifyMinute += 60;
+    notifyHour = (notifyHour - 1) % 24;
+    if (notifyHour < 0) notifyHour += 24;
+  }
+
+  final plugin = FlutterLocalNotificationsPlugin();
+  await plugin.initialize(_initSettings);
+  const channel = AndroidNotificationChannel(
+    'smoking_pattern_channel',
+    '흡연 패턴 알림',
+    description: '사용자 기록 기반 흡연욕구 예방 알림',
+    importance: Importance.high,
+  );
+  final androidImpl = plugin.resolvePlatformSpecificImplementation<
+      AndroidFlutterLocalNotificationsPlugin>();
+  await androidImpl?.createNotificationChannel(channel);
+
+  final id = kPatternReminderNotificationIdBase + (patternId % 900);
+  await plugin.cancel(id);
+
+  const androidDetails = AndroidNotificationDetails(
+    'smoking_pattern_channel',
+    '흡연 패턴 알림',
+    channelDescription: '사용자 기록 기반 흡연욕구 예방 알림',
+    importance: Importance.high,
+    priority: Priority.high,
+    playSound: true,
+    enableVibration: true,
+  );
+  final bodyName = nickname.trim().isEmpty ? '회원' : nickname.trim();
+  await plugin.zonedSchedule(
+    id,
+    '흡연 패턴 미리 알림',
+    '($bodyName)님은 이 시간대에 담배를 피고 싶어하세요. 참아보세요!',
+    _nextInstanceAtTime(notifyHour, notifyMinute),
+    const NotificationDetails(
+      android: androidDetails,
+      iOS: _defaultDarwinNotificationDetails,
+      macOS: _defaultDarwinNotificationDetails,
+    ),
+    androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+    matchDateTimeComponents: DateTimeComponents.time,
+    uiLocalNotificationDateInterpretation:
+        UILocalNotificationDateInterpretation.absoluteTime,
+  );
+}
+
+Future<void> schedulePatternRemindersFromSlots({
+  required List<TimeOfDay> slots,
+  required String nickname,
+}) async {
+  final capped = slots.take(kPatternReminderSlotMax).toList();
+  // 알림 권한/OS 상태와 관계없이 계산된 패턴 시간대는 저장해 UI에서 확인 가능하게 한다.
+  await setPatternReminderSlots(capped);
+
+  final enabled = await getPatternReminderEnabled();
+  if (!enabled) {
+    await cancelPatternReminders();
+    return;
+  }
+  ensureNotificationTimezoneInitialized();
+  await ensureAndroidAlarmPermissionsForScheduling();
+  final granted = await _ensureNotificationPermissionGranted();
+  if (!granted) return;
+
+  final plugin = FlutterLocalNotificationsPlugin();
+  await plugin.initialize(_initSettings);
+  const channel = AndroidNotificationChannel(
+    'smoking_pattern_channel',
+    '흡연 패턴 알림',
+    description: '사용자 기록 기반 흡연욕구 예방 알림',
+    importance: Importance.high,
+  );
+  final androidImpl = plugin.resolvePlatformSpecificImplementation<
+      AndroidFlutterLocalNotificationsPlugin>();
+  await androidImpl?.createNotificationChannel(channel);
+
+  // 기존 패턴 예약은 먼저 정리한 뒤 최신 피크 슬롯만 다시 등록
+  await cancelPatternReminders();
+
+  const androidDetails = AndroidNotificationDetails(
+    'smoking_pattern_channel',
+    '흡연 패턴 알림',
+    channelDescription: '사용자 기록 기반 흡연욕구 예방 알림',
+    importance: Importance.high,
+    priority: Priority.high,
+    playSound: true,
+    enableVibration: true,
+  );
+  final bodyName = nickname.trim().isEmpty ? '회원' : nickname.trim();
+  for (var i = 0; i < capped.length; i++) {
+    var notifyHour = capped[i].hour;
+    var notifyMinute = capped[i].minute - 3;
+    if (notifyMinute < 0) {
+      notifyMinute += 60;
+      notifyHour = (notifyHour - 1) % 24;
+      if (notifyHour < 0) notifyHour += 24;
+    }
+    final id = kPatternReminderNotificationIdBase + i;
+    await plugin.zonedSchedule(
+      id,
+      '흡연 패턴 미리 알림',
+      '($bodyName)님은 이 시간대에 담배를 피고 싶어하세요. 참아보세요!',
+      _nextInstanceAtTime(notifyHour, notifyMinute),
+      const NotificationDetails(
+        android: androidDetails,
+        iOS: _defaultDarwinNotificationDetails,
+        macOS: _defaultDarwinNotificationDetails,
+      ),
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+      matchDateTimeComponents: DateTimeComponents.time,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+    );
+  }
+}
+
+Future<bool> getPatternReminderEnabled() async {
+  final prefs = await SharedPreferences.getInstance();
+  return prefs.getBool(kPatternReminderEnabledKey) ?? true;
+}
+
+Future<void> cancelPatternReminders() async {
+  final plugin = FlutterLocalNotificationsPlugin();
+  for (var i = 0; i < 900; i++) {
+    await plugin.cancel(kPatternReminderNotificationIdBase + i);
+  }
+}
+
+Future<void> setPatternReminderSlots(List<TimeOfDay> slots) async {
+  final prefs = await SharedPreferences.getInstance();
+  final payload = slots
+      .take(kPatternReminderSlotMax)
+      .map((t) => {'h': t.hour, 'm': t.minute})
+      .toList();
+  await prefs.setString(kPatternReminderSlotsKey, jsonEncode(payload));
+}
+
+Future<void> clearPatternReminderSlots() async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.remove(kPatternReminderSlotsKey);
+}
+
+Future<List<TimeOfDay>> getPatternReminderSlots() async {
+  final prefs = await SharedPreferences.getInstance();
+  final raw = prefs.getString(kPatternReminderSlotsKey);
+  if (raw == null || raw.isEmpty) return const <TimeOfDay>[];
+  try {
+    final list = jsonDecode(raw) as List<dynamic>;
+    return _reminderMapsFromDecodedList(list)
+        .map((m) => TimeOfDay(hour: _readReminderHour(m), minute: _readReminderMinute(m)))
+        .toList();
+  } catch (_) {
+    return const <TimeOfDay>[];
+  }
+}
+
+Future<void> setPatternReminderEnabled(bool enabled) async {
+  final prefs = await SharedPreferences.getInstance();
+  await prefs.setBool(kPatternReminderEnabledKey, enabled);
+  if (!enabled) {
+    await cancelPatternReminders();
+    await clearPatternReminderSlots();
+  }
 }

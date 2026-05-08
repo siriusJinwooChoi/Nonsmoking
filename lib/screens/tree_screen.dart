@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../api/api_config.dart';
 import '../api/remote_assets.dart';
+import 'attendance_screen.dart';
 import '../theme/app_theme.dart';
 
 // ✅ Analytics helper
@@ -126,6 +127,23 @@ class _TreeScreenState extends State<TreeScreen>
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('🌳 나무를 보관했습니다. 새 나무를 키워보세요!'), duration: Duration(seconds: 2)),
+    );
+  }
+
+  Future<void> _convertTreesToCoins() async {
+    if (savedTreesCount <= 0) return;
+    final trees = savedTreesCount;
+    final coinsToAdd = trees * 500;
+    final currentCoins = await getGoldenCoins();
+    await setGoldenCoins(currentCoins + coinsToAdd);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kSavedTreesCount, 0);
+    if (!mounted) return;
+    setState(() {
+      savedTreesCount = 0;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('🌳 ${trees}그루를 금연코인 ${coinsToAdd}개로 변환했습니다.')),
     );
   }
 
@@ -320,6 +338,11 @@ class _TreeScreenState extends State<TreeScreen>
                       '• 물은 2분마다 1ml씩 차요 • 5단계까지 성장해요',
                       style: AppTheme.labelMedium.copyWith(color: AppTheme.primary),
                     ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '• 나무를 5단계까지 키워 보관하면 1그루가 되고, 1그루당 500코인으로 변환할 수 있어요',
+                      style: AppTheme.labelMedium.copyWith(color: AppTheme.primary),
+                    ),
                   ],
                 ),
               ),
@@ -448,6 +471,21 @@ class _TreeScreenState extends State<TreeScreen>
                 ),
               ),
               const SizedBox(height: 12),
+              if (savedTreesCount > 0)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: ElevatedButton.icon(
+                    onPressed: _convertTreesToCoins,
+                    icon: const Icon(Icons.currency_exchange_rounded, size: 20),
+                    label: Text('나무 ${savedTreesCount}그루 → 금연코인 ${savedTreesCount * 500}개 변환'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.warning,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  ),
+                ),
               if (growthStage >= 5)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),

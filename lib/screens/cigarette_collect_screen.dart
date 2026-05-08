@@ -6,9 +6,10 @@ import 'package:lottie/lottie.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../api/api_config.dart';
 import '../api/remote_assets.dart';
+import '../data/cigarette_collection_prefs.dart';
 import '../theme/app_theme.dart';
+import 'attendance_screen.dart' show consumeCoinsIfPossible;
 import 'cigarette_catalog_screen.dart';
-import 'attendance_screen.dart';
 import '../supabase/supabase_sync_service.dart';
 import '../notifications/daily_reminder_worker.dart';
 
@@ -31,13 +32,14 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
   ];
   static const int _windowMinutes = 20;
   static const String _lastCollectionWindowKey = 'last_collection_window';
+  /// `last_collection_window` 와 같은 구간에서 성공/실패(5회 소진) 구분용
+  static const String _lastWindowOutcomeKey = 'cigarette_collect_window_outcome_v1';
   static const String _sessionWindowKey = 'cigarette_collect_session_window';
   static const String _sessionAssetKey = 'cigarette_collect_session_asset';
   static const String _sessionAttemptsKey = 'cigarette_collect_session_attempts';
   static const int _coinsPerAttempt = 2;
 
   static final _random = Random();
-  static const String _collectedKey = 'collected_cigarette_assets';
   static const double _successProbability = 0.10;
   static const int _maxAttempts = 5;
 
@@ -51,6 +53,8 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
   /// 현재 시간이 수집 가능 구간인지, 해당 구간을 이미 사용했는지
   bool _isInCollectionWindow = false;
   bool _hasUsedCurrentWindow = false;
+  /// 이번 시간대가 이미 끝났을 때 성공으로 끝났는지(null 이면 prefs 없음·구버전)
+  bool? _lastUsedWindowCollected;
   String? _currentWindowId;
 
   bool _showEffect = false;
@@ -70,11 +74,42 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
       duration: const Duration(milliseconds: 500),
     );
     unawaited(maybeNotifyCigaretteCollectionWindowOpened());
+    unawaited(_bootstrapFastWindowState());
     _loadAssets();
-    _windowTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+    // 정각 진입 직후 수집 가능 상태가 늦게 보이는 현상을 줄이기 위해 짧은 주기로 갱신
+    _windowTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       if (_cigaretteAssets.isNotEmpty) {
         unawaited(maybeNotifyCigaretteCollectionWindowOpened());
         _loadWindowState(_cigaretteAssets);
+      }
+    });
+  }
+
+  /// 서버 목록 응답 전에, 이전 세션 담배갑 정보를 즉시 복원해 첫 화면 체감 지연을 줄인다.
+  Future<void> _bootstrapFastWindowState() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    final now = DateTime.now();
+    final windowId = _getWindowIdFor(now);
+    final isInWindow = windowId != null;
+    final lastUsed = prefs.getString(_lastCollectionWindowKey);
+    final hasUsed = isInWindow && lastUsed == windowId;
+    final sessionWindow = prefs.getString(_sessionWindowKey);
+    final sessionAsset = prefs.getString(_sessionAssetKey);
+    final sessionAttempts = prefs.getInt(_sessionAttemptsKey) ?? 0;
+    final canRestoreSessionAsset = isInWindow &&
+        !hasUsed &&
+        sessionWindow == windowId &&
+        sessionAsset != null &&
+        sessionAsset.isNotEmpty;
+    setState(() {
+      _currentWindowId = windowId;
+      _isInCollectionWindow = isInWindow;
+      _hasUsedCurrentWindow = hasUsed;
+      if (canRestoreSessionAsset) {
+        _currentAsset = sessionAsset;
+        _attempts = sessionAttempts.clamp(0, _maxAttempts);
+        _loadingAssets = false;
       }
     });
   }
@@ -108,6 +143,20 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
     final windowId = _getWindowIdFor(now);
     final isInWindow = windowId != null;
     final hasUsed = isInWindow && lastUsed == windowId;
+    bool? usedOutcome;
+    if (hasUsed) {
+      final raw = prefs.getString(_lastWindowOutcomeKey);
+      if (raw != null) {
+        final sep = raw.indexOf('|');
+        if (sep > 0 && sep < raw.length - 1) {
+          final id = raw.substring(0, sep);
+          final tag = raw.substring(sep + 1);
+          if (id == windowId) {
+            usedOutcome = tag == 'success';
+          }
+        }
+      }
+    }
     String? asset;
     int attempts = 0;
     if (isInWindow && !hasUsed && assets.isNotEmpty) {
@@ -130,6 +179,7 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
       _currentWindowId = windowId;
       _isInCollectionWindow = isInWindow;
       _hasUsedCurrentWindow = hasUsed;
+      _lastUsedWindowCollected = hasUsed ? usedOutcome : null;
       if (isInWindow && !hasUsed && assets.isNotEmpty) {
         _currentAsset = asset;
         _attempts = attempts;
@@ -156,12 +206,21 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
   /// 서버 `GET /v1/assets/cigarettes` + `/static/cigarettes/*` 이미지.
   Future<void> _loadAssets() async {
     try {
-      final assets = await RemoteAssets.fetchCigarettePackKeys();
+      final assets = await RemoteAssets.fetchCigarettePackKeysCached();
 
+      String? picked;
+      var precacheOrder = assets;
+      if (assets.isNotEmpty) {
+        picked = assets[_random.nextInt(assets.length)];
+        precacheOrder = <String>[
+          picked,
+          ...assets.where((k) => k != picked),
+        ];
+      }
       if (!mounted) return;
       setState(() {
         _cigaretteAssets = assets;
-        _currentAsset = assets.isNotEmpty ? assets[_random.nextInt(assets.length)] : null;
+        _currentAsset = _currentAsset ?? picked;
         _loadingAssets = false;
         if (_currentAsset == null) {
           _status = ApiConfig.isConfigured
@@ -169,6 +228,25 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
               : '서버 주소(API_BASE_URL)가 없어 이미지를 불러올 수 없습니다.';
         }
       });
+      // 수집 화면 메인 이미지(memCacheWidth 480)와 맞춰 precache; UI는 목록 수신 직후 연다.
+      const collectThumbW = 480;
+      const firstBatch = 12;
+      if (precacheOrder.isNotEmpty && mounted) {
+        unawaited(
+          RemoteAssets.precacheFirstCigarettePackImages(
+            context,
+            precacheOrder,
+            count: firstBatch,
+            thumbnailDecodeWidth: collectThumbW,
+          ),
+        );
+        RemoteAssets.precacheRemainingCigarettePackImagesBackground(
+          context,
+          precacheOrder,
+          startIndex: firstBatch,
+          thumbnailDecodeWidth: collectThumbW,
+        );
+      }
       await _loadWindowState(assets);
     } catch (_) {
       if (!mounted) return;
@@ -218,8 +296,8 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
         _effectSuccess = true;
         _showEffect = true;
       });
-      _persistCollected();
-      _markWindowUsed();
+      await _persistCollected();
+      await _markWindowUsed(collectedSuccessfully: true);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -237,7 +315,16 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
           _effectSuccess = false;
           _showEffect = true;
         });
-        _markWindowUsed();
+        await _markWindowUsed(collectedSuccessfully: false);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('수집에 실패했습니다. 이번 시간대의 기회를 모두 사용했어요.'),
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: AppTheme.error,
+          ),
+        );
       } else {
         setState(() {
           _status = '수집에 실패했습니다. 다시 한 번 시도해 보세요. ($_attempts/$_maxAttempts)';
@@ -245,6 +332,15 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
           _showEffect = true;
         });
         await _persistSession();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('수집에 실패했습니다. 다시 시도해 주세요. ($_attempts/$_maxAttempts)'),
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: AppTheme.error,
+          ),
+        );
       }
     }
 
@@ -260,23 +356,40 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
     final asset = _currentAsset;
     if (asset == null) return;
     final prefs = await SharedPreferences.getInstance();
-    final list = prefs.getStringList(_collectedKey) ?? <String>[];
-    final set = list.toSet()..add(asset);
-    await prefs.setStringList(_collectedKey, set.toList()..sort());
+    await CigaretteCollectionPrefs.incrementCount(prefs, asset);
     await SupabaseSyncService.pushLocalToRemoteIfEligible();
   }
 
   /// 이번 수집 구간 사용 완료 처리 (성공 또는 5번 실패 시)
-  Future<void> _markWindowUsed() async {
+  Future<void> _markWindowUsed({required bool collectedSuccessfully}) async {
     final wid = _currentWindowId;
     if (wid == null) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_lastCollectionWindowKey, wid);
+    await prefs.setString(
+      _lastWindowOutcomeKey,
+      '$wid|${collectedSuccessfully ? 'success' : 'fail'}',
+    );
     await prefs.remove(_sessionWindowKey);
     await prefs.remove(_sessionAssetKey);
     await prefs.remove(_sessionAttemptsKey);
     if (!mounted) return;
-    setState(() => _hasUsedCurrentWindow = true);
+    setState(() {
+      _hasUsedCurrentWindow = true;
+      _lastUsedWindowCollected = collectedSuccessfully;
+    });
+  }
+
+  bool get _showUsedWindowSuccessSummary {
+    if (!_hasUsedCurrentWindow) return false;
+    if (_lastUsedWindowCollected != null) return _lastUsedWindowCollected!;
+    return _caught;
+  }
+
+  bool get _showUsedWindowExhaustedSummary {
+    if (!_hasUsedCurrentWindow) return false;
+    if (_lastUsedWindowCollected != null) return !_lastUsedWindowCollected!;
+    return _disappeared && !_caught;
   }
 
   void _openCatalog() {
@@ -353,10 +466,26 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
       appBar: AppBar(
         title: const Text('수집·도감'),
         actions: [
-          IconButton(
-            tooltip: '도감',
-            icon: const Icon(Icons.collections_bookmark_rounded),
+          TextButton.icon(
             onPressed: _openCatalog,
+            style: TextButton.styleFrom(
+              // AppBar 배경이 primary(청록)인데 전역 TextButton은 primary 색이라 글자가 안 보임
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            ),
+            icon: const Icon(
+              Icons.collections_bookmark_rounded,
+              size: 22,
+              color: Colors.white,
+            ),
+            label: const Text(
+              '도감',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+                fontSize: 15,
+              ),
+            ),
           ),
         ],
       ),
@@ -501,27 +630,81 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
                                           ],
                                         )
                                       : _hasUsedCurrentWindow
-                                          ? Column(
-                                              mainAxisAlignment: MainAxisAlignment.center,
-                                              children: [
-                                                Icon(Icons.check_circle_outline_rounded, size: 44, color: AppTheme.primary),
-                                                const SizedBox(height: 10),
-                                                Text(
-                                                  '이번 수집 가능 시간을 이미 사용했습니다.',
-                                                  textAlign: TextAlign.center,
-                                                  style: AppTheme.titleMedium.copyWith(
-                                                    color: AppTheme.textPrimary,
-                                                    fontSize: 15,
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 6),
-                                                Text(
-                                                  '다음 수집 시간(09:00, 12:00, 18:00, 22:00)을 이용해 주세요.',
-                                                  textAlign: TextAlign.center,
-                                                  style: AppTheme.bodyMedium.copyWith(color: AppTheme.textMuted, fontSize: 11),
-                                                ),
-                                              ],
-                                            )
+                                          ? _showUsedWindowSuccessSummary
+                                              ? Column(
+                                                  mainAxisAlignment: MainAxisAlignment.center,
+                                                  children: [
+                                                    Icon(Icons.check_circle_outline_rounded, size: 44, color: AppTheme.primary),
+                                                    const SizedBox(height: 10),
+                                                    Text(
+                                                      '성공적으로 수집이 완료되었습니다.',
+                                                      textAlign: TextAlign.center,
+                                                      style: AppTheme.titleMedium.copyWith(
+                                                        color: AppTheme.textPrimary,
+                                                        fontSize: 15,
+                                                      ),
+                                                    ),
+                                                    const SizedBox(height: 6),
+                                                    Text(
+                                                      '다음 수집 시간(09:00, 12:00, 18:00, 22:00)을 이용해 주세요.',
+                                                      textAlign: TextAlign.center,
+                                                      style: AppTheme.bodyMedium.copyWith(
+                                                        color: AppTheme.textMuted,
+                                                        fontSize: 11,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                )
+                                              : _showUsedWindowExhaustedSummary
+                                                  ? Column(
+                                                      mainAxisAlignment: MainAxisAlignment.center,
+                                                      children: [
+                                                        Icon(Icons.sentiment_dissatisfied_rounded, size: 44, color: AppTheme.error),
+                                                        const SizedBox(height: 10),
+                                                        Text(
+                                                          '이번 시간대 수집에 성공하지 못했어요.',
+                                                          textAlign: TextAlign.center,
+                                                          style: AppTheme.titleMedium.copyWith(
+                                                            color: AppTheme.textPrimary,
+                                                            fontSize: 15,
+                                                          ),
+                                                        ),
+                                                        const SizedBox(height: 6),
+                                                        Text(
+                                                          '$_maxAttempts번의 시도를 모두 사용했습니다.\n다음 수집 시간(09:00, 12:00, 18:00, 22:00)에 다시 도전해 보세요.',
+                                                          textAlign: TextAlign.center,
+                                                          style: AppTheme.bodyMedium.copyWith(
+                                                            color: AppTheme.textMuted,
+                                                            fontSize: 11,
+                                                            height: 1.35,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    )
+                                                  : Column(
+                                                      mainAxisAlignment: MainAxisAlignment.center,
+                                                      children: [
+                                                        Icon(Icons.info_outline_rounded, size: 44, color: AppTheme.textMuted),
+                                                        const SizedBox(height: 10),
+                                                        Text(
+                                                          '이번 시간대 수집이 종료되었습니다.',
+                                                          textAlign: TextAlign.center,
+                                                          style: AppTheme.titleMedium.copyWith(
+                                                            color: AppTheme.textPrimary,
+                                                            fontSize: 15,
+                                                          ),
+                                                        ),
+                                                        const SizedBox(height: 6),
+                                                        Text(
+                                                          '다음 수집 시간(09:00, 12:00, 18:00, 22:00)을 이용해 주세요.',
+                                                          textAlign: TextAlign.center,
+                                                          style: AppTheme.bodyMedium.copyWith(
+                                                            color: AppTheme.textMuted,
+                                                            fontSize: 11,
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    )
                                       : !_disappeared
                                       ? Align(
                                           alignment: Alignment.topCenter,
@@ -546,6 +729,7 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
                                                         child: RemoteAssetImage(
                                                           assetKey: _currentAsset!,
                                                           fit: BoxFit.contain,
+                                                          memCacheWidth: 480,
                                                           error: const Icon(
                                                             Icons.image_not_supported_rounded,
                                                             size: 80,

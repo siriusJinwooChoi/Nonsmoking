@@ -25,6 +25,7 @@ class AuthGate extends StatefulWidget {
 class _AuthGateState extends State<AuthGate> {
   int _termsVersion = 0;
   int _profileGateVersion = 0;
+  int _sessionGateVersion = 0;
 
   @override
   void initState() {
@@ -34,7 +35,11 @@ class _AuthGateState extends State<AuthGate> {
   }
 
   void _onAuthChanged() {
-    if (mounted) setState(() {});
+    if (mounted) {
+      setState(() {
+        _sessionGateVersion++;
+      });
+    }
     _schedulePostLoginPull();
   }
 
@@ -53,6 +58,11 @@ class _AuthGateState extends State<AuthGate> {
   Future<bool> _termsFuture() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getBool(kTermsAgreedPrefsKey) ?? false;
+  }
+
+  Future<bool> _isConfiguredFuture() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('isConfigured') ?? false;
   }
 
   /// 캐시가 있으면 즉시 반환하고 서버는 백그라운드에서 맞춤. 없으면 네트워크를 기다림.
@@ -109,36 +119,75 @@ class _AuthGateState extends State<AuthGate> {
           return const LoginScreen();
         }
 
-        return FutureBuilder<bool>(
-          key: ValueKey(_termsVersion),
-          future: _termsFuture(),
-          builder: (context, snap) {
-            if (!snap.hasData) {
+        return FutureBuilder<void>(
+          key: ValueKey('${BffAuthService.instance.userId}_$_sessionGateVersion'),
+          future: SupabaseSyncService.prepareLocalStateForCurrentUser(),
+          builder: (context, prepareSnap) {
+            if (prepareSnap.connectionState != ConnectionState.done) {
               return const Scaffold(
                 body: Center(child: CircularProgressIndicator()),
               );
             }
-            if (!snap.data!) {
-              return TermsAcceptanceScreen(
-                onAgreed: () => setState(() => _termsVersion++),
-              );
-            }
-            return FutureBuilder<String?>(
-              key: ValueKey(_profileGateVersion),
-              future: _loadDisplayNameOrCachedFast(),
-              builder: (context, nameSnap) {
-                if (nameSnap.connectionState != ConnectionState.done) {
+            return FutureBuilder<void>(
+              key: ValueKey('post_login_pull_${BffAuthService.instance.userId}_$_sessionGateVersion'),
+              future: SupabaseSyncService.runPostLoginPullIfNeeded(),
+              builder: (context, pullSnap) {
+                if (pullSnap.connectionState != ConnectionState.done) {
                   return const Scaffold(
                     body: Center(child: CircularProgressIndicator()),
                   );
                 }
-                final displayName = nameSnap.data;
-                if (displayName == null || displayName.isEmpty) {
-                  return NicknameSetupScreen(
-                    onComplete: () => setState(() => _profileGateVersion++),
-                  );
-                }
-                return UpdatePromptGate(child: widget.child);
+                return FutureBuilder<bool>(
+                  key: ValueKey(_termsVersion),
+                  future: _termsFuture(),
+                  builder: (context, snap) {
+                    if (!snap.hasData) {
+                      return const Scaffold(
+                        body: Center(child: CircularProgressIndicator()),
+                      );
+                    }
+                    if (!snap.data!) {
+                      return TermsAcceptanceScreen(
+                        onAgreed: () => setState(() => _termsVersion++),
+                      );
+                    }
+                    return FutureBuilder<bool>(
+                      future: _isConfiguredFuture(),
+                      builder: (context, configuredSnap) {
+                        if (!configuredSnap.hasData) {
+                          return const Scaffold(
+                            body: Center(child: CircularProgressIndicator()),
+                          );
+                        }
+
+                        // 신규 계정은 사용자 입력(온보딩)부터 먼저 진행하고,
+                        // 온보딩 완료 후에 닉네임 게이트를 거치도록 순서를 보장한다.
+                        if (!configuredSnap.data!) {
+                          return UpdatePromptGate(child: widget.child);
+                        }
+
+                        return FutureBuilder<String?>(
+                          key: ValueKey(_profileGateVersion),
+                          future: _loadDisplayNameOrCachedFast(),
+                          builder: (context, nameSnap) {
+                            if (nameSnap.connectionState != ConnectionState.done) {
+                              return const Scaffold(
+                                body: Center(child: CircularProgressIndicator()),
+                              );
+                            }
+                            final displayName = nameSnap.data;
+                            if (displayName == null || displayName.isEmpty) {
+                              return NicknameSetupScreen(
+                                onComplete: () => setState(() => _profileGateVersion++),
+                              );
+                            }
+                            return UpdatePromptGate(child: widget.child);
+                          },
+                        );
+                      },
+                    );
+                  },
+                );
               },
             );
           },

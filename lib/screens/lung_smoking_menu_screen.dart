@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../widgets/banner_ad_bar.dart';
+import 'health_screen.dart';
 import 'lung_screen.dart';
 import 'smoking_screen.dart';
 
-/// 폐·커뮤니티 메뉴 선택 화면
+/// 건강·커뮤니티 메뉴 선택 화면
 class LungSmokingMenuScreen extends StatelessWidget {
   const LungSmokingMenuScreen({super.key});
 
@@ -13,7 +14,7 @@ class LungSmokingMenuScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: AppTheme.surface,
       appBar: AppBar(
-        title: const Text('폐 · 커뮤니티'),
+        title: const Text('건강 / 커뮤니티'),
       ),
       body: SafeArea(
         child: Column(
@@ -41,6 +42,19 @@ class LungSmokingMenuScreen extends StatelessWidget {
                         Navigator.push(
                           context,
                           MaterialPageRoute(builder: (_) => const LungScreen()),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    _MenuCard(
+                      icon: Icons.health_and_safety_outlined,
+                      title: '건강 개선 현황',
+                      subtitle: '금연 경과에 따른 몸의 변화를 단계별로 확인합니다.',
+                      color: AppTheme.primary,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const HealthScreen()),
                         );
                       },
                     ),

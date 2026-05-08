@@ -39,6 +39,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _inactivityNotificationEnabled = true;
   bool _attendanceReminderEnabled = true;
   bool _cigaretteCollectionReminderEnabled = true;
+  bool _patternReminderEnabled = true;
   late List<TimeOfDay> _reminderTimes;
   String? _displayName;
   bool _savingDisplayName = false;
@@ -50,6 +51,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _loadInactivitySetting();
     _loadAttendanceReminderSetting();
     _loadCigaretteCollectionReminderSetting();
+    _loadPatternReminderSetting();
     unawaited(_loadDisplayName());
   }
 
@@ -80,6 +82,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadCigaretteCollectionReminderSetting() async {
     final v = await getCigaretteCollectionReminderEnabled();
     if (mounted) setState(() => _cigaretteCollectionReminderEnabled = v);
+  }
+
+  Future<void> _loadPatternReminderSetting() async {
+    final v = await getPatternReminderEnabled();
+    if (mounted) setState(() => _patternReminderEnabled = v);
   }
 
   Future<void> _loadDisplayName() async {
@@ -164,6 +171,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(value ? '수집 시간 알림을 켰습니다.' : '수집 시간 알림을 껐습니다.'),
+        duration: const Duration(seconds: 1),
+      ),
+    );
+  }
+
+  Future<void> _setPatternReminder(bool value) async {
+    if (!mounted) return;
+    setState(() => _patternReminderEnabled = value);
+    await setPatternReminderEnabled(value);
+    if (!mounted) return;
+    unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(value ? '패턴 기반 자동 알림을 켰습니다.' : '패턴 기반 자동 알림을 해지했습니다.'),
         duration: const Duration(seconds: 1),
       ),
     );
@@ -359,9 +380,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     inactivityNotificationEnabled: _inactivityNotificationEnabled,
                     attendanceReminderEnabled: _attendanceReminderEnabled,
                     cigaretteCollectionReminderEnabled: _cigaretteCollectionReminderEnabled,
+                    patternReminderEnabled: _patternReminderEnabled,
                     onInactivityChanged: _setInactivityNotification,
                     onAttendanceChanged: _setAttendanceReminder,
                     onCigaretteCollectionChanged: _setCigaretteCollectionReminder,
+                    onPatternReminderChanged: _setPatternReminder,
                   ),
                 ),
               );
@@ -456,19 +479,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
     if (ok != true) return;
-    unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
+    // 로그아웃 직전 동기화를 명시적으로 완료해 데이터 유실/경합을 방지한다.
+    await SupabaseSyncService.pushLocalToRemoteIfEligible();
     await AuthService.signOut();
     if (!context.mounted) return;
     await _returnToAuthGateRoot();
   }
 
   Future<void> _confirmDeleteAccount() async {
+    final email = BffAuthService.instance.userEmail?.trim();
+    final target =
+        (email != null && email.isNotEmpty) ? email : '현재 로그인된 계정';
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text('계정 삭제'),
-        content: const Text(
+        content: Text(
+          '삭제 대상: $target\n\n'
           '계정을 삭제하면 서버에 저장된 계정 및 동기화 데이터가 삭제되며 복구할 수 없습니다.\n\n'
           '정말 계정을 삭제하시겠습니까?',
         ),

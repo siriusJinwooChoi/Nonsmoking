@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../api/remote_assets.dart';
+import '../api/bff_profile_api.dart';
 import '../auth/bff_auth_service.dart';
 
 import '../data/savings_coin_exchange.dart';
@@ -17,8 +18,8 @@ import 'reminder_settings_screen.dart';
 import 'savings_coin_exchange_screen.dart';
 import 'settings_screen.dart';
 import 'attendance_screen.dart';
+import 'smoking_screen.dart';
 import '../theme/app_theme.dart';
-import '../ad_manager.dart';
 import '../ad_unit_ids.dart';
 
 // ✅ Analytics helper
@@ -30,6 +31,7 @@ import '../notifications/daily_reminder_worker.dart';
 import '../widget/widget_helper.dart';
 import '../supabase/supabase_config.dart';
 import '../api/reasons_api_service.dart';
+import '../api/smoking_pattern_api_service.dart';
 
 class MainScreen extends StatefulWidget {
   final VoidCallback onAlarmTap;
@@ -60,6 +62,39 @@ class MainScreen extends StatefulWidget {
   State<MainScreen> createState() => _MainScreenState();
 }
 
+class _SmokingPatternLog {
+  final int id;
+  final String action; // smoked | craving
+  final int hour;
+  final int minute;
+  final String timeLabel;
+  final String situation;
+  final String emotion;
+  final int tsMs;
+
+  const _SmokingPatternLog({
+    required this.id,
+    required this.action,
+    required this.hour,
+    required this.minute,
+    required this.timeLabel,
+    required this.situation,
+    required this.emotion,
+    required this.tsMs,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'action': action,
+        'hour': hour,
+        'minute': minute,
+        'timeLabel': timeLabel,
+        'situation': situation,
+        'emotion': emotion,
+        'tsMs': tsMs,
+      };
+}
+
 class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   DateTime? _startTime;
   Duration _elapsed = Duration.zero;
@@ -83,6 +118,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   final _moneyFormatter = NumberFormat.decimalPattern('ko_KR');
   final ReasonsApiService _reasonsApi = const ReasonsApiService();
+  final SmokingPatternApiService _smokingPatternApi = const SmokingPatternApiService();
+  String? _lastPatternSummaryText;
 
   @override
   void initState() {
@@ -173,6 +210,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   static const String _failureCountKey = 'failureCount';
+  static const String _smokingPatternLogsKey = 'smoking_pattern_logs_v1';
+  static const int _patternWindowDays = 30;
+  static const int _patternMinLogs = 5;
+  static const int _patternBinMinutes = 30;
+  static const int _patternMaxSlots = 5;
+  static const int _patternMergeBins = 2; // 30분 bin 기준 ±2칸(약 1시간) 이내는 같은 피크로 본다.
 
   Future<void> _reloadSavingsExchangePrefs() async {
     final prefs = await SharedPreferences.getInstance();
@@ -750,60 +793,342 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     });
   }
 
-  Future<void> _onSmokedTap() async {
+  Future<String?> _resolveNicknameForPatternNotification() async {
+    final cached = await BffProfileApi.readCachedDisplayNameForCurrentUser();
+    if (cached != null && cached.isNotEmpty) return cached;
+    final prefs = await SharedPreferences.getInstance();
+    final fallback = prefs.getString('nickname');
+    return fallback;
+  }
+
+  List<Map<String, dynamic>> _decodePatternLogs(String? raw) {
+    final list = <Map<String, dynamic>>[];
+    if (raw == null || raw.isEmpty) return list;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        for (final item in decoded.whereType<Map>()) {
+          list.add(Map<String, dynamic>.from(item));
+        }
+      }
+    } catch (_) {}
+    return list;
+  }
+
+  List<TimeOfDay> _buildPatternPeakSlots(List<Map<String, dynamic>> logs) {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final windowMs = _patternWindowDays * 24 * 60 * 60 * 1000;
+    final binsPerDay = (24 * 60) ~/ _patternBinMinutes; // 48
+    final scores = List<double>.filled(binsPerDay, 0.0);
+
+    for (final e in logs) {
+      final action = (e['action'] as String?) ?? '';
+      if (action != 'smoked') continue;
+      final tsMs = (e['tsMs'] as num?)?.toInt();
+      final hour = (e['hour'] as num?)?.toInt();
+      final minute = (e['minute'] as num?)?.toInt();
+      if (tsMs == null || hour == null || minute == null) continue;
+      final ageMs = nowMs - tsMs;
+      if (ageMs < 0 || ageMs > windowMs) continue;
+      final ageDays = ageMs / (24 * 60 * 60 * 1000);
+      // 최근 데이터에 더 큰 가중치: 14일 반감 느낌의 지수 감쇠
+      final weight = 1.0 / (1.0 + (ageDays / 14.0));
+      final minuteOfDay = hour * 60 + minute;
+      final bin = (minuteOfDay ~/ _patternBinMinutes).clamp(0, binsPerDay - 1);
+      scores[bin] += weight;
+    }
+
+    final totalScore = scores.fold<double>(0.0, (a, b) => a + b);
+    if (totalScore <= 0) return const <TimeOfDay>[];
+
+    final ranked = List<int>.generate(binsPerDay, (i) => i)
+      ..sort((a, b) => scores[b].compareTo(scores[a]));
+    final topScore = scores[ranked.first];
+    if (topScore <= 0) return const <TimeOfDay>[];
+
+    final selectedBins = <int>[];
+    double selectedScore = 0.0;
+    for (final bin in ranked) {
+      if (selectedBins.length >= _patternMaxSlots) break;
+      final score = scores[bin];
+      if (score <= 0) break;
+      final tooClose = selectedBins.any((picked) => (picked - bin).abs() <= _patternMergeBins);
+      if (tooClose) continue;
+      if (selectedBins.isEmpty) {
+        selectedBins.add(bin);
+        selectedScore += score;
+        continue;
+      }
+      final strongEnough = score >= topScore * 0.45;
+      final coverage = selectedScore / totalScore;
+      // 기본 1개에서 시작, 강한 피크가 남아 있고 전체 커버리지가 낮을 때만 1개씩 증가
+      if (strongEnough && coverage < 0.80) {
+        selectedBins.add(bin);
+        selectedScore += score;
+      }
+    }
+
+    selectedBins.sort();
+    return selectedBins.map((bin) {
+      final minuteOfDay = bin * _patternBinMinutes;
+      final h = minuteOfDay ~/ 60;
+      final m = minuteOfDay % 60;
+      return TimeOfDay(hour: h, minute: m);
+    }).toList();
+  }
+
+  String _formatPatternSlots(List<TimeOfDay> slots) {
+    if (slots.isEmpty) return '';
+    String two(int v) => v.toString().padLeft(2, '0');
+    return slots.map((s) => '${two(s.hour)}:${two(s.minute)}').join(', ');
+  }
+
+  Future<String> _savePatternAndSchedule(_SmokingPatternLog log) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_smokingPatternLogsKey);
+    final list = _decodePatternLogs(raw);
+    list.add(log.toJson());
+    if (list.length > 200) {
+      list.removeRange(0, list.length - 200);
+    }
+    await prefs.setString(_smokingPatternLogsKey, jsonEncode(list));
+
+    final recentSmokedCount = list.where((e) {
+      final action = (e['action'] as String?) ?? '';
+      if (action != 'smoked') return false;
+      final ts = (e['tsMs'] as num?)?.toInt();
+      if (ts == null) return false;
+      final age = DateTime.now().millisecondsSinceEpoch - ts;
+      return age >= 0 && age <= _patternWindowDays * 24 * 60 * 60 * 1000;
+    }).length;
+
+    final nickname = await _resolveNicknameForPatternNotification() ?? '회원';
+    if (recentSmokedCount < _patternMinLogs) {
+      await cancelPatternReminders();
+      await clearPatternReminderSlots();
+      unawaited(_syncPatternLogToApi(log));
+      return '패턴 데이터가 아직 부족해요 ($recentSmokedCount/$_patternMinLogs건).\n'
+          '기록이 $_patternMinLogs건 이상 쌓이면 자동으로 피크 시간대를 계산해 알림을 시작합니다.';
+    }
+
+    final slots = _buildPatternPeakSlots(list);
+    await schedulePatternRemindersFromSlots(
+      slots: slots,
+      nickname: nickname,
+    );
+    unawaited(_syncPatternLogToApi(log));
+    final slotText = _formatPatternSlots(slots);
+    return '최근 $_patternWindowDays일 기록을 30분 단위로 분석해 '
+        '${slots.length}개 피크 시간대를 설정했어요.\n'
+        '예방 알림 시간: $slotText (각 시간 3분 전 발송)\n'
+        '설정 > 알림 해지에서 언제든 해지할 수 있어요.';
+  }
+
+  Future<void> _savePatternLogOnly(_SmokingPatternLog log) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_smokingPatternLogsKey);
+    final list = <Map<String, dynamic>>[];
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          for (final item in decoded.whereType<Map>()) {
+            list.add(Map<String, dynamic>.from(item));
+          }
+        }
+      } catch (_) {}
+    }
+    list.add(log.toJson());
+    if (list.length > 200) {
+      list.removeRange(0, list.length - 200);
+    }
+    await prefs.setString(_smokingPatternLogsKey, jsonEncode(list));
+    unawaited(_syncPatternLogToApi(log));
+  }
+
+  Future<void> _syncPatternLogToApi(_SmokingPatternLog log) async {
+    if (!SupabaseConfig.isConfigured) return;
+    final token = await BffAuthService.instance.getValidAccessToken();
+    if (token == null || token.isEmpty) return;
+    try {
+      await _smokingPatternApi.postLog(
+        accessToken: token,
+        action: log.action,
+        eventAtMs: log.tsMs,
+        hour: log.hour,
+        minute: log.minute,
+        timeLabel: log.timeLabel,
+        situation: log.situation,
+        emotion: log.emotion,
+      );
+    } catch (_) {}
+  }
+
+  Future<bool> _showSmokingReasonDialog({required String action}) async {
+    String timeValue = '아침';
+    String situationValue = '스트레스';
+    String emotionValue = '짜증';
+    final situationEtcController = TextEditingController();
+    final emotionEtcController = TextEditingController();
+
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('잠깐 흔들리셨나요?'),
-        content: const Text(
-          '기록하면 실패 횟수만 올라가고, 금연 일수는 그대로 유지됩니다.\n폐 회복 수치는 10% 감소합니다.',
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          title: Text(action == 'smoked' ? '방금 피움 이유 기록' : '강한 욕구 기록'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                DropdownButtonFormField<String>(
+                  value: timeValue,
+                  decoration: const InputDecoration(labelText: '시간대'),
+                  items: const [
+                    DropdownMenuItem(value: '아침', child: Text('아침')),
+                    DropdownMenuItem(value: '식사 전후', child: Text('식사 전후')),
+                    DropdownMenuItem(value: '밤', child: Text('밤')),
+                  ],
+                  onChanged: (v) => setDialogState(() => timeValue = v ?? '아침'),
+                ),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  value: situationValue,
+                  decoration: const InputDecoration(labelText: '상황'),
+                  items: const [
+                    DropdownMenuItem(value: '스트레스', child: Text('스트레스')),
+                    DropdownMenuItem(value: '심심함', child: Text('심심함')),
+                    DropdownMenuItem(value: '술자리', child: Text('술자리')),
+                    DropdownMenuItem(value: '습관', child: Text('습관')),
+                    DropdownMenuItem(value: '기타', child: Text('기타(직접입력)')),
+                  ],
+                  onChanged: (v) => setDialogState(() => situationValue = v ?? '스트레스'),
+                ),
+                if (situationValue == '기타') ...[
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: situationEtcController,
+                    decoration: const InputDecoration(hintText: '상황 입력'),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  value: emotionValue,
+                  decoration: const InputDecoration(labelText: '감정'),
+                  items: const [
+                    DropdownMenuItem(value: '짜증', child: Text('짜증')),
+                    DropdownMenuItem(value: '피곤', child: Text('피곤')),
+                    DropdownMenuItem(value: '집중 안됨', child: Text('집중 안됨')),
+                    DropdownMenuItem(value: '기타', child: Text('기타(직접입력)')),
+                  ],
+                  onChanged: (v) => setDialogState(() => emotionValue = v ?? '짜증'),
+                ),
+                if (emotionValue == '기타') ...[
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: emotionEtcController,
+                    decoration: const InputDecoration(hintText: '감정 입력'),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('취소'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+              child: const Text('저장'),
+            ),
+          ],
         ),
+      ),
+    );
+
+    if (confirmed != true) return false;
+    final now = DateTime.now();
+    final log = _SmokingPatternLog(
+      id: now.millisecondsSinceEpoch,
+      action: action,
+      hour: now.hour,
+      minute: now.minute,
+      timeLabel: timeValue,
+      situation: situationValue == '기타'
+          ? (situationEtcController.text.trim().isEmpty
+              ? '기타'
+              : situationEtcController.text.trim())
+          : situationValue,
+      emotion: emotionValue == '기타'
+          ? (emotionEtcController.text.trim().isEmpty
+              ? '기타'
+              : emotionEtcController.text.trim())
+          : emotionValue,
+      tsMs: now.millisecondsSinceEpoch,
+    );
+    final summaryText = await _savePatternAndSchedule(log);
+    _lastPatternSummaryText = summaryText;
+    if (!mounted) return false;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('기록을 저장했습니다.')),
+    );
+    return true;
+  }
+
+  Future<void> _onSmokedTap() async {
+    final saved = await _showSmokingReasonDialog(action: 'smoked');
+    if (!saved) return;
+    final prefs = await SharedPreferences.getInstance();
+    _failureCount = (prefs.getInt(_failureCountKey) ?? 0) + 1;
+    await prefs.setInt(_failureCountKey, _failureCount);
+    final before = prefs.getInt('lungHealth') ?? 100;
+    final after = (before - 10).clamp(0, 100);
+    await prefs.setInt('lungHealth', after);
+    await syncWidgetData();
+    if (!mounted) return;
+    setState(() {});
+    final summary = _lastPatternSummaryText ??
+        '기록을 저장했습니다. 다음날부터 패턴 기반 예방 알림을 보내드릴게요.\n'
+            '설정 > 알림 해지에서 패턴 기반 자동 알림 기능을 해지할 수 있어요.';
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('패턴 저장 완료'),
+        content: Text(summary),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('기록'),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('확인'),
           ),
         ],
       ),
     );
-    if (confirmed != true) return;
+  }
 
-    final prefs = await SharedPreferences.getInstance();
-    _failureCount = (prefs.getInt(_failureCountKey) ?? 0) + 1;
-    await prefs.setInt(_failureCountKey, _failureCount);
-
-    final before = prefs.getInt('lungHealth') ?? 100;
-    final after = (before - 10).clamp(0, 100);
-    await prefs.setInt('lungHealth', after);
-
-    await syncWidgetData();
-
-    setState(() {});
-
-    AdManager.showAd(onAdClosed: () {
-      if (mounted) {
-        showDialog(
-          context: context,
-          builder: (_) => AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            title: const Text('괜찮습니다'),
-            content: const Text('금연은 다시 시작하면 됩니다. 오늘부터 다시 함께해요.'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('확인'),
-              ),
-            ],
-          ),
-        );
-      }
-    });
+  Future<void> _onStrongCravingTap() async {
+    final now = DateTime.now();
+    await _savePatternLogOnly(
+      _SmokingPatternLog(
+        id: now.millisecondsSinceEpoch,
+        action: 'craving',
+        hour: now.hour,
+        minute: now.minute,
+        timeLabel: '',
+        situation: '',
+        emotion: '',
+        tsMs: now.millisecondsSinceEpoch,
+      ),
+    );
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const SmokingScreen()),
+    );
   }
 
   /// 금연 시간을 년/월/일/시간/분/초로 표시
@@ -964,61 +1289,69 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     return Scaffold(
       backgroundColor: AppTheme.surface,
       appBar: AppBar(
+        automaticallyImplyLeading: false,
+        centerTitle: false,
         titleSpacing: 0,
-        title: Row(
-          children: [
-            Flexible(
-              flex: 5,
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: _openSavingsCoinExchange,
-                  borderRadius: BorderRadius.circular(10),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Flexible(
-                          child: Text(
-                            '금연코인',
-                            overflow: TextOverflow.ellipsis,
-                            maxLines: 1,
-                            style: TextStyle(
-                              color: appBarFg,
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w700,
+        // 좌·우 영역을 동일한 Expanded로 잡아야 「금연 현황」이 화면 기준으로 정확히 중앙에 온다.
+        title: Padding(
+          padding: const EdgeInsets.only(right: 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: _openSavingsCoinExchange,
+                      borderRadius: BorderRadius.circular(10),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 6),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                '금연코인',
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                                style: TextStyle(
+                                  color: appBarFg,
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
                             ),
-                          ),
+                            const SizedBox(width: 4),
+                            RemoteAssetImage(
+                              assetKey: 'scoin.png',
+                              width: 22,
+                              height: 22,
+                              memCacheWidth: 64,
+                              error: Icon(
+                                Icons.monetization_on_rounded,
+                                color: appBarFg.withValues(alpha: 0.95),
+                                size: 22,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '$_goldenCoins',
+                              style: TextStyle(
+                                color: appBarFg,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 4),
-                        RemoteAssetImage(
-                          assetKey: 'scoin.png',
-                          width: 22,
-                          height: 22,
-                          error: Icon(Icons.monetization_on_rounded,
-                              color: appBarFg.withValues(alpha: 0.95), size: 22),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '$_goldenCoins',
-                          style: TextStyle(
-                            color: appBarFg,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-            Expanded(
-              flex: 4,
-              child: Text(
+              Text(
                 '금연 현황',
-                textAlign: TextAlign.center,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: appBarFg,
@@ -1026,29 +1359,33 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   fontWeight: FontWeight.w500,
                 ),
               ),
-            ),
-            const SizedBox(width: 8),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_rounded),
-            tooltip: '설정',
-            onPressed: () async {
-              await Navigator.push<void>(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => SettingsScreen(
-                    reminderTimes: List.from(_reminderTimes),
-                    onReminderUpdated: (list) => setState(() => _reminderTimes = list),
-                    onGoToFirstSetup: _confirmAndGoToFirstSetup,
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: IconButton(
+                    icon: const Icon(Icons.settings_rounded),
+                    tooltip: '설정',
+                    color: appBarFg,
+                    onPressed: () async {
+                      await Navigator.push<void>(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => SettingsScreen(
+                            reminderTimes: List.from(_reminderTimes),
+                            onReminderUpdated: (list) =>
+                                setState(() => _reminderTimes = list),
+                            onGoToFirstSetup: _confirmAndGoToFirstSetup,
+                          ),
+                        ),
+                      );
+                      await _reloadReminderTimesFromPrefs();
+                    },
                   ),
                 ),
-              );
-              await _reloadReminderTimesFromPrefs();
-            },
+              ),
+            ],
           ),
-        ],
+        ),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
@@ -1433,14 +1770,14 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               ],
             ),
             const SizedBox(height: 10),
-            // 흡연 시도 / 리셋
+            // 방금 피움 / 지금 너무 피우고 싶을때
             Row(
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: _onSmokedTap,
                     icon: const Icon(Icons.waves_rounded, size: 16),
-                    label: const Text('흡연 시도', style: TextStyle(fontSize: 12)),
+                    label: const Text('방금 피움', style: TextStyle(fontSize: 12)),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: AppTheme.error,
                       side: const BorderSide(color: AppTheme.error),
@@ -1451,11 +1788,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 const SizedBox(width: 8),
                 Expanded(
                   child: ElevatedButton.icon(
-                    onPressed: _resetSmokingStatus,
-                    icon: const Icon(Icons.refresh_rounded, size: 16),
-                    label: const Text('리셋', style: TextStyle(fontSize: 12)),
+                    onPressed: _onStrongCravingTap,
+                    icon: const Icon(Icons.local_fire_department_rounded, size: 16),
+                    label: const Text('지금 너무 피우고싶을때', style: TextStyle(fontSize: 12)),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.error,
+                      backgroundColor: AppTheme.warning,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 10),
                     ),
