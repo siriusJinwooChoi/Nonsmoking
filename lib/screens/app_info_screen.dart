@@ -75,6 +75,19 @@ class _AppInfoScreenState extends State<AppInfoScreen> {
     }
   }
 
+  Future<void> _openSensitiveInfoConsent(BuildContext context) async {
+    final uri = Uri.parse(LegalUrls.sensitiveInfoConsent);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('링크를 열 수 없습니다.')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -122,6 +135,13 @@ class _AppInfoScreenState extends State<AppInfoScreen> {
             title: '이용약관',
             subtitle: '서비스 이용약관 보기',
             onTap: () => _openTermsOfService(context),
+          ),
+          _infoTile(
+            context,
+            icon: Icons.health_and_safety_rounded,
+            title: '민감정보 수집·이용 동의',
+            subtitle: '흡연·금연 관련 정보 수집·이용 안내 보기',
+            onTap: () => _openSensitiveInfoConsent(context),
           ),
           const SizedBox(height: 24),
           Center(

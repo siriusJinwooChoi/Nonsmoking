@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../api/bff_profile_api.dart';
 import '../supabase/supabase_config.dart';
 import '../theme/app_theme.dart';
+import 'legal_consent_versions.dart';
 import 'terms_detail_actions.dart';
 
 /// 서비스 이용 필수 동의 (참고 UI: 체크리스트 + 하단 검정 버튼).
@@ -33,8 +34,18 @@ class _TermsAcceptanceScreenState extends State<TermsAcceptanceScreen> {
       await prefs.setBool(kTermsAgreedPrefsKey, true);
 
       if (SupabaseConfig.isConfigured) {
+        // 모든 동의(이용약관·개인정보·민감정보·만 14세)는 한 화면에서 동시에 체크되므로
+        // 동일한 acceptedAt 으로 묶어 BFF에 일괄 저장한다.
+        final acceptedAt = DateTime.now().toUtc().toIso8601String();
         await BffProfileApi.patchProfile(
-          termsAcceptedAtIso: DateTime.now().toUtc().toIso8601String(),
+          termsAcceptedAtIso: acceptedAt,
+          termsOfServiceAcceptedAtIso: acceptedAt,
+          termsOfServiceVersion: LegalConsentVersions.termsOfService,
+          privacyPolicyAcceptedAtIso: acceptedAt,
+          privacyPolicyVersion: LegalConsentVersions.privacyPolicy,
+          sensitiveInfoConsentAtIso: acceptedAt,
+          sensitiveInfoConsentVersion: LegalConsentVersions.sensitiveInfoConsent,
+          ageConfirmedAtIso: acceptedAt,
         );
       }
 

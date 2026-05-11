@@ -1205,6 +1205,8 @@ Future<void> bootstrapCoreReminderSchedulesOnAppOpen() async {
 }
 
 /// 사용자가 흡연/강한 욕구를 기록한 시각의 "다음날부터 매일 3분 전" 알림 예약
+/// 일반 일일 리마인더(scheduleZonedDailyReminderForSlot)와 동일한 권한·카테고리·가시성
+/// 정책을 따라 OS 권한 상태와 무관하게 우선 예약을 등록한다.
 Future<void> schedulePatternReminder({
   required int patternId,
   required int hour,
@@ -1215,8 +1217,6 @@ Future<void> schedulePatternReminder({
   if (!enabled) return;
   ensureNotificationTimezoneInitialized();
   await ensureAndroidAlarmPermissionsForScheduling();
-  final granted = await _ensureNotificationPermissionGranted();
-  if (!granted) return;
 
   var notifyHour = hour;
   var notifyMinute = minute - 3;
@@ -1249,25 +1249,49 @@ Future<void> schedulePatternReminder({
     priority: Priority.high,
     playSound: true,
     enableVibration: true,
+    category: AndroidNotificationCategory.reminder,
+    visibility: NotificationVisibility.public,
   );
   final bodyName = nickname.trim().isEmpty ? '회원' : nickname.trim();
-  await plugin.zonedSchedule(
-    id,
-    '흡연 패턴 미리 알림',
-    '($bodyName)님은 이 시간대에 담배를 피고 싶어하세요. 참아보세요!',
-    _nextInstanceAtTime(notifyHour, notifyMinute),
-    const NotificationDetails(
-      android: androidDetails,
-      iOS: _defaultDarwinNotificationDetails,
-      macOS: _defaultDarwinNotificationDetails,
-    ),
-    androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-    matchDateTimeComponents: DateTimeComponents.time,
-    uiLocalNotificationDateInterpretation:
-        UILocalNotificationDateInterpretation.absoluteTime,
-  );
+  final scheduleMode = await resolveAndroidReminderScheduleMode();
+  final scheduledAt = _nextInstanceAtTime(notifyHour, notifyMinute);
+  Future<void> scheduleWith(AndroidScheduleMode mode) => plugin.zonedSchedule(
+        id,
+        '흡연 패턴 미리 알림',
+        '($bodyName)님은 이 시간대에 담배를 피고 싶어하세요. 참아보세요!',
+        scheduledAt,
+        const NotificationDetails(
+          android: androidDetails,
+          iOS: _defaultDarwinNotificationDetails,
+          macOS: _defaultDarwinNotificationDetails,
+        ),
+        androidScheduleMode: mode,
+        matchDateTimeComponents: DateTimeComponents.time,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+      );
+  try {
+    await scheduleWith(scheduleMode);
+  } on PlatformException catch (e) {
+    if (scheduleMode == AndroidScheduleMode.exactAllowWhileIdle &&
+        e.code == 'exact_alarms_not_permitted') {
+      await scheduleWith(AndroidScheduleMode.inexactAllowWhileIdle);
+    } else {
+      rethrow;
+    }
+  }
+  if (kDebugMode) {
+    debugPrint(
+      'schedulePatternReminder: id=$id mode=$scheduleMode '
+      'peak=${hour.toString().padLeft(2, "0")}:${minute.toString().padLeft(2, "0")} '
+      'notifyAt=${notifyHour.toString().padLeft(2, "0")}:${notifyMinute.toString().padLeft(2, "0")} '
+      'next=$scheduledAt',
+    );
+  }
 }
 
+/// 일반 일일 리마인더(scheduleZonedDailyReminderForSlot)와 동일한 권한·카테고리·가시성
+/// 정책을 따라 OS 권한 상태와 무관하게 우선 예약을 등록한다.
 Future<void> schedulePatternRemindersFromSlots({
   required List<TimeOfDay> slots,
   required String nickname,
@@ -1283,8 +1307,6 @@ Future<void> schedulePatternRemindersFromSlots({
   }
   ensureNotificationTimezoneInitialized();
   await ensureAndroidAlarmPermissionsForScheduling();
-  final granted = await _ensureNotificationPermissionGranted();
-  if (!granted) return;
   final scheduleMode = await resolveAndroidReminderScheduleMode();
 
   final plugin = FlutterLocalNotificationsPlugin();
@@ -1310,22 +1332,27 @@ Future<void> schedulePatternRemindersFromSlots({
     priority: Priority.high,
     playSound: true,
     enableVibration: true,
+    category: AndroidNotificationCategory.reminder,
+    visibility: NotificationVisibility.public,
   );
   final bodyName = nickname.trim().isEmpty ? '회원' : nickname.trim();
   for (var i = 0; i < capped.length; i++) {
-    var notifyHour = capped[i].hour;
-    var notifyMinute = capped[i].minute - 3;
+    final peakHour = capped[i].hour;
+    final peakMinute = capped[i].minute;
+    var notifyHour = peakHour;
+    var notifyMinute = peakMinute - 3;
     if (notifyMinute < 0) {
       notifyMinute += 60;
       notifyHour = (notifyHour - 1) % 24;
       if (notifyHour < 0) notifyHour += 24;
     }
     final id = kPatternReminderNotificationIdBase + i;
+    final scheduledAt = _nextInstanceAtTime(notifyHour, notifyMinute);
     Future<void> scheduleWith(AndroidScheduleMode mode) => plugin.zonedSchedule(
           id,
           '흡연 패턴 미리 알림',
           '($bodyName)님은 이 시간대에 담배를 피고 싶어하세요. 참아보세요!',
-          _nextInstanceAtTime(notifyHour, notifyMinute),
+          scheduledAt,
           const NotificationDetails(
             android: androidDetails,
             iOS: _defaultDarwinNotificationDetails,
@@ -1336,15 +1363,25 @@ Future<void> schedulePatternRemindersFromSlots({
           uiLocalNotificationDateInterpretation:
               UILocalNotificationDateInterpretation.absoluteTime,
         );
+    AndroidScheduleMode usedMode = scheduleMode;
     try {
       await scheduleWith(scheduleMode);
     } on PlatformException catch (e) {
       if (scheduleMode == AndroidScheduleMode.exactAllowWhileIdle &&
           e.code == 'exact_alarms_not_permitted') {
-        await scheduleWith(AndroidScheduleMode.inexactAllowWhileIdle);
+        usedMode = AndroidScheduleMode.inexactAllowWhileIdle;
+        await scheduleWith(usedMode);
       } else {
         rethrow;
       }
+    }
+    if (kDebugMode) {
+      debugPrint(
+        'schedulePatternRemindersFromSlots: id=$id slot=$i mode=$usedMode '
+        'peak=${peakHour.toString().padLeft(2, "0")}:${peakMinute.toString().padLeft(2, "0")} '
+        'notifyAt=${notifyHour.toString().padLeft(2, "0")}:${notifyMinute.toString().padLeft(2, "0")} '
+        'next=$scheduledAt',
+      );
     }
   }
 }

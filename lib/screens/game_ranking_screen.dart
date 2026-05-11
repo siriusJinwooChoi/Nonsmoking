@@ -7,7 +7,39 @@ import '../theme/app_theme.dart';
 import '../api/api_config.dart';
 import '../api/games_api_service.dart';
 
+/// 1~30 게임: 0초·비정상·미클리어로 보이는 기록 제외 후 짧은 순으로 상위 10명.
+List<Map<String, dynamic>> _rankedNumberSequenceTop10(List<Map<String, dynamic>> raw) {
+  bool isValid(Map<String, dynamic> r) {
+    final best = r['number_sequence_best_seconds'];
+    if (best == null) return false;
+    final sec = (best as num).toDouble();
+    if (!sec.isFinite || sec <= 0) return false;
+    // 마지막 클리어 시간이 함께 오면(비-null) 실제 완주 기록으로만 인정합니다.
+    final last = r['number_sequence_last_clear_seconds'];
+    if (last != null) {
+      final ls = (last as num).toDouble();
+      if (!ls.isFinite || ls <= 0) return false;
+    }
+    return true;
+  }
+
+  final filtered = raw.where(isValid).toList();
+  filtered.sort((a, b) {
+    final sa = (a['number_sequence_best_seconds'] as num).toDouble();
+    final sb = (b['number_sequence_best_seconds'] as num).toDouble();
+    final c = sa.compareTo(sb);
+    if (c != 0) return c;
+    final ua = a['user_id'] as String? ?? '';
+    final ub = b['user_id'] as String? ?? '';
+    return ua.compareTo(ub);
+  });
+  return filtered.take(10).toList();
+}
+
 /// 미니게임 4종 랭킹 (상위 10명 + 본인 순위) — BFF `/v1/games/rankings` 만 사용.
+///
+/// 1~30(숫자) 랭킹은 서버에 `0`초 등 미플레이/초기값이 섞일 수 있어, 짧은 시간 순
+/// 상위를 고를 때 **실제 클리어로 볼 수 있는 기록만** 클라이언트에서 필터링합니다.
 class GameRankingScreen extends StatefulWidget {
   const GameRankingScreen({super.key});
 
@@ -82,7 +114,8 @@ class _GameRankingScreenState extends State<GameRankingScreen> {
         return;
       }
 
-      final payload = await _gamesApi.fetchRankings(accessToken: token, limit: 10);
+      // 숫자 게임은 유효 기록만 상위 10명으로 쓰기 위해 여유 있게 더 받은 뒤 필터합니다.
+      final payload = await _gamesApi.fetchRankings(accessToken: token, limit: 80);
       if (payload == null) {
         if (!mounted) return;
         setState(() {
@@ -95,7 +128,9 @@ class _GameRankingScreenState extends State<GameRankingScreen> {
       final top = payload['top'] as Map<String, dynamic>? ?? const {};
       final my = payload['my'] as Map<String, dynamic>? ?? const {};
 
-      _seqList = List<Map<String, dynamic>>.from((top['numberSequence'] as List?) ?? const []);
+      _seqList = _rankedNumberSequenceTop10(
+        List<Map<String, dynamic>>.from((top['numberSequence'] as List?) ?? const []),
+      );
       _wordList = List<Map<String, dynamic>>.from((top['wordGame'] as List?) ?? const []);
       _catchList = List<Map<String, dynamic>>.from((top['cigaretteCatch'] as List?) ?? const []);
       _timingList = List<Map<String, dynamic>>.from((top['timingTap'] as List?) ?? const []);

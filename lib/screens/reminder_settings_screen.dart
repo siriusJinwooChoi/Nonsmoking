@@ -77,6 +77,18 @@ class _ReminderSettingsScreenState extends State<ReminderSettingsScreen>
     });
   }
 
+  /// 패턴 알림의 실제 발송 시각(피크 시각의 3분 전)을 사용자 로케일로 포맷.
+  String _patternNotifyTimeLabel(BuildContext context, TimeOfDay peak) {
+    var h = peak.hour;
+    var m = peak.minute - 3;
+    if (m < 0) {
+      m += 60;
+      h = (h - 1) % 24;
+      if (h < 0) h += 24;
+    }
+    return TimeOfDay(hour: h, minute: m).format(context);
+  }
+
   Future<void> _persistAndNotify() async {
     await saveReminderTimes(_times);
     if (!mounted) return;
@@ -265,10 +277,13 @@ class _ReminderSettingsScreenState extends State<ReminderSettingsScreen>
                                 ),
                                 child: ListTile(
                                   leading: Icon(Icons.auto_awesome_rounded, color: AppTheme.primary),
-                                  title: Text('매일 ${t.format(context)} (3분 전 발송)', style: AppTheme.titleMedium),
-                                  subtitle: const Text(
-                                    '자동 생성된 패턴 알림 (직접 수정 불가)',
-                                    style: TextStyle(fontSize: 12, color: AppTheme.textMuted),
+                                  title: Text(
+                                    '매일 ${_patternNotifyTimeLabel(context, t)} 발송',
+                                    style: AppTheme.titleMedium,
+                                  ),
+                                  subtitle: Text(
+                                    '흡연 욕구 예상 시각 ${t.format(context)} · 3분 전 미리 알림\n자동 생성된 패턴 알림 (직접 수정 불가)',
+                                    style: const TextStyle(fontSize: 12, color: AppTheme.textMuted),
                                   ),
                                 ),
                               );
