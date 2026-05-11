@@ -23,12 +23,14 @@ class SettingsScreen extends StatefulWidget {
   final List<TimeOfDay> reminderTimes;
   final void Function(List<TimeOfDay>) onReminderUpdated;
   final Future<void> Function() onGoToFirstSetup;
+  final Future<void> Function()? onShowTutorial;
 
   const SettingsScreen({
     super.key,
     required this.reminderTimes,
     required this.onReminderUpdated,
     required this.onGoToFirstSetup,
+    this.onShowTutorial,
   });
 
   @override
@@ -402,6 +404,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 24),
           _sectionTitle('설정'),
+          _settingsTile(
+            context,
+            icon: Icons.play_circle_outline_rounded,
+            title: '튜토리얼 보기',
+            subtitle: '메인 화면 튜토리얼 다시 보기',
+            onTap: () async {
+              await widget.onShowTutorial?.call();
+              if (!context.mounted) return;
+              Navigator.pop(context);
+            },
+          ),
           _settingsTile(
             context,
             icon: Icons.system_update_rounded,

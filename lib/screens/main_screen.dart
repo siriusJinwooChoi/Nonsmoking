@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // ✅ SystemNavigator.pop
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
@@ -33,6 +34,12 @@ import '../supabase/supabase_config.dart';
 import '../api/reasons_api_service.dart';
 import '../api/smoking_pattern_api_service.dart';
 
+/// 스토어 앱 페이지 (지인 추천 · 공유용)
+const String _kAppPlayStoreUrl =
+    'https://play.google.com/store/apps/details?id=com.cjw.nonsmoking';
+const String _kAppIosStoreUrl =
+    'https://apps.apple.com/kr/app/%EA%B8%88%EC%97%B0%EB%B1%85%ED%81%AC/id6762129911';
+
 class MainScreen extends StatefulWidget {
   final VoidCallback onAlarmTap;
   final VoidCallback onCravingTap;
@@ -44,6 +51,15 @@ class MainScreen extends StatefulWidget {
   final int dailyCigarettes;
   final int cigarettesPerPack;
   final int pricePerPack;
+  final Future<void> Function()? onShowTutorial;
+
+  /// 최초 튜토리얼 스포트라이트용 (없으면 KeyedSubtree 미사용).
+  final GlobalKey? tutorialStatsCardKey;
+  final GlobalKey? tutorialSmokedButtonKey;
+  final GlobalKey? tutorialReminderButtonKey;
+
+  /// 튜토리얼에서 「방금 피움」 노출 등 스크롤 조정용 (선택).
+  final ScrollController? mainScrollController;
 
   const MainScreen({
     super.key,
@@ -56,6 +72,11 @@ class MainScreen extends StatefulWidget {
     required this.dailyCigarettes,
     required this.cigarettesPerPack,
     required this.pricePerPack,
+    this.onShowTutorial,
+    this.tutorialStatsCardKey,
+    this.tutorialSmokedButtonKey,
+    this.tutorialReminderButtonKey,
+    this.mainScrollController,
   });
 
   @override
@@ -119,7 +140,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   final _moneyFormatter = NumberFormat.decimalPattern('ko_KR');
   final ReasonsApiService _reasonsApi = const ReasonsApiService();
   final SmokingPatternApiService _smokingPatternApi = const SmokingPatternApiService();
-  String? _lastPatternSummaryText;
 
   @override
   void initState() {
@@ -877,13 +897,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }).toList();
   }
 
-  String _formatPatternSlots(List<TimeOfDay> slots) {
-    if (slots.isEmpty) return '';
-    String two(int v) => v.toString().padLeft(2, '0');
-    return slots.map((s) => '${two(s.hour)}:${two(s.minute)}').join(', ');
-  }
-
-  Future<String> _savePatternAndSchedule(_SmokingPatternLog log) async {
+  Future<void> _savePatternAndSchedule(_SmokingPatternLog log) async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_smokingPatternLogsKey);
     final list = _decodePatternLogs(raw);
@@ -893,35 +907,42 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
     await prefs.setString(_smokingPatternLogsKey, jsonEncode(list));
 
-    final recentSmokedCount = list.where((e) {
-      final action = (e['action'] as String?) ?? '';
-      if (action != 'smoked') return false;
-      final ts = (e['tsMs'] as num?)?.toInt();
-      if (ts == null) return false;
-      final age = DateTime.now().millisecondsSinceEpoch - ts;
-      return age >= 0 && age <= _patternWindowDays * 24 * 60 * 60 * 1000;
-    }).length;
+    // 이 지점까지 완료되면 흡연(패턴) 기록은 이미 기기에 저장된 상태다.
+    // 이후 단계는 로컬 알림 예약·취소이며, OS 권한/플러그인 이슈로 실패해도
+    // "저장 실패"로 보이면 안 되므로 별도로 잡아 메시지로만 안내한다.
+    try {
+      final recentSmokedCount = list.where((e) {
+        final action = (e['action'] as String?) ?? '';
+        if (action != 'smoked') return false;
+        final ts = (e['tsMs'] as num?)?.toInt();
+        if (ts == null) return false;
+        final age = DateTime.now().millisecondsSinceEpoch - ts;
+        return age >= 0 && age <= _patternWindowDays * 24 * 60 * 60 * 1000;
+      }).length;
 
-    final nickname = await _resolveNicknameForPatternNotification() ?? '회원';
-    if (recentSmokedCount < _patternMinLogs) {
-      await cancelPatternReminders();
-      await clearPatternReminderSlots();
+      final nickname = await _resolveNicknameForPatternNotification() ?? '회원';
+      if (recentSmokedCount < _patternMinLogs) {
+        await cancelPatternReminders();
+        await clearPatternReminderSlots();
+        unawaited(_syncPatternLogToApi(log));
+        return;
+      }
+
+      final slots = _buildPatternPeakSlots(list);
+      await schedulePatternRemindersFromSlots(
+        slots: slots,
+        nickname: nickname,
+      );
       unawaited(_syncPatternLogToApi(log));
-      return '패턴 데이터가 아직 부족해요 ($recentSmokedCount/$_patternMinLogs건).\n'
-          '기록이 $_patternMinLogs건 이상 쌓이면 자동으로 피크 시간대를 계산해 알림을 시작합니다.';
+    } catch (e, st) {
+      // 로컬 로그는 이미 저장된 상태. 알림 예약만 실패한 경우가 많음 → 사용자 화면은 저장 성공만 안내.
+      if (kDebugMode) {
+        debugPrint(
+          '패턴 알림 예약 단계 오류(로컬 기록은 이미 저장됨): $e\n$st',
+        );
+      }
+      unawaited(_syncPatternLogToApi(log));
     }
-
-    final slots = _buildPatternPeakSlots(list);
-    await schedulePatternRemindersFromSlots(
-      slots: slots,
-      nickname: nickname,
-    );
-    unawaited(_syncPatternLogToApi(log));
-    final slotText = _formatPatternSlots(slots);
-    return '최근 $_patternWindowDays일 기록을 30분 단위로 분석해 '
-        '${slots.length}개 피크 시간대를 설정했어요.\n'
-        '예방 알림 시간: $slotText (각 시간 3분 전 발송)\n'
-        '설정 > 알림 해지에서 언제든 해지할 수 있어요.';
   }
 
   Future<void> _savePatternLogOnly(_SmokingPatternLog log) async {
@@ -1069,13 +1090,57 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
           : emotionValue,
       tsMs: now.millisecondsSinceEpoch,
     );
-    final summaryText = await _savePatternAndSchedule(log);
-    _lastPatternSummaryText = summaryText;
+    try {
+      await _savePatternAndSchedule(log);
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('방금 피움 저장 실패: $e\n$st');
+      }
+      if (!mounted) return false;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('저장하지 못했어요'),
+          content: const Text(
+            '기록 저장 중 문제가 발생했습니다.\n잠시 후 다시 시도해 주세요.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('확인'),
+            ),
+          ],
+        ),
+      );
+      return false;
+    }
     if (!mounted) return false;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('기록을 저장했습니다.')),
-    );
     return true;
+  }
+
+  /// 저장 완료 피드백은 오버레이 다이얼로그로 표시한다.
+  Future<void> _showSmokingSavedFeedback() async {
+    if (!mounted) return;
+    HapticFeedback.mediumImpact();
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('흡연 기록이 저장되었습니다'),
+        content: Text(
+          '기록이 정상적으로 반영되었어요.',
+          style: AppTheme.bodyMedium.copyWith(color: AppTheme.textPrimary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('확인'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _onSmokedTap() async {
@@ -1087,27 +1152,12 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     final before = prefs.getInt('lungHealth') ?? 100;
     final after = (before - 10).clamp(0, 100);
     await prefs.setInt('lungHealth', after);
+    // 폐 회복 타이머 기준 시점을 현재로 갱신해, 방금 피움 직후 -10%가 즉시 상쇄되지 않도록 한다.
+    await prefs.setInt('lastUpdatedTime', DateTime.now().millisecondsSinceEpoch);
     await syncWidgetData();
     if (!mounted) return;
     setState(() {});
-    final summary = _lastPatternSummaryText ??
-        '기록을 저장했습니다. 다음날부터 패턴 기반 예방 알림을 보내드릴게요.\n'
-            '설정 > 알림 해지에서 패턴 기반 자동 알림 기능을 해지할 수 있어요.';
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('패턴 저장 완료'),
-        content: Text(summary),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('확인'),
-          ),
-        ],
-      ),
-    );
+    await _showSmokingSavedFeedback();
   }
 
   Future<void> _onStrongCravingTap() async {
@@ -1276,6 +1326,20 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     SystemNavigator.pop();
   }
 
+  Future<void> _shareAppRecommendation() async {
+    final text = '금연뱅크 앱으로 금연을 기록하고 있어요. 함께 써보세요!\n\n'
+        '• Android: $_kAppPlayStoreUrl\n'
+        '• iPhone: $_kAppIosStoreUrl';
+    try {
+      await SharePlus.instance.share(ShareParams(text: text));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('공유 화면을 열 수 없습니다.')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final formattedStart =
@@ -1362,24 +1426,43 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               Expanded(
                 child: Align(
                   alignment: Alignment.centerRight,
-                  child: IconButton(
-                    icon: const Icon(Icons.settings_rounded),
-                    tooltip: '설정',
-                    color: appBarFg,
-                    onPressed: () async {
-                      await Navigator.push<void>(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => SettingsScreen(
-                            reminderTimes: List.from(_reminderTimes),
-                            onReminderUpdated: (list) =>
-                                setState(() => _reminderTimes = list),
-                            onGoToFirstSetup: _confirmAndGoToFirstSetup,
-                          ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          Icons.ios_share_rounded,
+                          size: 21,
+                          color: appBarFg,
                         ),
-                      );
-                      await _reloadReminderTimesFromPrefs();
-                    },
+                        tooltip: '지인에게 앱 공유하기',
+                        onPressed: _shareAppRecommendation,
+                      ),
+                      Builder(
+                        builder: (innerCtx) {
+                          return IconButton(
+                            icon: const Icon(Icons.settings_rounded),
+                            tooltip: '설정',
+                            color: appBarFg,
+                            onPressed: () async {
+                              await Navigator.push<void>(
+                                innerCtx,
+                                MaterialPageRoute(
+                                  builder: (_) => SettingsScreen(
+                                    reminderTimes: List.from(_reminderTimes),
+                                    onReminderUpdated: (list) =>
+                                        setState(() => _reminderTimes = list),
+                                    onGoToFirstSetup: _confirmAndGoToFirstSetup,
+                                    onShowTutorial: widget.onShowTutorial,
+                                  ),
+                                ),
+                              );
+                              await _reloadReminderTimesFromPrefs();
+                            },
+                          );
+                        },
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -1388,6 +1471,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         ),
       ),
       body: SingleChildScrollView(
+        controller: widget.mainScrollController,
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1475,7 +1559,9 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
               ),
             ),
             // 상단 요약 카드
-            Container(
+            Builder(
+              builder: (context) {
+                final inner = Container(
               decoration: BoxDecoration(
                 gradient: const LinearGradient(
                   colors: [AppTheme.primaryLight, AppTheme.primaryDark],
@@ -1647,6 +1733,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   ),
                 ],
               ),
+            );
+                final tk = widget.tutorialStatsCardKey;
+                if (tk != null) return KeyedSubtree(key: tk, child: inner);
+                return inner;
+              },
             ),
             const SizedBox(height: 24),
             if (_showReasonEditor)
@@ -1704,16 +1795,23 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             Row(
               children: [
                 Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _openReminderSettings,
-                    icon: const Icon(Icons.notifications_active_rounded, size: 20),
-                    label: Text(_reminderTimes.isEmpty ? '알림 설정' : '알림 ${_reminderTimes.length}개'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF6366F1),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
+                  child: Builder(
+                    builder: (_) {
+                      final reminderBtn = ElevatedButton.icon(
+                        onPressed: _openReminderSettings,
+                        icon: const Icon(Icons.notifications_active_rounded, size: 20),
+                        label: Text(_reminderTimes.isEmpty ? '알림 설정' : '알림 ${_reminderTimes.length}개'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF6366F1),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                      );
+                      final rk = widget.tutorialReminderButtonKey;
+                      if (rk != null) return KeyedSubtree(key: rk, child: reminderBtn);
+                      return reminderBtn;
+                    },
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -1774,15 +1872,22 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             Row(
               children: [
                 Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _onSmokedTap,
-                    icon: const Icon(Icons.waves_rounded, size: 16),
-                    label: const Text('방금 피움', style: TextStyle(fontSize: 12)),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppTheme.error,
-                      side: const BorderSide(color: AppTheme.error),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                    ),
+                  child: Builder(
+                    builder: (context) {
+                      final smokedBtn = OutlinedButton.icon(
+                        onPressed: _onSmokedTap,
+                        icon: const Icon(Icons.waves_rounded, size: 16),
+                        label: const Text('방금 피움(패턴 기록)', style: TextStyle(fontSize: 12)),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppTheme.error,
+                          side: const BorderSide(color: AppTheme.error),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                        ),
+                      );
+                      final sk = widget.tutorialSmokedButtonKey;
+                      if (sk != null) return KeyedSubtree(key: sk, child: smokedBtn);
+                      return smokedBtn;
+                    },
                   ),
                 ),
                 const SizedBox(width: 8),

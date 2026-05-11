@@ -280,11 +280,13 @@ class _ReminderSettingsScreenState extends State<ReminderSettingsScreen>
                 ),
               ],
             ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _selectedTab == 0 ? _addReminder : null,
-        tooltip: _selectedTab == 0 ? '알림 추가' : '사용자 설정 알림 탭에서 추가 가능',
-        child: Icon(_selectedTab == 0 ? Icons.add_rounded : Icons.lock_outline_rounded),
-      ),
+      floatingActionButton: _selectedTab == 0
+          ? FloatingActionButton(
+              onPressed: _addReminder,
+              tooltip: '알림 추가',
+              child: const Icon(Icons.add_rounded),
+            )
+          : null,
     );
   }
 }

@@ -30,7 +30,10 @@ import 'screens/game_menu_screen.dart';
 import 'screens/growth_hub_screen.dart';
 import 'screens/lung_smoking_menu_screen.dart';
 import 'screens/cigarette_collect_screen.dart';
+import 'screens/report_screen.dart';
 import 'screens/attendance_screen.dart';
+import 'data/main_tutorial_prefs.dart';
+import 'widgets/main_screen_tutorial_overlay.dart';
 
 // firebase
 import 'package:firebase_core/firebase_core.dart';
@@ -529,6 +532,16 @@ class MainScreenWrapper extends StatefulWidget {
 class _MainScreenWrapperState extends State<MainScreenWrapper> {
   int currentIndex = 0;
 
+  final GlobalKey _tutorialStatsKey = GlobalKey(debugLabel: 'tutorial_stats');
+  final GlobalKey _tutorialSmokedKey = GlobalKey(debugLabel: 'tutorial_smoked');
+  final GlobalKey _tutorialReminderKey = GlobalKey(debugLabel: 'tutorial_reminder');
+  final GlobalKey _tutorialNavGameKey = GlobalKey(debugLabel: 'tutorial_nav_game');
+  final GlobalKey _tutorialNavGrowthKey = GlobalKey(debugLabel: 'tutorial_nav_growth');
+  final GlobalKey _tutorialNavCollectKey = GlobalKey(debugLabel: 'tutorial_nav_collect');
+
+  bool _showMainTutorial = false;
+  final ScrollController _mainScrollController = ScrollController();
+
   // ✅ 전면광고
   InterstitialAd? _interstitialAd;
   Timer? _interstitialRetryTimer;
@@ -542,6 +555,95 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
     super.initState();
     _loadClickCount();
     _loadInterstitialAd();
+    WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_tryScheduleMainTutorial()));
+  }
+
+  @override
+  void didUpdateWidget(MainScreenWrapper oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.refreshTrigger != oldWidget.refreshTrigger) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_tryScheduleMainTutorial()));
+    }
+  }
+
+  /// 튜토리얼에서 초록 카드·버튼 위치가 맞도록, 오버레이를 띄우기 전에 항상 맨 위로 스크롤합니다.
+  Future<void> _scrollMainToTop() async {
+    if (!mounted) return;
+    final c = _mainScrollController;
+    for (var i = 0; i < 24 && !c.hasClients; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 32));
+      if (!mounted) return;
+    }
+    if (!c.hasClients) return;
+    await c.animateTo(
+      0,
+      duration: const Duration(milliseconds: 420),
+      curve: Curves.easeOutCubic,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+  }
+
+  Future<void> _tryScheduleMainTutorial() async {
+    if (!mounted || currentIndex != 0) return;
+    final done = await MainTutorialPrefs.isCompleted();
+    if (!mounted || done) return;
+    await _scrollMainToTop();
+    if (!mounted) return;
+    setState(() => _showMainTutorial = true);
+  }
+
+  Future<void> _completeMainTutorial() async {
+    await MainTutorialPrefs.markCompleted();
+    if (mounted) setState(() => _showMainTutorial = false);
+  }
+
+  Future<void> _replayMainTutorial() async {
+    if (!mounted) return;
+    if (currentIndex != 0) {
+      setState(() => currentIndex = 0);
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      if (!mounted) return;
+    }
+    await _scrollMainToTop();
+    if (!mounted) return;
+    setState(() => _showMainTutorial = true);
+  }
+
+  List<MainTutorialStep> _tutorialSteps() {
+    return [
+      MainTutorialStep(
+        keys: [_tutorialStatsKey],
+        highlightPadding: 12,
+        cornerRadius: 20,
+        title: '금연 현황을 한눈에',
+        description:
+            '이 초록 카드에서 금연 시작일·누적 일수와 목표,\n절약한 금액과 참은 담배 개비까지 바로 확인할 수 있어요.',
+      ),
+      MainTutorialStep(
+        keys: [_tutorialSmokedKey],
+        highlightPadding: 8,
+        cornerRadius: 12,
+        title: '흡연했을 때는 여기로',
+        description:
+            '흡연 후 「방금 피움(패턴 기록)」을 눌러 시간대·상황·감정을 남기면,\n기록을 바탕으로 나의 레포트가 만들어지고 패턴 알림도 준비돼요.',
+      ),
+      MainTutorialStep(
+        keys: [_tutorialReminderKey],
+        highlightPadding: 8,
+        cornerRadius: 12,
+        title: '알림은 여기에서',
+        description:
+            '「알림 설정」버튼에서 원하는 시간의 알림을 바로 추가할 수 있어요.\n흡연 기록이 쌓이면 피크 시간대를 분석해 패턴 알림도 자동으로 맞춰 드려요.',
+      ),
+      MainTutorialStep(
+        keys: [_tutorialNavGameKey, _tutorialNavGrowthKey, _tutorialNavCollectKey],
+        highlightPadding: 6,
+        cornerRadius: 14,
+        title: '금연을 재미있게 이어가요',
+        description:
+            '게임·성장시키기·수집·도감에서 미니게임·나무 키우기·도감 수집 등\n다양한 기능으로 금연을 계속 이어가 보세요.',
+      ),
+    ];
   }
 
   Future<void> _loadClickCount() async {
@@ -619,10 +721,48 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
     }
   }
 
+  Future<void> _prepareTutorialStep(int stepIndex) async {
+    if (!mounted || currentIndex != 0) return;
+    final c = _mainScrollController;
+    for (var i = 0; i < 8 && !c.hasClients; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      if (!mounted) return;
+    }
+    if (!c.hasClients) return;
+
+    if (stepIndex == 1) {
+      await c.animateTo(
+        c.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 480),
+        curve: Curves.easeOutCubic,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 160));
+    } else if (stepIndex == 2) {
+      final ctx = _tutorialReminderKey.currentContext;
+      if (ctx != null && ctx.mounted) {
+        await Scrollable.ensureVisible(
+          ctx,
+          alignment: 0.32,
+          duration: const Duration(milliseconds: 450),
+          curve: Curves.easeOutCubic,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 140));
+      }
+    } else if (stepIndex == 3) {
+      await c.animateTo(
+        c.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 380),
+        curve: Curves.easeOutCubic,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+  }
+
   @override
   void dispose() {
     _interstitialRetryTimer?.cancel();
     _interstitialAd?.dispose();
+    _mainScrollController.dispose();
     super.dispose();
   }
 
@@ -639,42 +779,63 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
         dailyCigarettes: widget.dailyCigarettes,
         cigarettesPerPack: widget.cigarettesPerPack,
         pricePerPack: widget.pricePerPack,
+        onShowTutorial: _replayMainTutorial,
+        tutorialStatsCardKey: _tutorialStatsKey,
+        tutorialSmokedButtonKey: _tutorialSmokedKey,
+        tutorialReminderButtonKey: _tutorialReminderKey,
+        mainScrollController: _mainScrollController,
       ),
       const GameMenuScreen(),
       const GrowthHubScreen(),
       const LungSmokingMenuScreen(),
+      const ReportScreen(),
       const CigaretteCollectScreen(),
     ];
 
-    return Scaffold(
-      body: screens[currentIndex],
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.06),
-              blurRadius: 12,
-              offset: const Offset(0, -2),
-            ),
-          ],
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _NavItem(icon: Icons.home_rounded, label: '메인', index: 0, current: currentIndex, onTap: _showAdThenNavigate),
-                _NavItem(icon: Icons.sports_esports_rounded, label: '게임', index: 1, current: currentIndex, onTap: _showAdThenNavigate),
-                _NavItem(icon: Icons.auto_awesome_rounded, label: '성장시키기', index: 2, current: currentIndex, onTap: _showAdThenNavigate),
-                _NavItem(icon: Icons.favorite_rounded, label: '건강/커뮤니티', index: 3, current: currentIndex, onTap: _showAdThenNavigate),
-                _NavItem(icon: Icons.inventory_2_rounded, label: '수집·도감', index: 4, current: currentIndex, onTap: _showAdThenNavigate),
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Scaffold(
+          body: screens[currentIndex],
+          bottomNavigationBar: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.06),
+                  blurRadius: 12,
+                  offset: const Offset(0, -2),
+                ),
               ],
+            ),
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _NavItem(icon: Icons.home_rounded, label: '메인', index: 0, current: currentIndex, onTap: _showAdThenNavigate),
+                    _NavItem(key: _tutorialNavGameKey, icon: Icons.sports_esports_rounded, label: '게임', index: 1, current: currentIndex, onTap: _showAdThenNavigate),
+                    _NavItem(key: _tutorialNavGrowthKey, icon: Icons.auto_awesome_rounded, label: '성장시키기', index: 2, current: currentIndex, onTap: _showAdThenNavigate),
+                    _NavItem(icon: Icons.favorite_rounded, label: '건강/커뮤니티', index: 3, current: currentIndex, onTap: _showAdThenNavigate),
+                    _NavItem(icon: Icons.insert_chart_rounded, label: '레포트', index: 4, current: currentIndex, onTap: _showAdThenNavigate),
+                    _NavItem(key: _tutorialNavCollectKey, icon: Icons.inventory_2_rounded, label: '수집·도감', index: 5, current: currentIndex, onTap: _showAdThenNavigate),
+                  ],
+                ),
+              ),
             ),
           ),
         ),
-      ),
+        if (_showMainTutorial)
+          Positioned.fill(
+            child: MainScreenTutorialOverlay(
+              steps: _tutorialSteps(),
+              onFinished: () => unawaited(_completeMainTutorial()),
+              onSkip: () => unawaited(_completeMainTutorial()),
+              prepareStep: _prepareTutorialStep,
+            ),
+          ),
+      ],
     );
   }
 }
@@ -687,6 +848,7 @@ class _NavItem extends StatelessWidget {
   final void Function(int) onTap;
 
   const _NavItem({
+    super.key,
     required this.icon,
     required this.label,
     required this.index,

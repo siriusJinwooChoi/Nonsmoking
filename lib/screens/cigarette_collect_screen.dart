@@ -217,6 +217,15 @@ class _CigaretteCollectScreenState extends State<CigaretteCollectScreen>
           ...assets.where((k) => k != picked),
         ];
       }
+      // 첫 진입 체감 개선: 첫 후보 담배갑 1장을 먼저 디코딩해 두고 화면에 노출한다.
+      if (_currentAsset == null && picked != null && mounted) {
+        await RemoteAssets.precacheFirstCigarettePackImages(
+          context,
+          [picked],
+          count: 1,
+          thumbnailDecodeWidth: 480,
+        ).timeout(const Duration(milliseconds: 900), onTimeout: () {});
+      }
       if (!mounted) return;
       setState(() {
         _cigaretteAssets = assets;

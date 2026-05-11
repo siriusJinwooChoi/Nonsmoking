@@ -1184,6 +1184,24 @@ Future<void> bootstrapCoreReminderSchedulesOnAppOpen() async {
   await scheduleAttendanceReminderIfNeeded();
   await scheduleCigaretteCollectionReminders();
   await maybeNotifyCigaretteCollectionWindowOpened();
+  if (prefs.getBool(kPatternReminderEnabledKey) ?? true) {
+    try {
+      final slots = await getPatternReminderSlots();
+      final nickname = prefs.getString('nickname') ?? '회원';
+      if (slots.isEmpty) {
+        await cancelPatternReminders();
+      } else {
+        await schedulePatternRemindersFromSlots(
+          slots: slots,
+          nickname: nickname,
+        );
+      }
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('bootstrap schedulePatternRemindersFromSlots: $e\n$st');
+      }
+    }
+  }
 }
 
 /// 사용자가 흡연/강한 욕구를 기록한 시각의 "다음날부터 매일 3분 전" 알림 예약
@@ -1267,6 +1285,7 @@ Future<void> schedulePatternRemindersFromSlots({
   await ensureAndroidAlarmPermissionsForScheduling();
   final granted = await _ensureNotificationPermissionGranted();
   if (!granted) return;
+  final scheduleMode = await resolveAndroidReminderScheduleMode();
 
   final plugin = FlutterLocalNotificationsPlugin();
   await plugin.initialize(_initSettings);
@@ -1302,21 +1321,31 @@ Future<void> schedulePatternRemindersFromSlots({
       if (notifyHour < 0) notifyHour += 24;
     }
     final id = kPatternReminderNotificationIdBase + i;
-    await plugin.zonedSchedule(
-      id,
-      '흡연 패턴 미리 알림',
-      '($bodyName)님은 이 시간대에 담배를 피고 싶어하세요. 참아보세요!',
-      _nextInstanceAtTime(notifyHour, notifyMinute),
-      const NotificationDetails(
-        android: androidDetails,
-        iOS: _defaultDarwinNotificationDetails,
-        macOS: _defaultDarwinNotificationDetails,
-      ),
-      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-      matchDateTimeComponents: DateTimeComponents.time,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
-    );
+    Future<void> scheduleWith(AndroidScheduleMode mode) => plugin.zonedSchedule(
+          id,
+          '흡연 패턴 미리 알림',
+          '($bodyName)님은 이 시간대에 담배를 피고 싶어하세요. 참아보세요!',
+          _nextInstanceAtTime(notifyHour, notifyMinute),
+          const NotificationDetails(
+            android: androidDetails,
+            iOS: _defaultDarwinNotificationDetails,
+            macOS: _defaultDarwinNotificationDetails,
+          ),
+          androidScheduleMode: mode,
+          matchDateTimeComponents: DateTimeComponents.time,
+          uiLocalNotificationDateInterpretation:
+              UILocalNotificationDateInterpretation.absoluteTime,
+        );
+    try {
+      await scheduleWith(scheduleMode);
+    } on PlatformException catch (e) {
+      if (scheduleMode == AndroidScheduleMode.exactAllowWhileIdle &&
+          e.code == 'exact_alarms_not_permitted') {
+        await scheduleWith(AndroidScheduleMode.inexactAllowWhileIdle);
+      } else {
+        rethrow;
+      }
+    }
   }
 }
 
@@ -1366,5 +1395,14 @@ Future<void> setPatternReminderEnabled(bool enabled) async {
   if (!enabled) {
     await cancelPatternReminders();
     await clearPatternReminderSlots();
+  } else {
+    final slots = await getPatternReminderSlots();
+    final nickname = prefs.getString('nickname') ?? '회원';
+    if (slots.isNotEmpty) {
+      await schedulePatternRemindersFromSlots(
+        slots: slots,
+        nickname: nickname,
+      );
+    }
   }
 }
