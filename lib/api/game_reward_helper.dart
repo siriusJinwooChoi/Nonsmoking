@@ -1,6 +1,7 @@
 import 'dart:async' show unawaited;
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../auth/bff_auth_service.dart';
 import '../screens/attendance_screen.dart';
 import '../supabase/supabase_config.dart';
@@ -9,6 +10,14 @@ import 'game_sync_helper.dart';
 import 'games_api_service.dart';
 
 const GamesApiService _gamesApi = GamesApiService();
+
+/// 게임별: 마지막으로 일일 보상 **안내 스낵바**를 띄운 로컬 날짜 (yyyy-MM-dd)
+String _gameRewardSnackLastYmdKey(String game) => 'game_daily_reward_snack_last_ymd_$game';
+
+String _localYmd() {
+  final n = DateTime.now();
+  return '${n.year}-${n.month.toString().padLeft(2, '0')}-${n.day.toString().padLeft(2, '0')}';
+}
 
 /// 게임 기록을 서버에 반영한 뒤, 서버 검증 일일 보상을 요청합니다.
 /// 로그인·API 미설정 시 null.
@@ -45,6 +54,17 @@ Future<void> syncStatsThenClaimGameRewardWithSnackBar(
   required String game,
   Map<String, dynamic>? proof,
 }) async {
+  final prefs = await SharedPreferences.getInstance();
+  final today = _localYmd();
+  final lastYmdKey = _gameRewardSnackLastYmdKey(game);
+  final alreadyShownToday = prefs.getString(lastYmdKey) == today;
+
+  if (alreadyShownToday) {
+    await syncGameStatsToApiIfAvailable();
+    unawaited(claimGameDailyRewardIfAvailable(game: game, proof: proof));
+    return;
+  }
+
   final messenger = ScaffoldMessenger.of(context);
   messenger.hideCurrentSnackBar();
   messenger.showSnackBar(
@@ -67,6 +87,8 @@ Future<void> syncStatsThenClaimGameRewardWithSnackBar(
     );
     return;
   }
+
+  await prefs.setString(lastYmdKey, today);
 
   if (r.granted > 0) {
     messenger.showSnackBar(

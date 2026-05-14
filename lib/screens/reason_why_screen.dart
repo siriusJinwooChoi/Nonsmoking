@@ -8,6 +8,7 @@ import '../theme/app_theme.dart';
 import '../notifications/daily_reminder_worker.dart';
 import '../supabase/supabase_config.dart';
 import '../api/reasons_api_service.dart';
+import '../widget/widget_helper.dart';
 
 class ReasonWhyScreen extends StatefulWidget {
   const ReasonWhyScreen({super.key});
@@ -179,6 +180,7 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
     } else {
       await prefs.remove(_pinnedReasonTextKey);
     }
+    await syncWidgetData();
     if (syncApi) {
       unawaited(_pushReasonsToApiIfAvailable());
     }
@@ -252,6 +254,8 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
       if (remote.selectedReasonText != null) {
         await prefs.setString(kSelectedReasonTextKey, remote.selectedReasonText!);
       }
+
+      await syncWidgetData();
 
       if (!mounted) return;
       setState(() {

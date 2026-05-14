@@ -24,8 +24,8 @@ Uri _bffUri(String path) {
   return Uri.parse('$base$path');
 }
 
-/// Android: 서버(FCM)로 **일일·출석·수집·미접속·금연 이유(12:01)** 알림을 보내고, 해당 로컬 예약은 끕니다.
-/// (목표 달성 등 그 외는 로컬 유지)
+/// Android·iOS: FCM 토큰이 서버에 등록되면 서버 스케줄로 **일일·출석·수집·미접속·금연 이유(12:01)** 등을 보내고
+/// 해당 항목의 로컬 예약은 끕니다. **흡연 패턴 미리 알림**은 기기 시각 기반이라 로컬 예약을 유지합니다.
 class FcmDailyReminderService {
   FcmDailyReminderService._();
   static final FcmDailyReminderService instance = FcmDailyReminderService._();
@@ -101,16 +101,11 @@ class FcmDailyReminderService {
       );
       if (res.statusCode == 200) {
         _lastUploadedToken = token;
-        // 서버 원격 푸시는 현재 Android 경로를 기준으로 운영한다.
-        // iOS는 APNs/서버 라우팅 준비 상태에 따라 공백이 생길 수 있어
-        // 로컬 예약(수집/출석/리마인더)을 유지한다.
-        await dw.setFcmRemotePushEnabled(
-          defaultTargetPlatform == TargetPlatform.android,
-        );
+        // Android·iOS 동일: 서버 FCM 크론에 위임하고 로컬 중복 예약은 끈다.
+        await dw.setFcmRemotePushEnabled(true);
         if (kDebugMode) {
           debugPrint(
-            'FcmDailyReminderService: token registered, '
-            'remotePush=${defaultTargetPlatform == TargetPlatform.android}',
+            'FcmDailyReminderService: token registered, remotePush=true',
           );
         }
       }

@@ -9,6 +9,8 @@ import 'package:workmanager/workmanager.dart';
 import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
+import 'pattern_peak_slots.dart';
+
 bool _notificationTzInitialized = false;
 
 bool _mapLooksLikeReminderTime(Map<String, dynamic> m) {
@@ -366,6 +368,7 @@ Future<void> cancelLocalDailyReminderSlotsOnly() async {
 }
 
 /// 서버 FCM 사용 여부. 켜면 일일·출석·담배수집·미접속·금연 이유 로컬 예약을 취소합니다.
+/// 패턴 알림은 사용자 기기 시각 기반이라 **로컬 예약을 유지**합니다(FCM만 맡기면 서버 미구현 시 영구 미발송).
 Future<void> setFcmRemotePushEnabled(bool enabled) async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.setBool(kFcmRemotePushEnabledKey, enabled);
@@ -376,6 +379,27 @@ Future<void> setFcmRemotePushEnabled(bool enabled) async {
     await cancelAttendanceReminder();
     await cancelInactivityReminderSchedule();
     await cancelReasonReminderSchedule();
+    if (prefs.getBool(kPatternReminderEnabledKey) ?? true) {
+      try {
+        var slots = await getPatternReminderSlots();
+        if (slots.isEmpty) {
+          slots = await tryRebuildPatternSlotsFromLocalLogs();
+        }
+        final nickname = prefs.getString('nickname') ?? '회원';
+        if (slots.isNotEmpty) {
+          await schedulePatternRemindersFromSlots(
+            slots: slots,
+            nickname: nickname,
+          );
+        }
+      } catch (e, st) {
+        if (kDebugMode) {
+          debugPrint(
+            'setFcmRemotePushEnabled: pattern reschedule after FCM on: $e\n$st',
+          );
+        }
+      }
+    }
   } else {
     await scheduleAllDailyReminders();
     await scheduleCigaretteCollectionReminders();
@@ -385,6 +409,25 @@ Future<void> setFcmRemotePushEnabled(bool enabled) async {
     }
     if (prefs.getBool(kReasonNotificationEnabledKey) ?? false) {
       await scheduleReasonReminder();
+    }
+    if (prefs.getBool(kPatternReminderEnabledKey) ?? true) {
+      try {
+        var slots = await getPatternReminderSlots();
+        if (slots.isEmpty) {
+          slots = await tryRebuildPatternSlotsFromLocalLogs();
+        }
+        final nickname = prefs.getString('nickname') ?? '회원';
+        if (slots.isNotEmpty) {
+          await schedulePatternRemindersFromSlots(
+            slots: slots,
+            nickname: nickname,
+          );
+        }
+      } catch (e, st) {
+        if (kDebugMode) {
+          debugPrint('setFcmRemotePushEnabled: pattern reschedule failed: $e\n$st');
+        }
+      }
     }
   }
 }
@@ -1186,7 +1229,11 @@ Future<void> bootstrapCoreReminderSchedulesOnAppOpen() async {
   await maybeNotifyCigaretteCollectionWindowOpened();
   if (prefs.getBool(kPatternReminderEnabledKey) ?? true) {
     try {
-      final slots = await getPatternReminderSlots();
+      var slots = await getPatternReminderSlots();
+      // 동기화 등으로 슬롯 JSON 만 비었고 흡연 로그는 남은 경우 → 피크 재계산 후 예약
+      if (slots.isEmpty) {
+        slots = await tryRebuildPatternSlotsFromLocalLogs();
+      }
       final nickname = prefs.getString('nickname') ?? '회원';
       if (slots.isEmpty) {
         await cancelPatternReminders();
@@ -1305,6 +1352,7 @@ Future<void> schedulePatternRemindersFromSlots({
     await cancelPatternReminders();
     return;
   }
+
   ensureNotificationTimezoneInitialized();
   await ensureAndroidAlarmPermissionsForScheduling();
   final scheduleMode = await resolveAndroidReminderScheduleMode();
@@ -1321,8 +1369,10 @@ Future<void> schedulePatternRemindersFromSlots({
       AndroidFlutterLocalNotificationsPlugin>();
   await androidImpl?.createNotificationChannel(channel);
 
-  // 기존 패턴 예약은 먼저 정리한 뒤 최신 피크 슬롯만 다시 등록
-  await cancelPatternReminders();
+  if (capped.isEmpty) {
+    await cancelPatternReminders();
+    return;
+  }
 
   const androidDetails = AndroidNotificationDetails(
     'smoking_pattern_channel',
@@ -1366,13 +1416,23 @@ Future<void> schedulePatternRemindersFromSlots({
     AndroidScheduleMode usedMode = scheduleMode;
     try {
       await scheduleWith(scheduleMode);
-    } on PlatformException catch (e) {
-      if (scheduleMode == AndroidScheduleMode.exactAllowWhileIdle &&
-          e.code == 'exact_alarms_not_permitted') {
+    } catch (e, st) {
+      // exact 실패·권한·플러그인 오류 등: inexact 로 한 번 더 시도. 전량 cancel 후 예약 실패로
+      // 알림이 하루종일 사라지는 경우를 줄인다.
+      if (kDebugMode) {
+        debugPrint(
+          'schedulePatternRemindersFromSlots: slot=$i primary failed ($e), trying inexact…\n$st',
+        );
+      }
+      try {
         usedMode = AndroidScheduleMode.inexactAllowWhileIdle;
-        await scheduleWith(usedMode);
-      } else {
-        rethrow;
+        await scheduleWith(AndroidScheduleMode.inexactAllowWhileIdle);
+      } catch (e2, st2) {
+        if (kDebugMode) {
+          debugPrint(
+            'schedulePatternRemindersFromSlots: slot=$i inexact also failed: $e2\n$st2',
+          );
+        }
       }
     }
     if (kDebugMode) {
@@ -1383,6 +1443,14 @@ Future<void> schedulePatternRemindersFromSlots({
         'next=$scheduledAt',
       );
     }
+  }
+
+  // 슬롯 개수가 줄었을 때 남는 id·레거시 id 정리 (예약은 위에서 동일 id 로 덮어씀)
+  for (var i = capped.length; i < kPatternReminderSlotMax; i++) {
+    await plugin.cancel(kPatternReminderNotificationIdBase + i);
+  }
+  for (var i = kPatternReminderSlotMax; i < 900; i++) {
+    await plugin.cancel(kPatternReminderNotificationIdBase + i);
   }
 }
 

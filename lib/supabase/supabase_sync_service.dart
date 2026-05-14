@@ -653,16 +653,50 @@ abstract final class SupabaseSyncService {
       dw.kPatternReminderEnabledKey,
       row['pattern_reminder_enabled'] as bool? ?? true,
     );
+    // pattern_reminder_slots_json: 서버 기본값이 [] 인 경우 로컬에서 이미 계산된
+    // 피크 시간을 덮어써 알림 예약이 취소되는 문제가 있음 → reminder_times_json 과
+    // 동일하게 "빈 서버는 로컬이 비어 있을 때만" 적용한다. 키가 null 이면 로컬을
+    // 지우지 않는다(구 API/행 누락 시 패턴 알림이 영구히 사라지는 것 방지).
     final remotePatternSlots = row['pattern_reminder_slots_json'];
     if (remotePatternSlots != null) {
-      try {
-        await prefs.setString(
-          dw.kPatternReminderSlotsKey,
-          jsonEncode(remotePatternSlots),
-        );
-      } catch (_) {}
-    } else {
-      await prefs.remove(dw.kPatternReminderSlotsKey);
+      List<dynamic>? serverPatternList;
+      if (remotePatternSlots is List) {
+        serverPatternList = remotePatternSlots;
+      } else {
+        try {
+          final decoded = jsonDecode(jsonEncode(remotePatternSlots));
+          if (decoded is List) serverPatternList = decoded;
+        } catch (_) {}
+      }
+      final serverPatternEmpty =
+          serverPatternList == null || serverPatternList.isEmpty;
+      if (!serverPatternEmpty) {
+        try {
+          await prefs.setString(
+            dw.kPatternReminderSlotsKey,
+            jsonEncode(remotePatternSlots),
+          );
+        } catch (_) {}
+      } else {
+        var localHasPatternSlots = false;
+        final localPatternRaw = prefs.getString(dw.kPatternReminderSlotsKey);
+        if (localPatternRaw != null && localPatternRaw.trim().isNotEmpty) {
+          try {
+            final loc = jsonDecode(localPatternRaw);
+            localHasPatternSlots = loc is List && loc.isNotEmpty;
+          } catch (_) {}
+        }
+        if (!localHasPatternSlots) {
+          try {
+            await prefs.setString(
+              dw.kPatternReminderSlotsKey,
+              jsonEncode(remotePatternSlots),
+            );
+          } catch (_) {}
+        } else {
+          unawaited(pushLocalToRemoteIfEligible());
+        }
+      }
     }
     if ((row['pattern_reminder_enabled'] as bool?) == false) {
       try {
@@ -675,9 +709,12 @@ abstract final class SupabaseSyncService {
         if (slots.isEmpty) {
           await dw.cancelPatternReminders();
         } else {
+          final nickname = prefs.getString('nickname')?.trim();
           await dw.schedulePatternRemindersFromSlots(
             slots: slots,
-            nickname: '회원',
+            nickname: (nickname != null && nickname.isNotEmpty)
+                ? nickname
+                : '회원',
           );
         }
       } catch (_) {}

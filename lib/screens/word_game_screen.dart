@@ -220,6 +220,79 @@ class _WordGameScreenState extends State<WordGameScreen> {
     return (dr <= 1 && dc <= 1) && (dr != 0 || dc != 0);
   }
 
+  double _dist2(double ax, double ay, double bx, double by) {
+    final dx = ax - bx;
+    final dy = ay - by;
+    return dx * dx + dy * dy;
+  }
+
+  Offset _cellCenter(int r, int c, double cellSize, double offsetX, double offsetY) {
+    final step = cellSize + _cellGap;
+    return Offset(
+      offsetX + c * step + cellSize * 0.5,
+      offsetY + r * step + cellSize * 0.5,
+    );
+  }
+
+  /// (px,py)에서 글자 칸 사각형까지의 최단 거리 제곱 (중심보다 대각 선택에 유리)
+  double _dist2PointToCell(
+    double px,
+    double py,
+    int r,
+    int c,
+    double cellSize,
+    double offsetX,
+    double offsetY,
+  ) {
+    final step = cellSize + _cellGap;
+    final left = offsetX + c * step;
+    final top = offsetY + r * step;
+    final right = left + cellSize;
+    final bottom = top + cellSize;
+    final qx = px < left ? left : (px > right ? right : px);
+    final qy = py < top ? top : (py > bottom ? bottom : py);
+    return _dist2(px, py, qx, qy);
+  }
+
+  /// 시작 터치: 가장 가까운 글자 칸 (대각 시작 시에도 floor 오판 방지)
+  List<int>? _pickStartCell(Offset local, double cellSize, double offsetX, double offsetY) {
+    final step = cellSize + _cellGap;
+    final maxPick = step * 0.88;
+    final maxPick2 = maxPick * maxPick;
+    var bestR = -1;
+    var bestC = -1;
+    var bestD2 = double.infinity;
+    for (var r = 0; r < _rows; r++) {
+      for (var c = 0; c < _cols; c++) {
+        final center = _cellCenter(r, c, cellSize, offsetX, offsetY);
+        final d2 = _dist2(local.dx, local.dy, center.dx, center.dy);
+        if (d2 < bestD2 && d2 <= maxPick2) {
+          bestD2 = d2;
+          bestR = r;
+          bestC = c;
+        }
+      }
+    }
+    if (bestR < 0) return null;
+    return [bestR, bestC];
+  }
+
+  /// (r,c)의 8방 이웃
+  List<List<int>> _neighborCells(int r, int c) {
+    final out = <List<int>>[];
+    for (var dr = -1; dr <= 1; dr++) {
+      for (var dc = -1; dc <= 1; dc++) {
+        if (dr == 0 && dc == 0) continue;
+        final nr = r + dr;
+        final nc = c + dc;
+        if (nr >= 0 && nr < _rows && nc >= 0 && nc < _cols) {
+          out.add([nr, nc]);
+        }
+      }
+    }
+    return out;
+  }
+
   void _onPanStart(DragStartDetails details, int r, int c) {
     setState(() {
       _selectedPath = [[r, c]];
@@ -230,22 +303,102 @@ class _WordGameScreenState extends State<WordGameScreen> {
     if (_selectedPath.isEmpty) return;
     final local = details.localPosition;
     final step = cellSize + _cellGap;
-    var c = ((local.dx - offsetX) / step).floor();
-    var r = ((local.dy - offsetY) / step).floor();
-    final inCellX = (local.dx - offsetX) - c * step < cellSize;
-    final inCellY = (local.dy - offsetY) - r * step < cellSize;
-    if (!inCellX || !inCellY) return;
-    c = c.clamp(0, _cols - 1);
-    r = r.clamp(0, _rows - 1);
+    // 대각 다음 칸 중심이 더 멀어 반경을 넉넉히; 대각은 루프에서 추가 완화
+    final maxPick = step * 0.94;
+    final maxPick2 = maxPick * maxPick;
+    // 손가락이 이웃 칸 안에 들어왔는지 (중심 거리보다 대각 인식에 유리)
+    final neighborTouchSlop2 = pow(step * 0.58, 2);
+
     final last = _selectedPath.last;
+    final lastCenter = _cellCenter(last[0], last[1], cellSize, offsetX, offsetY);
+    final distToLast2 = _dist2(local.dx, local.dy, lastCenter.dx, lastCenter.dy);
+
+    // 되돌리기: 이전 경로 칸 중심에 손가락이 더 가깝고, 마지막 칸보다 가깝게 느껴질 때
+    if (_selectedPath.length >= 2) {
+      var bestIdx = -1;
+      var bestD2 = double.infinity;
+      for (var i = 0; i < _selectedPath.length - 1; i++) {
+        final p = _selectedPath[i];
+        final center = _cellCenter(p[0], p[1], cellSize, offsetX, offsetY);
+        final d2 = _dist2(local.dx, local.dy, center.dx, center.dy);
+        if (d2 <= maxPick2 && d2 < distToLast2 && d2 < bestD2) {
+          bestD2 = d2;
+          bestIdx = i;
+        }
+      }
+      if (bestIdx >= 0) {
+        setState(() => _selectedPath = _selectedPath.sublist(0, bestIdx + 1));
+        return;
+      }
+    }
+
+    // 다음 칸: 이웃 중 손가락에 가장 가까운 칸 (2칸째부터는 첫 방향으로만)
+    var candidates = _neighborCells(last[0], last[1]);
+    if (_selectedPath.length >= 2) {
+      final dr0 = _selectedPath[1][0] - _selectedPath[0][0];
+      final dc0 = _selectedPath[1][1] - _selectedPath[0][1];
+      candidates = candidates
+          .where((p) => p[0] - last[0] == dr0 && p[1] - last[1] == dc0)
+          .toList();
+    }
+
+    // 손가락 방향 + 칸 사각형까지 거리로 후보 선택 (대각이 직선에 밀리는 현상 완화)
+    final vx = local.dx - lastCenter.dx;
+    final vy = local.dy - lastCenter.dy;
+    final vLen2 = vx * vx + vy * vy;
+    final vLen = vLen2 > 1e-6 ? sqrt(vLen2) : 0.0;
+    final minMove2 = step * step * 0.006;
+    // 두 축 모두 움직이면 대각 의도로 가중
+    final diagIntent = vLen2 > 1e-6
+        ? min(vx.abs(), vy.abs()) / max(vx.abs(), vy.abs())
+        : 0.0;
+
+    List<int>? best;
+    var bestScore = double.infinity;
+    for (final p in candidates) {
+      final center = _cellCenter(p[0], p[1], cellSize, offsetX, offsetY);
+      final ux = center.dx - lastCenter.dx;
+      final uy = center.dy - lastCenter.dy;
+      final uLen2 = ux * ux + uy * uy;
+      if (uLen2 < 1e-6) continue;
+      final uLen = sqrt(uLen2);
+      final dCenter2 = _dist2(local.dx, local.dy, center.dx, center.dy);
+      final dRect2 = _dist2PointToCell(local.dx, local.dy, p[0], p[1], cellSize, offsetX, offsetY);
+      final dr = p[0] - last[0];
+      final dc = p[1] - last[1];
+      final isDiag = dr.abs() == 1 && dc.abs() == 1;
+      final pickLimit2 = isDiag ? maxPick2 * 1.28 : maxPick2;
+      final onNeighborTile = dRect2 <= neighborTouchSlop2;
+      final nearCenter = dCenter2 <= pickLimit2;
+      if (!onNeighborTile && !nearCenter) continue;
+
+      // 랭킹: 칸 위 거리 우선, 없으면 중심 거리에 가깝게
+      var score = min(dRect2, dCenter2 * 0.85);
+      if (vLen2 > minMove2) {
+        final cos = (vx * ux + vy * uy) / (vLen * uLen);
+        score -= cos.clamp(-1.0, 1.0) * step * step * 0.72;
+      }
+      // 첫 한 칸 이동 시 대각 의도면 대각 후보에 소폭 보너스
+      if (_selectedPath.length == 1 && isDiag && diagIntent > 0.28) {
+        score -= step * step * 0.10 * diagIntent;
+      }
+      if (score < bestScore) {
+        bestScore = score;
+        best = p;
+      }
+    }
+    if (best == null) return;
+
+    final r = best[0];
+    final c = best[1];
     if (last[0] == r && last[1] == c) return;
+
     final existingIndex = _selectedPath.indexWhere((e) => e[0] == r && e[1] == c);
     if (existingIndex >= 0) {
       setState(() => _selectedPath = _selectedPath.sublist(0, existingIndex + 1));
       return;
     }
     if (!_isAdjacent(last[0], last[1], r, c)) return;
-    // 동서남북/대각선 한 방향으로만 이어지도록: 이미 2칸 이상이면 방향이 같아야 함
     if (_selectedPath.length >= 2) {
       final dr0 = _selectedPath[1][0] - _selectedPath[0][0];
       final dc0 = _selectedPath[1][1] - _selectedPath[0][1];
@@ -262,15 +415,18 @@ class _WordGameScreenState extends State<WordGameScreen> {
     if (_selectedPath.isEmpty) return;
     final word = _selectedPath.map((e) => _grid[e[0]][e[1]]).join();
     if (_targetWords.contains(word) && !_foundWords.contains(word)) {
+      final completedLevel = _foundWords.length + 1 == _targetWords.length;
       setState(() {
         _foundWords = {..._foundWords, word};
         _foundPaths = [..._foundPaths, List.from(_selectedPath)];
+        _selectedPath = [];
       });
-      if (_foundWords.length == _targetWords.length) {
+      if (completedLevel) {
         _showCompleteDialog();
       }
+    } else {
+      setState(() => _selectedPath = []);
     }
-    setState(() => _selectedPath = []);
   }
 
   bool _isCellInFoundPaths(int r, int c) {
@@ -477,16 +633,14 @@ class _WordGameScreenState extends State<WordGameScreen> {
                           child: GestureDetector(
                             behavior: HitTestBehavior.opaque,
                             onPanStart: (d) {
-                              final local = d.localPosition;
-                              var c = ((local.dx - touchOffsetX) / step).floor();
-                              var r = ((local.dy - touchOffsetY) / step).floor();
-                              final inCellX = (local.dx - touchOffsetX) - c * step < cellSize && (local.dx - touchOffsetX) >= c * step;
-                              final inCellY = (local.dy - touchOffsetY) - r * step < cellSize && (local.dy - touchOffsetY) >= r * step;
-                              if (!inCellX || !inCellY) return;
-                              c = c.clamp(0, _cols - 1);
-                              r = r.clamp(0, _rows - 1);
-                              if (r >= 0 && r < _rows && c >= 0 && c < _cols) {
-                                _onPanStart(d, r, c);
+                              final picked = _pickStartCell(
+                                d.localPosition,
+                                cellSize,
+                                touchOffsetX,
+                                touchOffsetY,
+                              );
+                              if (picked != null) {
+                                _onPanStart(d, picked[0], picked[1]);
                               }
                             },
                             onPanUpdate: (d) => _onPanUpdate(d, cellSize, touchOffsetX, touchOffsetY),
@@ -542,7 +696,8 @@ class _WordGameScreenState extends State<WordGameScreen> {
             ),
             const SizedBox(height: 12),
             Text(
-              '손가락으로 드래그해서 알파벳을 연결하세요',
+              '손가락으로 이웃한 알파벳을 순서대로 이은 뒤, 손을 떼면 맞는지 확인해요',
+              textAlign: TextAlign.center,
               style: AppTheme.bodyMedium.copyWith(color: AppTheme.textMuted, fontSize: 12),
             ),
             const SizedBox(height: 8),
@@ -617,8 +772,14 @@ class _GridPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _GridPainter old) {
-    return old.selectedPath.length != selectedPath.length ||
-        old.foundPaths.length != foundPaths.length ||
-        old.grid != grid;
+    if (old.grid != grid || old.foundPaths.length != foundPaths.length) return true;
+    if (old.selectedPath.length != selectedPath.length) return true;
+    for (var i = 0; i < selectedPath.length; i++) {
+      if (old.selectedPath[i][0] != selectedPath[i][0] ||
+          old.selectedPath[i][1] != selectedPath[i][1]) {
+        return true;
+      }
+    }
+    return false;
   }
 }

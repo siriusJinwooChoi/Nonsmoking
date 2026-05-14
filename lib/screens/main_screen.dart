@@ -28,6 +28,7 @@ import '../analytics/app_analytics.dart';
 
 // ✅ WorkManager 알림(네 프로젝트 구조 기준)
 import '../notifications/daily_reminder_worker.dart';
+import '../notifications/pattern_peak_slots.dart';
 // ✅ 홈 화면 위젯 갱신(동기화)
 import '../widget/widget_helper.dart';
 import '../supabase/supabase_config.dart';
@@ -230,12 +231,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   static const String _failureCountKey = 'failureCount';
-  static const String _smokingPatternLogsKey = 'smoking_pattern_logs_v1';
-  static const int _patternWindowDays = 30;
-  static const int _patternMinLogs = 5;
-  static const int _patternBinMinutes = 30;
-  static const int _patternMaxSlots = 5;
-  static const int _patternMergeBins = 2; // 30분 bin 기준 ±2칸(약 1시간) 이내는 같은 피크로 본다.
 
   Future<void> _reloadSavingsExchangePrefs() async {
     final prefs = await SharedPreferences.getInstance();
@@ -381,6 +376,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       if (serverPinned == null || serverPinned.isEmpty) return;
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('pinnedReasonText', serverPinned);
+      await syncWidgetData();
       if (!mounted) return;
       setState(() {
         _mainReason = serverPinned;
@@ -442,10 +438,10 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         _skippedCigarettes = totalCigs.floor();
       });
 
-      // 목표일 도달 시 축하 알림 (한 번만)
-      final days = diff.inDays;
-      if (_goalDays != null && days >= _goalDays!) {
-        showGoalReachedNotificationIfNeeded(days, _goalDays);
+      // 목표일 도달 시 축하 알림 (한 번만) — 누적일과 동일하게 달력 일차 기준
+      final goalDaysElapsed = quitCalendarDayNumber(_startTime!);
+      if (_goalDays != null && goalDaysElapsed >= _goalDays!) {
+        showGoalReachedNotificationIfNeeded(goalDaysElapsed, _goalDays);
       }
 
       // 위젯 데이터도 주기적으로 동기화 (대략 1분마다)
@@ -658,6 +654,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       const SnackBar(content: Text('금연할 이유를 저장했습니다.')),
     );
 
+    await syncWidgetData();
+
     // 로컬 반영을 먼저 끝낸 뒤, 서버에 비동기 전송
     unawaited(_pushMainReasonToApiIfAvailable(text));
   }
@@ -821,114 +819,31 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     return fallback;
   }
 
-  List<Map<String, dynamic>> _decodePatternLogs(String? raw) {
-    final list = <Map<String, dynamic>>[];
-    if (raw == null || raw.isEmpty) return list;
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is List) {
-        for (final item in decoded.whereType<Map>()) {
-          list.add(Map<String, dynamic>.from(item));
-        }
-      }
-    } catch (_) {}
-    return list;
-  }
-
-  List<TimeOfDay> _buildPatternPeakSlots(List<Map<String, dynamic>> logs) {
-    final nowMs = DateTime.now().millisecondsSinceEpoch;
-    final windowMs = _patternWindowDays * 24 * 60 * 60 * 1000;
-    final binsPerDay = (24 * 60) ~/ _patternBinMinutes; // 48
-    final scores = List<double>.filled(binsPerDay, 0.0);
-
-    for (final e in logs) {
-      final action = (e['action'] as String?) ?? '';
-      if (action != 'smoked') continue;
-      final tsMs = (e['tsMs'] as num?)?.toInt();
-      final hour = (e['hour'] as num?)?.toInt();
-      final minute = (e['minute'] as num?)?.toInt();
-      if (tsMs == null || hour == null || minute == null) continue;
-      final ageMs = nowMs - tsMs;
-      if (ageMs < 0 || ageMs > windowMs) continue;
-      final ageDays = ageMs / (24 * 60 * 60 * 1000);
-      // 최근 데이터에 더 큰 가중치: 14일 반감 느낌의 지수 감쇠
-      final weight = 1.0 / (1.0 + (ageDays / 14.0));
-      final minuteOfDay = hour * 60 + minute;
-      final bin = (minuteOfDay ~/ _patternBinMinutes).clamp(0, binsPerDay - 1);
-      scores[bin] += weight;
-    }
-
-    final totalScore = scores.fold<double>(0.0, (a, b) => a + b);
-    if (totalScore <= 0) return const <TimeOfDay>[];
-
-    final ranked = List<int>.generate(binsPerDay, (i) => i)
-      ..sort((a, b) => scores[b].compareTo(scores[a]));
-    final topScore = scores[ranked.first];
-    if (topScore <= 0) return const <TimeOfDay>[];
-
-    final selectedBins = <int>[];
-    double selectedScore = 0.0;
-    for (final bin in ranked) {
-      if (selectedBins.length >= _patternMaxSlots) break;
-      final score = scores[bin];
-      if (score <= 0) break;
-      final tooClose = selectedBins.any((picked) => (picked - bin).abs() <= _patternMergeBins);
-      if (tooClose) continue;
-      if (selectedBins.isEmpty) {
-        selectedBins.add(bin);
-        selectedScore += score;
-        continue;
-      }
-      final strongEnough = score >= topScore * 0.45;
-      final coverage = selectedScore / totalScore;
-      // 기본 1개에서 시작, 강한 피크가 남아 있고 전체 커버리지가 낮을 때만 1개씩 증가
-      if (strongEnough && coverage < 0.80) {
-        selectedBins.add(bin);
-        selectedScore += score;
-      }
-    }
-
-    selectedBins.sort();
-    return selectedBins.map((bin) {
-      final minuteOfDay = bin * _patternBinMinutes;
-      final h = minuteOfDay ~/ 60;
-      final m = minuteOfDay % 60;
-      return TimeOfDay(hour: h, minute: m);
-    }).toList();
-  }
-
   Future<void> _savePatternAndSchedule(_SmokingPatternLog log) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_smokingPatternLogsKey);
-    final list = _decodePatternLogs(raw);
+    final raw = prefs.getString(kSmokingPatternLogsPrefsKey);
+    final list = decodeSmokingPatternLogs(raw);
     list.add(log.toJson());
     if (list.length > 200) {
       list.removeRange(0, list.length - 200);
     }
-    await prefs.setString(_smokingPatternLogsKey, jsonEncode(list));
+    await prefs.setString(kSmokingPatternLogsPrefsKey, jsonEncode(list));
 
     // 이 지점까지 완료되면 흡연(패턴) 기록은 이미 기기에 저장된 상태다.
     // 이후 단계는 로컬 알림 예약·취소이며, OS 권한/플러그인 이슈로 실패해도
     // "저장 실패"로 보이면 안 되므로 별도로 잡아 메시지로만 안내한다.
     try {
-      final recentSmokedCount = list.where((e) {
-        final action = (e['action'] as String?) ?? '';
-        if (action != 'smoked') return false;
-        final ts = (e['tsMs'] as num?)?.toInt();
-        if (ts == null) return false;
-        final age = DateTime.now().millisecondsSinceEpoch - ts;
-        return age >= 0 && age <= _patternWindowDays * 24 * 60 * 60 * 1000;
-      }).length;
+      final recentSmokedCount = countRecentSmokedLogs(list);
 
       final nickname = await _resolveNicknameForPatternNotification() ?? '회원';
-      if (recentSmokedCount < _patternMinLogs) {
+      if (recentSmokedCount < kPatternMinLogs) {
         await cancelPatternReminders();
         await clearPatternReminderSlots();
         unawaited(_syncPatternLogToApi(log));
         return;
       }
 
-      final slots = _buildPatternPeakSlots(list);
+      final slots = buildPatternPeakSlots(list);
       await schedulePatternRemindersFromSlots(
         slots: slots,
         nickname: nickname,
@@ -947,23 +862,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   Future<void> _savePatternLogOnly(_SmokingPatternLog log) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_smokingPatternLogsKey);
-    final list = <Map<String, dynamic>>[];
-    if (raw != null && raw.isNotEmpty) {
-      try {
-        final decoded = jsonDecode(raw);
-        if (decoded is List) {
-          for (final item in decoded.whereType<Map>()) {
-            list.add(Map<String, dynamic>.from(item));
-          }
-        }
-      } catch (_) {}
-    }
+    final raw = prefs.getString(kSmokingPatternLogsPrefsKey);
+    final list = decodeSmokingPatternLogs(raw);
     list.add(log.toJson());
     if (list.length > 200) {
       list.removeRange(0, list.length - 200);
     }
-    await prefs.setString(_smokingPatternLogsKey, jsonEncode(list));
+    await prefs.setString(kSmokingPatternLogsPrefsKey, jsonEncode(list));
     unawaited(_syncPatternLogToApi(log));
   }
 
@@ -1344,7 +1249,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final formattedStart =
     _startTime != null ? DateFormat('yyyy년 MM월 dd일').format(_startTime!) : '';
-    final days = _startTime != null ? DateTime.now().difference(_startTime!).inDays : 0;
+    final days = _startTime != null ? quitCalendarDayNumber(_startTime!) : 0;
     final savedMoneyStr = _moneyFormatter.format(_savedMoney.round());
     final exchangeableStr = _moneyFormatter.format(_exchangeableWon);
     final appBarFg =

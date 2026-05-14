@@ -13,6 +13,9 @@ import '../api/coins_api_service.dart';
 const String kAttendanceStreakDayKey = 'attendance_streak_day';
 const String kAttendanceLastDateKey = 'attendance_last_date';
 const String kAttendanceHistoryDatesKey = 'attendance_history_dates_v1';
+/// 과거 버전에서 금연 시작~어제 전 구간을 자동으로 채우던 오류 보정용 (한 번만 기록 초기화)
+const String _kAttendanceHistoryBackfillRemovedKey =
+    'attendance_history_backfill_removed_v1';
 const String kGoldenCoinsKey = 'golden_coins';
 /// 이 날짜(yyyy-MM-dd)에 "오늘 하루 출석 화면 안 보기"를 선택한 경우, 당일 재실행 시 출석 오버레이 생략
 const String kAttendanceSkipOverlayDateKey = 'attendance_skip_overlay_date';
@@ -79,6 +82,28 @@ String _todayString() {
 bool _isWeekend(DateTime dt) =>
     dt.weekday == DateTime.saturday || dt.weekday == DateTime.sunday;
 
+/// 금연 시작 **달력일** 기준 일차: 앱에서 금연을 시작한 날(날짜만) = 1일차, 다음 날 = 2일차. 시각은 비교에 쓰지 않음.
+/// 메인 「누적일」·출석 「OO일차」·`cumulativeQuitDayFromPrefs`와 동일한 정의.
+int quitCalendarDayNumber(DateTime startTime) {
+  final today = DateTime.now();
+  final d0 = DateTime(startTime.year, startTime.month, startTime.day);
+  final d1 = DateTime(today.year, today.month, today.day);
+  final diff = d1.difference(d0).inDays + 1;
+  if (diff < 1) return 1;
+  return diff;
+}
+
+/// 금연 시작일(startTime) 기준 오늘은 누적 며칠째인지 (메인 화면 누적일과 동일)
+int cumulativeQuitDayFromPrefs(SharedPreferences prefs) {
+  final startMs = prefs.getInt('startTime');
+  if (startMs == null) {
+    final fallback = prefs.getInt(kAttendanceStreakDayKey) ?? 1;
+    return fallback < 1 ? 1 : fallback;
+  }
+  final start = DateTime.fromMillisecondsSinceEpoch(startMs);
+  return quitCalendarDayNumber(start);
+}
+
 /// 오늘 출석했는지
 Future<bool> hasAttendedToday() async {
   final last = await getAttendanceLastDate();
@@ -117,6 +142,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   bool _loading = true;
   int? _justEarnedCoins;
   int? _justEarnedDay;
+  /// 금연 시작일 기준 누적 일수(메인과 동일). 그리드 1~28일과 별개.
+  int _cumulativeQuitDay = 1;
   bool _attendedThisSession = false;
   bool _isCheckingIn = false;
   /// 출석 처리 후 당일 다시 출석창을 띄우지 않기 (닫을 때 prefs 저장)
@@ -134,6 +161,23 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
   int _clampStreakDay(int v) => v.clamp(1, kAttendanceDays);
 
+  /// 서버에서 받은 출석일 + 로컬 목록을 합쳐 prefs에 저장한다.
+  Future<void> _mergeServerAttendedDatesIntoPrefs(
+    SharedPreferences prefs,
+    List<String> serverDates,
+    String? lastDate,
+  ) async {
+    final local = (prefs.getStringList(kAttendanceHistoryDatesKey) ?? <String>[]).toSet();
+    final merged = <String>{...local, ...serverDates};
+    if (lastDate != null && lastDate.length >= 10) {
+      merged.add(lastDate.substring(0, 10));
+    }
+    await prefs.setStringList(
+      kAttendanceHistoryDatesKey,
+      merged.toList()..sort(),
+    );
+  }
+
   Future<void> _load() async {
     // 서버 동기화는 네트워크 지연·무응답 시 화면이 멈추지 않도록 타임아웃
     if (SupabaseConfig.isConfigured) {
@@ -146,14 +190,16 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     }
 
     final prefs = await SharedPreferences.getInstance();
+    // 과거: 시작일~어제까지 자동으로 출석 목록을 채우던 버그로 잘못된 체크 표시가 남을 수 있음 → 1회 초기화
+    if (!(prefs.getBool(_kAttendanceHistoryBackfillRemovedKey) ?? false)) {
+      await prefs.remove(kAttendanceHistoryDatesKey);
+      await prefs.setBool(_kAttendanceHistoryBackfillRemovedKey, true);
+    }
     final last = prefs.getString(kAttendanceLastDateKey);
     int streak = _clampStreakDay(prefs.getInt(kAttendanceStreakDayKey) ?? 1);
 
     final history = prefs.getStringList(kAttendanceHistoryDatesKey) ?? const <String>[];
-    final normalizedHistory = await _backfillAttendanceHistoryFromQuitStart(
-      prefs,
-      history.toSet(),
-    );
+    final normalizedHistory = history.toSet();
 
     if (!mounted) return;
     setState(() {
@@ -161,48 +207,24 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       _lastDate = last;
       _coins = prefs.getInt(kGoldenCoinsKey) ?? 0;
       _attendedDates = normalizedHistory;
+      _cumulativeQuitDay = cumulativeQuitDayFromPrefs(prefs);
       _loading = false;
     });
   }
 
-  Future<Set<String>> _backfillAttendanceHistoryFromQuitStart(
-    SharedPreferences prefs,
-    Set<String> currentHistory,
-  ) async {
-    final startMs = prefs.getInt('startTime');
-    if (startMs == null) return currentHistory;
-    final now = DateTime.now();
-    final start = DateTime.fromMillisecondsSinceEpoch(startMs);
-    var day = DateTime(start.year, start.month, start.day);
-    final end = DateTime(now.year, now.month, now.day).subtract(const Duration(days: 1));
-    if (day.isAfter(end)) return currentHistory;
-    bool changed = false;
-    while (!day.isAfter(end)) {
-      final ymd =
-          '${day.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}';
-      if (!currentHistory.contains(ymd)) {
-        currentHistory.add(ymd);
-        changed = true;
-      }
-      day = day.add(const Duration(days: 1));
-    }
-    if (changed) {
-      final sorted = currentHistory.toList()..sort();
-      await prefs.setStringList(kAttendanceHistoryDatesKey, sorted);
-    }
-    return currentHistory;
+  /// 달력에서 이전 달로 갈 수 있는지. (과거 3개월 제한 없음 — Dart DateTime 안전 하한만 둠)
+  static final DateTime _kCalendarNavMin = DateTime(1970, 1, 1);
+  /// 미래 탐색 상한 (무제한에 가깝게; DateTime 연산 안전용)
+  static final DateTime _kCalendarNavMaxExclusive = DateTime(2101, 1, 1);
+
+  bool get _canGoPrevMonth {
+    final prev = DateTime(_displayMonth.year, _displayMonth.month - 1, 1);
+    return !prev.isBefore(_kCalendarNavMin);
   }
 
-  DateTime get _earliestVisibleMonth {
-    final now = DateTime.now();
-    return DateTime(now.year, now.month - 2, 1);
-  }
-
-  bool get _canGoPrevMonth => _displayMonth.isAfter(_earliestVisibleMonth);
   bool get _canGoNextMonth {
-    final now = DateTime.now();
-    final thisMonth = DateTime(now.year, now.month, 1);
-    return _displayMonth.isBefore(thisMonth);
+    final next = DateTime(_displayMonth.year, _displayMonth.month + 1, 1);
+    return next.isBefore(_kCalendarNavMaxExclusive);
   }
 
   void _onTapDayBlocked(int day, {required bool alreadyToday, required int? tappableDay}) {
@@ -223,6 +245,9 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     int nextStreak = _streakDay;
     if (day != nextStreak) return;
 
+    final prefsRead = await SharedPreferences.getInstance();
+    final cumulativeForMessage = cumulativeQuitDayFromPrefs(prefsRead);
+
     final coinsToAdd = _isWeekend(DateTime.now()) ? kCoinsWeekend : kCoinsPerDay;
     final nextDay = day == 28 ? 1 : day + 1;
     final newCoins = _coins + coinsToAdd;
@@ -235,7 +260,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       _coins = newCoins;
       _attendedDates = {..._attendedDates, today};
       _justEarnedCoins = coinsToAdd;
-      _justEarnedDay = day;
+      _justEarnedDay = cumulativeForMessage;
+      _cumulativeQuitDay = cumulativeForMessage;
       _attendedThisSession = true;
       _hideOverlayRestOfDay = false;
     });
@@ -272,7 +298,9 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     });
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('${day}일 출석 완료! 금연코인 +$coinsToAdd (보유: $newCoins)'),
+        content: Text(
+          '${cumulativeForMessage}일차 출석 완료! 금연코인 +$coinsToAdd (보유: $newCoins)',
+        ),
         duration: const Duration(seconds: 2),
         backgroundColor: AppTheme.primary,
       ),
@@ -292,11 +320,20 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       if (remote.lastDate != null && remote.lastDate!.isNotEmpty) {
         await prefs.setString(kAttendanceLastDateKey, remote.lastDate!);
       }
+      await _mergeServerAttendedDatesIntoPrefs(
+        prefs,
+        remote.attendedDates,
+        remote.lastDate,
+      );
       if (!mounted) return;
+      final historyAfter =
+          (prefs.getStringList(kAttendanceHistoryDatesKey) ?? <String>[]).toSet();
       setState(() {
         _coins = remote.coins;
         _streakDay = _clampStreakDay(remote.streakDay);
         _lastDate = remote.lastDate;
+        _cumulativeQuitDay = cumulativeQuitDayFromPrefs(prefs);
+        _attendedDates = historyAfter;
       });
     } catch (_) {
       // 로컬 우선 정책: 실패 시 무시
@@ -316,11 +353,20 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       if (result.lastDate != null && result.lastDate!.isNotEmpty) {
         await prefs.setString(kAttendanceLastDateKey, result.lastDate!);
       }
+      await _mergeServerAttendedDatesIntoPrefs(
+        prefs,
+        result.attendedDates,
+        result.lastDate,
+      );
       if (!mounted) return;
+      final mergedHistory =
+          (prefs.getStringList(kAttendanceHistoryDatesKey) ?? <String>[]).toSet();
       setState(() {
         _coins = result.coins;
         _streakDay = _clampStreakDay(result.streakDay);
         _lastDate = result.lastDate;
+        _cumulativeQuitDay = cumulativeQuitDayFromPrefs(prefs);
+        _attendedDates = mergedHistory;
       });
     } catch (_) {
       // 로컬 우선 정책: 실패 시 무시
@@ -555,7 +601,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                       label: Text(
                         alreadyToday
                             ? '오늘 출석 완료'
-                            : '오늘 출석하기 (${tappableDay}일차, +${_isWeekend(now) ? kCoinsWeekend : kCoinsPerDay} 코인)',
+                            : '오늘 출석하기 (${_cumulativeQuitDay}일차, +${_isWeekend(now) ? kCoinsWeekend : kCoinsPerDay} 코인)',
                       ),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF5FC3E8),
@@ -635,7 +681,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                 child: AbsorbPointer(
                   child: _CoinEarnedOverlay(
                     coins: _justEarnedCoins!,
-                    day: _justEarnedDay!,
+                    cumulativeDay: _justEarnedDay!,
                   ),
                 ),
               ),
@@ -648,9 +694,10 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
 class _CoinEarnedOverlay extends StatefulWidget {
   final int coins;
-  final int day;
+  /// 금연 누적 일차(그리드 슬롯과 무관)
+  final int cumulativeDay;
 
-  const _CoinEarnedOverlay({required this.coins, required this.day});
+  const _CoinEarnedOverlay({required this.coins, required this.cumulativeDay});
 
   @override
   State<_CoinEarnedOverlay> createState() => _CoinEarnedOverlayState();
@@ -734,7 +781,7 @@ class _CoinEarnedOverlayState extends State<_CoinEarnedOverlay>
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        '${widget.day}일 출석!',
+                        '${widget.cumulativeDay}일차입니다!',
                         style: const TextStyle(
                           color: Colors.black87,
                           fontSize: 18,

@@ -282,7 +282,9 @@ class _ReminderSettingsScreenState extends State<ReminderSettingsScreen>
                                     style: AppTheme.titleMedium,
                                   ),
                                   subtitle: Text(
-                                    '흡연 욕구 예상 시각 ${t.format(context)} · 3분 전 미리 알림\n자동 생성된 패턴 알림 (직접 수정 불가)',
+                                    '위 시각은 흡연 욕구가 많이 나는 피크입니다.\n'
+                                    '알림은 그보다 정확히 3분 전에 발송됩니다(예: 피크 14:57 → 알림 14:54).\n'
+                                    '자동 생성된 패턴 알림(직접 수정 불가)',
                                     style: const TextStyle(fontSize: 12, color: AppTheme.textMuted),
                                   ),
                                 ),

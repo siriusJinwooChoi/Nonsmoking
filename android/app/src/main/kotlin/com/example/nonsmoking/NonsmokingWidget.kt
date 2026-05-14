@@ -10,7 +10,7 @@ import android.widget.RemoteViews
 import java.util.Locale
 
 /**
- * 홈 화면 위젯: 금연 시간, 절약 금액, 넘긴 개비, 폐 건강 표시
+ * 홈 화면 위젯: 금연 시간, 절약 금액, 넘긴 개비, 금연할 이유 표시
  * Flutter SharedPreferences(FlutterSharedPreferences)에서 데이터를 읽어 표시합니다.
  */
 class NonsmokingWidget : AppWidgetProvider() {
@@ -35,7 +35,8 @@ class NonsmokingWidget : AppWidgetProvider() {
         var dailyCigarettes = widgetPrefs.getInt(KEY_DAILY_CIGS, -1)
         var cigarettesPerPack = widgetPrefs.getInt(KEY_CIGS_PER_PACK, -1)
         var pricePerPack = widgetPrefs.getInt(KEY_PRICE_PER_PACK, -1)
-        var lungHealth = widgetPrefs.getInt(KEY_LUNG_HEALTH, -1)
+
+        var quitReason = widgetPrefs.getString(KEY_QUIT_REASON, null)
 
         if (startTimeMs == null || startTimeMs < 0) {
             val flutterPrefs = context.getSharedPreferences(FLUTTER_PREFS_NAME, Context.MODE_PRIVATE)
@@ -44,14 +45,19 @@ class NonsmokingWidget : AppWidgetProvider() {
             if (dailyCigarettes < 0) dailyCigarettes = getPrefInt(flutterPrefs, FLUTTER_KEY_DAILY_CIGS, 0)
             if (cigarettesPerPack < 0) cigarettesPerPack = getPrefInt(flutterPrefs, FLUTTER_KEY_CIGS_PER_PACK, 20)
             if (pricePerPack < 0) pricePerPack = getPrefInt(flutterPrefs, FLUTTER_KEY_PRICE_PER_PACK, 4500)
-            if (lungHealth < 0) lungHealth = getPrefInt(flutterPrefs, FLUTTER_KEY_LUNG_HEALTH, 100)
+            if (quitReason.isNullOrEmpty()) {
+                quitReason = flutterPrefs.getString(FLUTTER_KEY_PINNED_REASON, "") ?: ""
+            }
         } else {
             if (dailyCigarettes < 0) dailyCigarettes = 0
             if (cigarettesPerPack < 0) cigarettesPerPack = 20
             if (pricePerPack < 0) pricePerPack = 4500
-            if (lungHealth < 0) lungHealth = 100
+            if (quitReason.isNullOrEmpty()) {
+                val flutterPrefs = context.getSharedPreferences(FLUTTER_PREFS_NAME, Context.MODE_PRIVATE)
+                quitReason = flutterPrefs.getString(FLUTTER_KEY_PINNED_REASON, "") ?: ""
+            }
         }
-        lungHealth = lungHealth.coerceIn(0, 100)
+
         val startTimeMsFinal = startTimeMs ?: -1L
 
         val nowMs = System.currentTimeMillis()
@@ -69,14 +75,18 @@ class NonsmokingWidget : AppWidgetProvider() {
         val savedMoney = (totalCigs * costPerCig).toInt()
         val savedMoneyFormatted = String.format(Locale.KOREA, "₩%,d", savedMoney)
         val skippedCigsText = "${totalCigs}개비"
-        val lungPercentText = "${lungHealth}%"
+
+        val reasonDisplay = if (quitReason.isNullOrBlank()) {
+            context.getString(R.string.widget_reason_placeholder)
+        } else {
+            truncateForWidget(quitReason.trim())
+        }
 
         val views = RemoteViews(context.packageName, R.layout.widget_quittime).apply {
             setTextViewText(R.id.widget_duration, durationHeaderText)
             setTextViewText(R.id.widget_saved_money, savedMoneyFormatted)
             setTextViewText(R.id.widget_skipped_cigs, skippedCigsText)
-            setTextViewText(R.id.widget_lung_percent, lungPercentText)
-            setProgressBar(R.id.widget_lung_progress, 100, lungHealth, false)
+            setTextViewText(R.id.widget_quit_reason, reasonDisplay)
         }
 
         val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
@@ -96,6 +106,12 @@ class NonsmokingWidget : AppWidgetProvider() {
         val longVal = prefs.getLong(key, -1L)
         if (longVal >= 0) return longVal.toInt()
         return prefs.getInt(key, default)
+    }
+
+    /** 위젯 높이 제한 대비: 과도하게 긴 문구는 줄입니다. */
+    private fun truncateForWidget(text: String, maxChars: Int = 200): String {
+        if (text.length <= maxChars) return text
+        return text.take(maxChars).trimEnd() + "…"
     }
 
     /** 헤더용 간단 형식: 금연 N일 N시간 */
@@ -123,14 +139,14 @@ class NonsmokingWidget : AppWidgetProvider() {
         private const val KEY_DAILY_CIGS = "dailyCigarettes"
         private const val KEY_CIGS_PER_PACK = "cigarettesPerPack"
         private const val KEY_PRICE_PER_PACK = "pricePerPack"
-        private const val KEY_LUNG_HEALTH = "lungHealth"
+        private const val KEY_QUIT_REASON = "pinnedReasonText"
 
         private const val FLUTTER_PREFS_NAME = "FlutterSharedPreferences"
         private const val FLUTTER_KEY_START_TIME = "flutter.startTime"
         private const val FLUTTER_KEY_DAILY_CIGS = "flutter.dailyCigarettes"
         private const val FLUTTER_KEY_CIGS_PER_PACK = "flutter.cigarettesPerPack"
         private const val FLUTTER_KEY_PRICE_PER_PACK = "flutter.pricePerPack"
-        private const val FLUTTER_KEY_LUNG_HEALTH = "flutter.lungHealth"
+        private const val FLUTTER_KEY_PINNED_REASON = "flutter.pinnedReasonText"
 
         /** Flutter에서 호출: 위젯 표시용 데이터를 네이티브에 저장 후 위젯 갱신 */
         fun syncDataFromFlutter(context: Context, args: Map<String, Any>) {
@@ -139,7 +155,10 @@ class NonsmokingWidget : AppWidgetProvider() {
                 (args["dailyCigarettes"] as? Number)?.toInt()?.let { putInt(KEY_DAILY_CIGS, it) }
                 (args["cigarettesPerPack"] as? Number)?.toInt()?.let { putInt(KEY_CIGS_PER_PACK, it) }
                 (args["pricePerPack"] as? Number)?.toInt()?.let { putInt(KEY_PRICE_PER_PACK, it) }
-                (args["lungHealth"] as? Number)?.toInt()?.let { putInt(KEY_LUNG_HEALTH, it.coerceIn(0, 100)) }
+                val reason = args["pinnedReasonText"] as? String
+                if (reason != null) {
+                    putString(KEY_QUIT_REASON, reason)
+                }
                 apply()
             }
         }

@@ -36,7 +36,7 @@
             android:textStyle="bold" />
     </LinearLayout>
 
-    <!-- 본문: 절약 금액, 넘긴 개비, 폐 건강 -->
+    <!-- 본문: 절약 금액, 넘긴 개비, 금연할 이유 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -98,7 +98,7 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- 2행: 폐 건강 + 진행률 -->
+        <!-- 2행: 금연할 이유 -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -107,35 +107,20 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="폐 건강"
+                android:text="금연할 이유"
                 android:textColor="#6B7280"
                 android:textSize="12sp" />
-            <LinearLayout
+            <TextView
+                android:id="@+id/widget_quit_reason"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
-                <ProgressBar
-                    android:id="@+id/widget_lung_progress"
-                    style="?android:attr/progressBarStyleHorizontal"
-                    android:layout_width="0dp"
-                    android:layout_height="8dp"
-                    android:layout_weight="1"
-                    android:max="100"
-                    android:progress="80"
-                    android:progressDrawable="@drawable/widget_progress_drawable" />
-                <TextView
-                    android:id="@+id/widget_lung_percent"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
-                    android:minWidth="28dp"
-                    android:text="80%"
-                    android:textColor="#0D9488"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
-            </LinearLayout>
+                android:ellipsize="end"
+                android:maxLines="4"
+                android:text="@string/widget_reason_placeholder"
+                android:textColor="#1F2937"
+                android:textSize="13sp"
+                android:lineSpacingMultiplier="1.15" />
         </LinearLayout>
     </LinearLayout>
 </LinearLayout>
