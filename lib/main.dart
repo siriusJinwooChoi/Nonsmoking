@@ -14,24 +14,15 @@ import 'package:workmanager/workmanager.dart';
 import 'notifications/daily_reminder_worker.dart';
 
 // 온보딩 화면
-import 'screens/intro/screen1_encourage.dart';
-import 'screens/intro/screen2_goals.dart';
-import 'screens/intro/screen3_reasons.dart';
-import 'screens/intro/screen4_start_date.dart';
-import 'screens/intro/screen5_duration.dart';
-import 'screens/intro/screen6_daily_count.dart';
-import 'screens/intro/screen7_per_pack.dart';
-import 'screens/intro/screen8_price.dart';
-import 'screens/intro/screen9_summary.dart';
+import 'screens/intro/intro_a_welcome.dart';
+import 'screens/intro/intro_b_habits.dart';
+import 'screens/intro/intro_c_start.dart';
 
 // 주요 앱 화면
 import 'screens/main_screen.dart';
-import 'screens/game_menu_screen.dart';
-import 'screens/growth_hub_screen.dart';
-import 'screens/lung_smoking_menu_screen.dart';
-import 'screens/cigarette_collect_screen.dart';
-import 'screens/report_screen.dart';
-import 'screens/attendance_screen.dart';
+import 'screens/quit_room/quit_room_list_screen.dart';
+import 'screens/more_hub_screen.dart';
+// attendance screen removed
 import 'data/main_tutorial_prefs.dart';
 import 'widgets/main_screen_tutorial_overlay.dart';
 
@@ -101,9 +92,20 @@ void main() async {
     // 첫 프레임·스플래시를 막지 않도록 전체 push 는 백그라운드 (로그인·온보딩 완료 시에만 동작)
     unawaited(SupabaseSyncService.runStartupPushOnlyIfEligible());
 
+    appRootScreenBuilder = () => const AppRootScreen();
     runApp(const QuitSmokingApp());
   }, (error, stack) {
-    FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+    try {
+      if (Firebase.apps.isNotEmpty) {
+        FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+      } else if (kDebugMode) {
+        debugPrint('Unhandled startup error: $error\n$stack');
+      }
+    } catch (_) {
+      if (kDebugMode) {
+        debugPrint('Unhandled startup error: $error\n$stack');
+      }
+    }
   });
 }
 
@@ -229,22 +231,8 @@ class _QuitSmokingAppState extends State<QuitSmokingApp>
 }
 
 Future<bool> _checkIfConfigured() async {
-  if (SupabaseConfig.isConfigured && BffAuthService.instance.isLoggedIn) {
-    // 계정 전환 직후에는 로컬값(isConfigured)이 이전 계정 상태일 수 있어
-    // 화면 분기 전에 한 번 동기화 상태를 강제 점검한다.
-    await SupabaseSyncService.prepareLocalStateForCurrentUser();
-
-    final prefs = await SharedPreferences.getInstance();
-    final localConfigured = prefs.getBool('isConfigured') ?? false;
-    if (!localConfigured) {
-      // 로컬이 미완료면 서버 기준으로 한 번 더 pull 시도.
-      await SupabaseSyncService.markPullRequiredOnNextLogin();
-    }
-    await SupabaseSyncService.runPostLoginPullIfNeeded();
-  }
-
-  final prefs = await SharedPreferences.getInstance();
-  return prefs.getBool('isConfigured') ?? false;
+  final needsIntro = await SupabaseSyncService.shouldShowIntroFlow();
+  return !needsIntro;
 }
 
 Future<Map<String, int>> _loadUserSettings() async {
@@ -286,10 +274,11 @@ class AppRootScreen extends StatelessWidget {
               }
 
               final settings = userSnapshot.data!;
-              return AttendanceGate(
+              return MainScreenWrapper(
                 dailyCigarettes: settings['dailyCigarettes']!,
                 cigarettesPerPack: settings['cigarettesPerPack']!,
                 pricePerPack: settings['pricePerPack']!,
+                refreshTrigger: 0,
               );
             },
           );
@@ -307,205 +296,125 @@ class IntroFlowWrapper extends StatefulWidget {
 }
 
 class _IntroFlowWrapperState extends State<IntroFlowWrapper> {
-  int currentIndex = 0;
-  int dailyCigarettes = 0;
-  int cigarettesPerPack = 0;
-  int pricePerPack = 0;
-  int durationDays = 90;
-  /// 금연 이유 화면(3단계)에서 선택·입력한 문구
-  String _onboardingQuitReason = '';
+  int _step = 0;
 
-  void nextScreen() => setState(() => currentIndex++);
+  // 각 단계에서 수집한 데이터
+  String _quitReason = '';
+  int _dailyCigarettes = 10;
+  int _cigarettesPerPack = 20;
+  int _pricePerPack = 4500;
+  int _durationDays = 365;
+  DateTime? _startTime;
 
-  static const int _introTotalSteps = 9;
+  void _next() => setState(() => _step++);
+  void _back() => setState(() { if (_step > 0) _step--; });
 
-  Widget _startFlow() {
-    final step = currentIndex + 1;
-    switch (currentIndex) {
-      case 0:
-        return Screen1Encourage(onNext: nextScreen, step: step, totalSteps: _introTotalSteps);
+  Future<void> _finish(DateTime startTime) async {
+    final prefs = await SharedPreferences.getInstance();
 
-      case 1:
-        return Screen2Goals(onNext: nextScreen, step: step, totalSteps: _introTotalSteps);
+    await prefs.setInt('startTime', startTime.millisecondsSinceEpoch);
+    await prefs.setInt('dailyCigarettes', _dailyCigarettes);
+    await prefs.setInt('cigarettesPerPack', _cigarettesPerPack);
+    await prefs.setInt('pricePerPack', _pricePerPack);
+    await prefs.setInt('duration_days', _durationDays);
+    await prefs.setBool('isConfigured', true);
 
-      case 2:
-        return Screen3Reasons(
-          onContinueWithReason: (reason) {
-            setState(() => _onboardingQuitReason = reason);
-            nextScreen();
+    await AppAnalytics.log('onboarding_complete', params: {
+      'daily_cigs': _dailyCigarettes,
+      'cigs_per_pack': _cigarettesPerPack,
+      'price_per_pack': _pricePerPack,
+      'duration_days': _durationDays,
+    });
+
+    final reason = _quitReason.trim();
+    if (reason.isNotEmpty) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final id = 'onboard_$now';
+      await prefs.setString('pinnedReasonText', reason);
+      await prefs.setString(
+        'quitReasons_v1',
+        jsonEncode([
+          {
+            'id': id,
+            'text': reason,
+            'pinned': true,
+            'createdAt': now,
+            'displayNumber': 1,
           },
-          step: step,
-          totalSteps: _introTotalSteps,
-        );
-
-      case 3:
-        return Screen4StartDate(onNext: nextScreen, step: step, totalSteps: _introTotalSteps);
-
-      case 4:
-        return Screen5Duration(onNext: (days) {
-          setState(() => durationDays = days);
-          nextScreen();
-        }, step: step, totalSteps: _introTotalSteps);
-
-      case 5:
-        return Screen6DailyCount(onNext: (value) {
-          setState(() => dailyCigarettes = value);
-          nextScreen();
-        }, step: step, totalSteps: _introTotalSteps);
-
-      case 6:
-        return Screen7PerPack(onNext: (value) {
-          setState(() => cigarettesPerPack = value);
-          nextScreen();
-        }, step: step, totalSteps: _introTotalSteps);
-
-      case 7:
-        return Screen8Price(onNext: (value) {
-          setState(() => pricePerPack = value);
-          nextScreen();
-        }, step: step, totalSteps: _introTotalSteps);
-
-      case 8:
-        return Screen9Summary(
-          step: step,
-          totalSteps: _introTotalSteps,
-          onNext: () async {
-            final prefs = await SharedPreferences.getInstance();
-            await prefs.setBool('isConfigured', true);
-
-            await AppAnalytics.log('onboarding_complete', params: {
-              'daily_cigs': dailyCigarettes,
-              'cigs_per_pack': cigarettesPerPack,
-              'price_per_pack': pricePerPack,
-              'duration_days': durationDays,
-            });
-
-            await prefs.setInt('dailyCigarettes', dailyCigarettes);
-            await prefs.setInt('cigarettesPerPack', cigarettesPerPack);
-            await prefs.setInt('pricePerPack', pricePerPack);
-            await prefs.setInt('duration_days', durationDays);
-
-            final reason = _onboardingQuitReason.trim();
-            if (reason.isNotEmpty) {
-              final now = DateTime.now().millisecondsSinceEpoch;
-              final id = 'onboard_$now';
-              await prefs.setString('pinnedReasonText', reason);
-              await prefs.setString(
-                'quitReasons_v1',
-                jsonEncode([
-                  {
-                    'id': id,
-                    'text': reason,
-                    'pinned': true,
-                    'createdAt': now,
-                    'displayNumber': 1,
-                  },
-                ]),
-              );
-              await prefs.setString('selectedReasonId', id);
-              await prefs.setString(kSelectedReasonTextKey, reason);
-              await prefs.setBool(kReasonNotificationEnabledKey, true);
-            }
-
-            unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
-
-            if (!mounted) return;
-
-            Navigator.pushAndRemoveUntil(
-              context,
-              MaterialPageRoute(
-                // 루트(AuthGate)를 유지한 채 재진입해야 로그아웃/계정삭제 시
-                // 로그인 화면으로 정확히 복귀하고, 재로그인 게이트도 일관된다.
-                builder: (_) => const AppRootScreen(),
-              ),
-              (_) => false,
-            );
-          },
-          dailyCigarettes: dailyCigarettes,
-          cigarettesPerPack: cigarettesPerPack,
-          pricePerPack: pricePerPack,
-          durationDays: durationDays,
-        );
-
-      default:
-        return const Scaffold(
-          body: Center(child: Text('잘못된 화면 흐름입니다.')),
-        );
+        ]),
+      );
+      await prefs.setString('selectedReasonId', id);
+      await prefs.setString(kSelectedReasonTextKey, reason);
+      await prefs.setBool(kReasonNotificationEnabledKey, true);
     }
-  }
 
-  @override
-  Widget build(BuildContext context) => _startFlow();
-}
+    unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
 
-/// 앱 실행 시 출석 화면을 먼저 띄우고, 닫으면 메인으로.
-class AttendanceGate extends StatefulWidget {
-  final int dailyCigarettes;
-  final int cigarettesPerPack;
-  final int pricePerPack;
-
-  const AttendanceGate({
-    super.key,
-    required this.dailyCigarettes,
-    required this.cigarettesPerPack,
-    required this.pricePerPack,
-  });
-
-  @override
-  State<AttendanceGate> createState() => _AttendanceGateState();
-}
-
-class _AttendanceGateState extends State<AttendanceGate> {
-  bool _showAttendance = true;
-  int _refreshTrigger = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_applySkipOverlayFlag());
-      // 알림 예약은 MainScreen 첫 프레임에서 bootstrapCoreReminderSchedulesOnAppOpen 한 번만 수행
-    });
-  }
-
-  Future<void> _applySkipOverlayFlag() async {
-    final skip = await shouldSkipAttendanceOverlayToday();
     if (!mounted) return;
-    if (skip) setState(() => _showAttendance = false);
-  }
 
-  void _onAttendanceClose() {
-    setState(() {
-      _showAttendance = false;
-      _refreshTrigger++;
-    });
-  }
-
-  void _onMainTabSelected() {
-    setState(() => _refreshTrigger++);
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(
+        // 루트(AuthGate)를 유지한 채 재진입해야 로그아웃/계정삭제 시
+        // 로그인 화면으로 정확히 복귀하고, 재로그인 게이트도 일관된다.
+        builder: (_) => const AppRootScreen(),
+      ),
+      (_) => false,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final mainScreen = MainScreenWrapper(
-      dailyCigarettes: widget.dailyCigarettes,
-      cigarettesPerPack: widget.cigarettesPerPack,
-      pricePerPack: widget.pricePerPack,
-      refreshTrigger: _refreshTrigger,
-      onMainTabSelected: _onMainTabSelected,
-    );
-    if (!_showAttendance) return mainScreen;
-    return Stack(
-      children: [
-        mainScreen,
-        Positioned.fill(
-          child: AttendanceScreen(
-            onClose: _onAttendanceClose,
-            onAttendanceRecorded: SupabaseSyncService.pushLocalToRemoteIfEligible,
-          ),
-        ),
-      ],
-    );
+    switch (_step) {
+      case 0:
+        return IntroAWelcome(
+          initialReason:
+              _quitReason.trim().isEmpty ? null : _quitReason.trim(),
+          onNext: (reason) {
+            setState(() => _quitReason = reason);
+            _next();
+          },
+        );
+
+      case 1:
+        return IntroBHabits(
+          initialDailyCigarettes: _dailyCigarettes,
+          initialPricePerPack: _pricePerPack,
+          initialCigarettesPerPack: _cigarettesPerPack,
+          initialDurationDays: _durationDays,
+          onBack: _back,
+          onNext: ({
+            required int dailyCigarettes,
+            required int pricePerPack,
+            required int cigarettesPerPack,
+            required int durationDays,
+          }) {
+            setState(() {
+              _dailyCigarettes = dailyCigarettes;
+              _pricePerPack = pricePerPack;
+              _cigarettesPerPack = cigarettesPerPack;
+              _durationDays = durationDays;
+            });
+            _next();
+          },
+        );
+
+      case 2:
+        return IntroCStart(
+          initialStartTime: _startTime,
+          onStartTimeDraft: (t) => _startTime = t,
+          onBack: _back,
+          onNext: (startTime) {
+            setState(() => _startTime = startTime);
+            _finish(startTime);
+          },
+        );
+
+      default:
+        return const Scaffold(
+          body: Center(child: CircularProgressIndicator()),
+        );
+    }
   }
 }
 
@@ -533,28 +442,17 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
   int currentIndex = 0;
 
   final GlobalKey _tutorialStatsKey = GlobalKey(debugLabel: 'tutorial_stats');
+  final GlobalKey _tutorialSosKey = GlobalKey(debugLabel: 'tutorial_sos');
   final GlobalKey _tutorialSmokedKey = GlobalKey(debugLabel: 'tutorial_smoked');
   final GlobalKey _tutorialReminderKey = GlobalKey(debugLabel: 'tutorial_reminder');
-  final GlobalKey _tutorialNavGameKey = GlobalKey(debugLabel: 'tutorial_nav_game');
-  final GlobalKey _tutorialNavGrowthKey = GlobalKey(debugLabel: 'tutorial_nav_growth');
-  final GlobalKey _tutorialNavCollectKey = GlobalKey(debugLabel: 'tutorial_nav_collect');
+  final GlobalKey _tutorialNavRoomKey = GlobalKey(debugLabel: 'tutorial_nav_room');
 
   bool _showMainTutorial = false;
   final ScrollController _mainScrollController = ScrollController();
 
-  // ✅ 전면광고
-  InterstitialAd? _interstitialAd;
-  Timer? _interstitialRetryTimer;
-
-  // ✅ 클릭 카운트(20번마다 노출)
-  int _clickCount = 0;
-  static const int _showEvery = 20;
-
   @override
   void initState() {
     super.initState();
-    _loadClickCount();
-    _loadInterstitialAd();
     WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_tryScheduleMainTutorial()));
   }
 
@@ -617,15 +515,23 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
         cornerRadius: 20,
         title: '금연 현황을 한눈에',
         description:
-            '이 초록 카드에서 금연 시작일·누적 일수와 목표,\n절약한 금액과 참은 담배 개비까지 바로 확인할 수 있어요.',
+            '누적 일수·절약 금액·참은 개비를\n한 카드에서 확인해요.\n목표일을 탭하면 7일·30일 등\n목표를 바꿀 수 있어요.',
+      ),
+      MainTutorialStep(
+        keys: [_tutorialSosKey],
+        highlightPadding: 8,
+        cornerRadius: 16,
+        title: '욕구가 올 때 못참겠어요',
+        description:
+            '흡연 욕구가 강할 때 눌러보세요.\n3분 타이머와 미션, 게임으로\n마음을 돌릴 수 있어요.',
       ),
       MainTutorialStep(
         keys: [_tutorialSmokedKey],
         highlightPadding: 8,
         cornerRadius: 12,
-        title: '흡연했을 때는 여기로',
+        title: '기록은 두 가지',
         description:
-            '흡연 후 「방금 피움(패턴 기록)」을 눌러 시간대·상황·감정을 남기면,\n기록을 바탕으로 나의 레포트가 만들어지고 패턴 알림도 준비돼요.',
+            '흡연 후 「흡연 기록」으로\n시간·상황·감정을 남기고,\n욕구가 올 때는 「욕구 기록」으로\n패턴을 쌓아 보세요.',
       ),
       MainTutorialStep(
         keys: [_tutorialReminderKey],
@@ -633,92 +539,22 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
         cornerRadius: 12,
         title: '알림은 여기에서',
         description:
-            '「알림 설정」버튼에서 원하는 시간의 알림을 바로 추가할 수 있어요.\n흡연 기록이 쌓이면 피크 시간대를 분석해 패턴 알림도 자동으로 맞춰 드려요.',
+            '「알림 설정」에서 원하는 시간을\n추가할 수 있어요.\n기록이 쌓이면 피크 시간대를 분석해\n패턴 알림도 맞춰 드려요.',
       ),
       MainTutorialStep(
-        keys: [_tutorialNavGameKey, _tutorialNavGrowthKey, _tutorialNavCollectKey],
+        keys: [_tutorialNavRoomKey],
         highlightPadding: 6,
         cornerRadius: 14,
-        title: '금연을 재미있게 이어가요',
+        title: '금연방으로 함께 버텨요',
         description:
-            '게임·성장시키기·수집·도감에서 미니게임·나무 키우기·도감 수집 등\n다양한 기능으로 금연을 계속 이어가 보세요.',
+            '하단 「금연방」 탭에서\n혼자 또는 파트너와 함께\n금연 사진·글을 올리고\n서로 응원받을 수 있어요.',
       ),
     ];
   }
 
-  Future<void> _loadClickCount() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _clickCount = prefs.getInt('clickCount') ?? 0;
-    });
-  }
-
-  Future<void> _saveClickCount() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('clickCount', _clickCount);
-  }
-
-  void _loadInterstitialAd() {
-    InterstitialAd.load(
-      // ✅ 실제 광고 ID
-      adUnitId: AdUnitIds.interstitial,
-      request: const AdRequest(),
-      adLoadCallback: InterstitialAdLoadCallback(
-        onAdLoaded: (ad) {
-          _interstitialRetryTimer?.cancel();
-          _interstitialRetryTimer = null;
-          _interstitialAd = ad;
-        },
-        onAdFailedToLoad: (error) {
-          _interstitialAd = null;
-          if (kDebugMode) {
-            debugPrint('Interstitial failed to load: $error');
-          }
-          // no fill/네트워크 오류 시 자동 재시도
-          _scheduleInterstitialRetry();
-        },
-      ),
-    );
-  }
-
-  void _scheduleInterstitialRetry() {
-    if (_interstitialRetryTimer?.isActive ?? false) return;
-    _interstitialRetryTimer = Timer(const Duration(seconds: 20), () {
-      if (!mounted || _interstitialAd != null) return;
-      _loadInterstitialAd();
-    });
-  }
-
-  void _showAdThenNavigate(int index) async {
-    _clickCount++;
-    await _saveClickCount();
-
-    // ✅ 20번마다 광고
-    if (_clickCount % _showEvery == 0 && _interstitialAd != null) {
-      _interstitialAd!.fullScreenContentCallback = FullScreenContentCallback(
-        onAdDismissedFullScreenContent: (ad) {
-          ad.dispose();
-          _interstitialAd = null;
-          _loadInterstitialAd();
-          setState(() => currentIndex = index);
-          if (index == 0) widget.onMainTabSelected?.call();
-        },
-        onAdFailedToShowFullScreenContent: (ad, error) {
-          ad.dispose();
-          _interstitialAd = null;
-          _loadInterstitialAd();
-          setState(() => currentIndex = index);
-          if (index == 0) widget.onMainTabSelected?.call();
-        },
-      );
-
-      _interstitialAd!.show();
-    } else {
-      setState(() => currentIndex = index);
-      if (index == 0) widget.onMainTabSelected?.call();
-      // 다음을 위해 계속 로드
-      if (_interstitialAd == null) _loadInterstitialAd();
-    }
+  void _onTabSelected(int index) {
+    setState(() => currentIndex = index);
+    if (index == 0) widget.onMainTabSelected?.call();
   }
 
   Future<void> _prepareTutorialStep(int stepIndex) async {
@@ -731,13 +567,24 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
     if (!c.hasClients) return;
 
     if (stepIndex == 1) {
+      final ctx = _tutorialSosKey.currentContext;
+      if (ctx != null && ctx.mounted) {
+        await Scrollable.ensureVisible(
+          ctx,
+          alignment: 0.35,
+          duration: const Duration(milliseconds: 450),
+          curve: Curves.easeOutCubic,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 140));
+      }
+    } else if (stepIndex == 2) {
       await c.animateTo(
         c.position.maxScrollExtent,
         duration: const Duration(milliseconds: 480),
         curve: Curves.easeOutCubic,
       );
       await Future<void>.delayed(const Duration(milliseconds: 160));
-    } else if (stepIndex == 2) {
+    } else if (stepIndex == 3) {
       final ctx = _tutorialReminderKey.currentContext;
       if (ctx != null && ctx.mounted) {
         await Scrollable.ensureVisible(
@@ -748,20 +595,11 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
         );
         await Future<void>.delayed(const Duration(milliseconds: 140));
       }
-    } else if (stepIndex == 3) {
-      await c.animateTo(
-        c.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 380),
-        curve: Curves.easeOutCubic,
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 100));
     }
   }
 
   @override
   void dispose() {
-    _interstitialRetryTimer?.cancel();
-    _interstitialAd?.dispose();
     _mainScrollController.dispose();
     super.dispose();
   }
@@ -770,26 +608,19 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
   Widget build(BuildContext context) {
     final screens = [
       MainScreen(
-        onAlarmTap: () => _showAdThenNavigate(0),
-        onCravingTap: () => _showAdThenNavigate(1),
-        onResetTap: () => _showAdThenNavigate(0),
-        onReasonTap: () => _showAdThenNavigate(0),
-        onHelperTap: () => _showAdThenNavigate(0),
         refreshTrigger: widget.refreshTrigger,
         dailyCigarettes: widget.dailyCigarettes,
         cigarettesPerPack: widget.cigarettesPerPack,
         pricePerPack: widget.pricePerPack,
         onShowTutorial: _replayMainTutorial,
         tutorialStatsCardKey: _tutorialStatsKey,
+        tutorialSosButtonKey: _tutorialSosKey,
         tutorialSmokedButtonKey: _tutorialSmokedKey,
         tutorialReminderButtonKey: _tutorialReminderKey,
         mainScrollController: _mainScrollController,
       ),
-      const GameMenuScreen(),
-      const GrowthHubScreen(),
-      const LungSmokingMenuScreen(),
-      const ReportScreen(),
-      const CigaretteCollectScreen(),
+      const QuitRoomListScreen(),
+      const MoreHubScreen(),
     ];
 
     return Stack(
@@ -798,28 +629,18 @@ class _MainScreenWrapperState extends State<MainScreenWrapper> {
         Scaffold(
           body: screens[currentIndex],
           bottomNavigationBar: Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.06),
-                  blurRadius: 12,
-                  offset: const Offset(0, -2),
-                ),
-              ],
+            decoration: const BoxDecoration(
+              color: AppTheme.surfaceCard,
+              border: Border(top: BorderSide(color: AppTheme.border)),
             ),
             child: SafeArea(
               child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
+                padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
-                    _NavItem(icon: Icons.home_rounded, label: '메인', index: 0, current: currentIndex, onTap: _showAdThenNavigate),
-                    _NavItem(key: _tutorialNavGameKey, icon: Icons.sports_esports_rounded, label: '게임', index: 1, current: currentIndex, onTap: _showAdThenNavigate),
-                    _NavItem(key: _tutorialNavGrowthKey, icon: Icons.auto_awesome_rounded, label: '성장시키기', index: 2, current: currentIndex, onTap: _showAdThenNavigate),
-                    _NavItem(icon: Icons.favorite_rounded, label: '건강/커뮤니티', index: 3, current: currentIndex, onTap: _showAdThenNavigate),
-                    _NavItem(icon: Icons.insert_chart_rounded, label: '레포트', index: 4, current: currentIndex, onTap: _showAdThenNavigate),
-                    _NavItem(key: _tutorialNavCollectKey, icon: Icons.inventory_2_rounded, label: '수집·도감', index: 5, current: currentIndex, onTap: _showAdThenNavigate),
+                    _NavItem(icon: Icons.home_rounded, label: '홈', index: 0, current: currentIndex, onTap: _onTabSelected),
+                    _NavItem(key: _tutorialNavRoomKey, icon: Icons.people_rounded, label: '금연방', index: 1, current: currentIndex, onTap: _onTabSelected),
+                    _NavItem(icon: Icons.grid_view_rounded, label: '더보기', index: 2, current: currentIndex, onTap: _onTabSelected),
                   ],
                 ),
               ),
@@ -859,29 +680,36 @@ class _NavItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isSelected = current == index;
-    return InkWell(
-      onTap: () => onTap(index),
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              size: 24,
-              color: isSelected ? AppTheme.primary : AppTheme.textMuted,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+    return Expanded(
+      child: InkWell(
+        onTap: () => onTap(index),
+        borderRadius: BorderRadius.circular(14),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          margin: const EdgeInsets.symmetric(horizontal: 4),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: isSelected ? AppTheme.primarySurface : Colors.transparent,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 22,
                 color: isSelected ? AppTheme.primary : AppTheme.textMuted,
               ),
-            ),
-          ],
+              const SizedBox(height: 4),
+              Text(
+                label,
+                style: AppTheme.caption.copyWith(
+                  fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                  color: isSelected ? AppTheme.primary : AppTheme.textMuted,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

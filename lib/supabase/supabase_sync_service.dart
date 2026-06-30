@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:http/http.dart' as http;
@@ -8,16 +7,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/api_config.dart';
 import '../api/game_stats_prefs.dart';
-import '../api/remote_assets.dart';
 import '../auth/bff_auth_service.dart';
 import '../notifications/daily_reminder_worker.dart' as dw;
-import '../data/dream_car_prefs.dart';
-import '../data/cigarette_collection_prefs.dart';
-import '../data/savings_coin_exchange.dart';
-import '../screens/attendance_screen.dart' as att;
+import '../data/main_tutorial_prefs.dart';
+import '../notifications/pattern_peak_slots.dart';
 import 'supabase_config.dart';
 
-/// SharedPreferences 키(앱 코드와 동일한 문자열).
+/// SharedPreferences 키 — 앱 코드와 동일한 문자열
 abstract final class _PrefsKeys {
   static const isConfigured = 'isConfigured';
   static const dailyCigarettes = 'dailyCigarettes';
@@ -31,16 +27,6 @@ abstract final class _PrefsKeys {
   static const pinnedReasonText = 'pinnedReasonText';
   static const quitReasonsV1 = 'quitReasons_v1';
   static const selectedReasonId = 'selectedReasonId';
-  static const lastCollectionWindow = 'last_collection_window';
-  static const sessionWindow = 'cigarette_collect_session_window';
-  static const sessionAsset = 'cigarette_collect_session_asset';
-  static const sessionAttempts = 'cigarette_collect_session_attempts';
-  static const collectedCigaretteAssets = 'collected_cigarette_assets';
-  static const growthStage = 'growthStage';
-  static const water = 'water';
-  static const currentWater = 'currentWater';
-  static const lastWaterUpdateTime = 'lastWaterUpdateTime';
-  static const savedTreesCount = 'savedTreesCount';
   static const bestRecord = 'bestRecord';
   static const wordGameLevel = 'word_game_level';
   static const timingTapBestScore = 'timing_tap_best_score';
@@ -86,7 +72,103 @@ abstract final class SupabaseSyncService {
     await prefs.setBool(_PrefsKeys.forceOnboardingOnce, true);
   }
 
-  /// 로그아웃 직전에 현재 로그인 UID를 기록해 다음 로그인 시 계정 전환을 정확히 감지한다.
+  /// 설정에서 「초기 설정으로 돌아가기」 — 로그인·약관은 유지하고 intro만 다시 진행.
+  static Future<void> resetOnboardingForIntroReplay() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    await prefs.setBool(_PrefsKeys.isConfigured, false);
+    for (final key in [
+      _PrefsKeys.dailyCigarettes,
+      _PrefsKeys.cigarettesPerPack,
+      _PrefsKeys.pricePerPack,
+      _PrefsKeys.durationDays,
+      _PrefsKeys.startTime,
+      _PrefsKeys.failureCount,
+      _PrefsKeys.lungHealth,
+      _PrefsKeys.lastUpdatedTime,
+      _PrefsKeys.pinnedReasonText,
+      _PrefsKeys.quitReasonsV1,
+      _PrefsKeys.selectedReasonId,
+      dw.kSelectedReasonTextKey,
+      dw.kGoalDaysKey,
+      dw.kGoalCongratulatedDayKey,
+    ]) {
+      await prefs.remove(key);
+    }
+
+    await markForceOnboardingOnce();
+
+    if (SupabaseConfig.isConfigured && BffAuthService.instance.isLoggedIn) {
+      try {
+        await _pushOnboardingResetToRemote(prefs);
+      } catch (e, st) {
+        if (kDebugMode) {
+          debugPrint('SupabaseSyncService.resetOnboardingForIntroReplay: $e\n$st');
+        }
+      }
+    }
+  }
+
+  static Future<void> _pushOnboardingResetToRemote(SharedPreferences prefs) async {
+    final headers = await _authHeader();
+    if (headers.isEmpty) return;
+
+    final body = <String, dynamic>{
+      'quit_profile': {
+        'is_configured': false,
+        'daily_cigarettes': 0,
+        'cigarettes_per_pack': 20,
+        'price_per_pack': 4500,
+        'duration_days': null,
+        'start_time_ms': 0,
+        'failure_count': 0,
+        'goal_days': null,
+        'goal_congratulated_day': null,
+        'lung_health': 0,
+        'lung_last_updated_ms': null,
+        'pinned_reason_text': null,
+      },
+      'reasons': {
+        'reasons_json': <dynamic>[],
+        'selected_reason_id': null,
+        'selected_reason_text': null,
+      },
+    };
+
+    final res = await http.put(
+      _bffUri('/v1/sync/push'),
+      headers: headers,
+      body: jsonEncode(body),
+    );
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw Exception('onboarding reset push failed: ${res.statusCode}');
+    }
+  }
+
+  /// 흡연 습관(량·가격·기간)만 갱신 — 금연 시작일·진행 기록은 유지.
+  static Future<void> saveHabitSettings({
+    required int dailyCigarettes,
+    required int cigarettesPerPack,
+    required int pricePerPack,
+    required int durationDays,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_PrefsKeys.dailyCigarettes, dailyCigarettes);
+    await prefs.setInt(_PrefsKeys.cigarettesPerPack, cigarettesPerPack);
+    await prefs.setInt(_PrefsKeys.pricePerPack, pricePerPack);
+    await prefs.setInt(_PrefsKeys.durationDays, durationDays);
+    await prefs.setBool(_PrefsKeys.isConfigured, true);
+
+    try {
+      await pushLocalToRemoteIfEligible();
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('SupabaseSyncService.saveHabitSettings: $e\n$st');
+      }
+    }
+  }
+
+  /// 로그아웃 직전에 현재 로그인 UID를 기록해 다음 로그인 시 계정 전환을 감지한다.
   static Future<void> rememberCurrentAuthUidBeforeSignOut() async {
     if (!SupabaseConfig.isConfigured) return;
     final uid = BffAuthService.instance.userId;
@@ -112,7 +194,6 @@ abstract final class SupabaseSyncService {
   }
 
   /// 로그아웃/계정 전환 시 이전 계정 로컬 기록이 다음 계정으로 섞여 들어가는 것을 방지.
-  /// 이후 로그인 시 서버 데이터가 있으면 pull로 복원되고, 신규 계정이면 온보딩부터 시작한다.
   static Future<void> clearLocalStateForAccountSwitch() async {
     final prefs = await SharedPreferences.getInstance();
     final keysToRemove = <String>[
@@ -129,38 +210,24 @@ abstract final class SupabaseSyncService {
       _PrefsKeys.pinnedReasonText,
       _PrefsKeys.quitReasonsV1,
       _PrefsKeys.selectedReasonId,
-      _PrefsKeys.lastCollectionWindow,
-      _PrefsKeys.sessionWindow,
-      _PrefsKeys.sessionAsset,
-      _PrefsKeys.sessionAttempts,
-      _PrefsKeys.collectedCigaretteAssets,
-      CigaretteCollectionPrefs.countsJsonKey,
-      _PrefsKeys.growthStage,
-      _PrefsKeys.water,
-      _PrefsKeys.currentWater,
-      _PrefsKeys.lastWaterUpdateTime,
-      _PrefsKeys.savedTreesCount,
       _PrefsKeys.bestRecord,
       _PrefsKeys.wordGameLevel,
       _PrefsKeys.timingTapBestScore,
       _PrefsKeys.cigaretteCatchBestStage,
       _PrefsKeys.cigaretteCatchBestScore,
       _PrefsKeys.pullPendingAfterLogin,
-      att.kGoldenCoinsKey,
-      att.kAttendanceStreakDayKey,
-      att.kAttendanceLastDateKey,
       dw.kGoalDaysKey,
       dw.kGoalCongratulatedDayKey,
       dw.kReminderTimesKey,
       dw.kSelectedReasonTextKey,
       dw.kReasonNotificationEnabledKey,
       dw.kInactivityNotificationEnabledKey,
-      dw.kAttendanceReminderEnabledKey,
-      dw.kCigaretteCollectionReminderEnabledKey,
+      dw.kCalendarReminderEnabledKey,
       dw.kLastAppOpenTimeMsKey,
-      DreamCarPrefsKeys.brand,
-      DreamCarPrefsKeys.stage,
-      kSavingsExchangedToCoinsWonKey,
+      dw.kPatternReminderEnabledKey,
+      dw.kPatternReminderSlotsKey,
+      kSmokingPatternLogsPrefsKey,
+      MainTutorialPrefs.completedKey,
       GameStatsPrefsKeys.numberSequenceLastClearSeconds,
       GameStatsPrefsKeys.timingTapLastSessionScore,
       GameStatsPrefsKeys.cigaretteCatchLastSessionScore,
@@ -176,8 +243,6 @@ abstract final class SupabaseSyncService {
       final existing = _postLoginPullInFlight;
       if (existing != null) {
         await existing;
-        // 다른 세션의 pull을 기다린 뒤에는 현재 세션 기준으로
-        // 실제 처리 필요 여부를 다시 확인해 누락을 막는다.
         if (await _needsPostLoginPullNow()) {
           continue;
         }
@@ -202,14 +267,14 @@ abstract final class SupabaseSyncService {
     if (uid == null || uid.isEmpty) return false;
 
     final prefs = await SharedPreferences.getInstance();
-    final forceOnboarding = prefs.getBool(_PrefsKeys.forceOnboardingOnce) ?? false;
+    final forceOnboarding =
+        prefs.getBool(_PrefsKeys.forceOnboardingOnce) ?? false;
     final pending = prefs.getBool(_PrefsKeys.pullPendingAfterLogin) ?? false;
     final initialDone = prefs.getBool(_initialPullDoneKey(uid)) ?? false;
     return forceOnboarding || pending || !initialDone;
   }
 
   /// 로그인 직후 UI 게이트 진입 전에 현재 사용자 기준으로 로컬 상태를 정렬한다.
-  /// 계정 전환이면 잔존 로컬 데이터를 지우고, 같은 계정이면 그대로 유지한다.
   static Future<void> prepareLocalStateForCurrentUser() async {
     if (!SupabaseConfig.isConfigured) return;
     if (!BffAuthService.instance.isLoggedIn) return;
@@ -233,9 +298,9 @@ abstract final class SupabaseSyncService {
     final uid = BffAuthService.instance.userId;
     if (uid == null) return;
 
-    final forceOnboarding = prefs.getBool(_PrefsKeys.forceOnboardingOnce) ?? false;
+    final forceOnboarding =
+        prefs.getBool(_PrefsKeys.forceOnboardingOnce) ?? false;
     if (forceOnboarding) {
-      await clearLocalStateForAccountSwitch();
       await prefs.setBool(_PrefsKeys.isConfigured, false);
       await prefs.setBool(_PrefsKeys.pullPendingAfterLogin, false);
       await prefs.setBool(_initialPullDoneKey(uid), true);
@@ -254,21 +319,31 @@ abstract final class SupabaseSyncService {
 
     final pending = prefs.getBool(_PrefsKeys.pullPendingAfterLogin) ?? false;
     final initialDone = prefs.getBool(_initialPullDoneKey(uid)) ?? false;
-    if (!pending && initialDone) return;
 
     try {
       final remoteOnboardingDone = await _remoteOnboardingCompleted();
+
       if (remoteOnboardingDone == null) {
-        // 네트워크/서버 일시 오류 시에는 상태를 확정하지 않고 다음 기회에 재시도한다.
+        // 서버 미응답(네트워크 오류/타임아웃) — pullPendingAfterLogin 을 지우지 않고
+        // 다음 기회(앱 재시작·세션 변경)에 재시도한다.
+        // 이 플래그를 여기서 지워버리면, 이후 shouldShowIntroFlow() 가
+        // 로컬 isConfigured=false 를 보고 인트로를 표시해 기존 데이터를 덮어쓸 수 있다.
         return;
       }
 
-      if (remoteOnboardingDone) {
-        await _pullAll(prefs);
-      } else {
-        // 신규 계정(원격 온보딩 미완료): 자동 push 금지.
-        // 사용자가 온보딩을 완료하기 전까지는 초기 상태를 유지한다.
+      if (remoteOnboardingDone == false) {
+        // 서버에서 온보딩 미완료 — 로컬도 미설정 상태로 맞추고 종료
+        await prefs.setBool(_PrefsKeys.isConfigured, false);
+        await prefs.setBool(_initialPullDoneKey(uid), true);
+        await prefs.setBool(_PrefsKeys.pullPendingAfterLogin, false);
+        await prefs.setString(_PrefsKeys.lastAuthUid, uid);
+        return;
       }
+
+      // remoteOnboardingDone == true
+      if (!pending && initialDone) return;
+
+      await _pullAll(prefs);
       await prefs.setBool(_initialPullDoneKey(uid), true);
       await prefs.setBool(_PrefsKeys.pullPendingAfterLogin, false);
       await prefs.setString(_PrefsKeys.lastAuthUid, uid);
@@ -294,10 +369,43 @@ abstract final class SupabaseSyncService {
     }
   }
 
+  static Future<bool?> remoteOnboardingCompleted() => _remoteOnboardingCompleted();
+
+  /// intro(초기 설정) 화면을 보여줘야 하면 true.
+  static Future<bool> shouldShowIntroFlow() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    if (prefs.getBool(_PrefsKeys.forceOnboardingOnce) ?? false) {
+      if (!(prefs.getBool(_PrefsKeys.isConfigured) ?? false)) {
+        return true;
+      }
+      await prefs.setBool(_PrefsKeys.forceOnboardingOnce, false);
+    }
+
+    if (SupabaseConfig.isConfigured && BffAuthService.instance.isLoggedIn) {
+      final remote = await _remoteOnboardingCompleted();
+      if (remote == false) {
+        await prefs.setBool(_PrefsKeys.isConfigured, false);
+        return true;
+      }
+      if (remote == true) {
+        return false;
+      }
+      // remote == null: 서버 미응답(네트워크 오류).
+      // 로그인된 기존 사용자에게 인트로를 강제 진입시키면 서버 데이터를 덮어쓸 위험이 있다.
+      // 신규 계정은 이 분기 도달 전에 forceOnboardingOnce 플래그로 보호된다.
+      return false;
+    }
+
+    return !(prefs.getBool(_PrefsKeys.isConfigured) ?? false);
+  }
+
   static Future<bool?> _remoteOnboardingCompleted() async {
     final headers = await _authHeader();
     if (headers.isEmpty) return null;
-    final res = await http.get(_bffUri('/v1/sync/onboarding'), headers: headers);
+    final res = await http
+        .get(_bffUri('/v1/sync/onboarding'), headers: headers)
+        .timeout(const Duration(seconds: 12));
     if (res.statusCode != 200) return null;
     final map = jsonDecode(res.body) as Map<String, dynamic>;
     return map['is_configured'] == true;
@@ -329,7 +437,9 @@ abstract final class SupabaseSyncService {
         reminderDecoded = jsonDecode(reminderRaw);
       } catch (_) {}
     }
-    final reminderList = reminderDecoded is List ? reminderDecoded : <dynamic>[];
+    final reminderList =
+        reminderDecoded is List ? reminderDecoded : <dynamic>[];
+
     dynamic patternSlotsDecoded;
     final patternSlotsRaw = prefs.getString(dw.kPatternReminderSlotsKey);
     if (patternSlotsRaw != null && patternSlotsRaw.trim().isNotEmpty) {
@@ -340,29 +450,24 @@ abstract final class SupabaseSyncService {
     final patternSlotsList =
         patternSlotsDecoded is List ? patternSlotsDecoded : <dynamic>[];
 
-    final lastDateStr = prefs.getString(att.kAttendanceLastDateKey);
-
-    final startMs = prefs.getInt(_PrefsKeys.startTime) ??
-        DateTime.now().millisecondsSinceEpoch;
-    final lungLast =
-        prefs.getInt(_PrefsKeys.lastUpdatedTime) ?? startMs;
-
-    final cigCounts = await CigaretteCollectionPrefs.readCounts(prefs);
+    final startMs =
+        prefs.getInt(_PrefsKeys.startTime) ?? DateTime.now().millisecondsSinceEpoch;
+    final lungLast = prefs.getInt(_PrefsKeys.lastUpdatedTime) ?? startMs;
 
     final body = <String, dynamic>{
-      'user_settings': {
+      // 신규 통합 quit_profile
+      'quit_profile': {
         'is_configured': prefs.getBool(_PrefsKeys.isConfigured) ?? false,
         'daily_cigarettes': prefs.getInt(_PrefsKeys.dailyCigarettes) ?? 0,
         'cigarettes_per_pack': prefs.getInt(_PrefsKeys.cigarettesPerPack) ?? 20,
         'price_per_pack': prefs.getInt(_PrefsKeys.pricePerPack) ?? 4500,
         'duration_days': prefs.getInt(_PrefsKeys.durationDays),
-      },
-      'quit_progress': {
         'start_time_ms': startMs,
         'failure_count': prefs.getInt(_PrefsKeys.failureCount) ?? 0,
         'goal_days': prefs.getInt(dw.kGoalDaysKey),
         'goal_congratulated_day': prefs.getInt(dw.kGoalCongratulatedDayKey),
-        'lung_health': (prefs.getInt(_PrefsKeys.lungHealth) ?? 100).clamp(0, 100),
+        'lung_health':
+            (prefs.getInt(_PrefsKeys.lungHealth) ?? 100).clamp(0, 100),
         'lung_last_updated_ms': lungLast,
         'pinned_reason_text': prefs.getString(_PrefsKeys.pinnedReasonText),
       },
@@ -377,48 +482,18 @@ abstract final class SupabaseSyncService {
             prefs.getBool(dw.kReasonNotificationEnabledKey) ?? false,
         'inactivity_notification_enabled':
             prefs.getBool(dw.kInactivityNotificationEnabledKey) ?? true,
-        'attendance_reminder_enabled':
-            prefs.getBool(dw.kAttendanceReminderEnabledKey) ?? true,
-        'cigarette_collection_reminder_enabled':
-            prefs.getBool(dw.kCigaretteCollectionReminderEnabledKey) ?? true,
+        'calendar_reminder_enabled':
+            prefs.getBool(dw.kCalendarReminderEnabledKey) ?? true,
         'pattern_reminder_enabled':
             prefs.getBool(dw.kPatternReminderEnabledKey) ?? true,
         'pattern_reminder_slots_json': patternSlotsList,
         'last_app_open_time_ms': prefs.getInt(dw.kLastAppOpenTimeMsKey),
       },
-      'coins_and_attendance': {
-        'golden_coins': prefs.getInt(att.kGoldenCoinsKey) ?? 0,
-        'attendance_streak_day': prefs.getInt(att.kAttendanceStreakDayKey) ?? 1,
-        'attendance_last_date': lastDateStr,
-        'savings_exchanged_to_coins_won':
-            prefs.getInt(kSavingsExchangedToCoinsWonKey) ?? 0,
-      },
-      'tree_progress': {
-        'growth_stage': prefs.getInt(_PrefsKeys.growthStage) ?? 1,
-        'water': prefs.getInt(_PrefsKeys.water) ?? 0,
-        'current_water': prefs.getInt(_PrefsKeys.currentWater) ?? 0,
-        'last_water_update_ms': prefs.getInt(_PrefsKeys.lastWaterUpdateTime) ??
-            DateTime.now().millisecondsSinceEpoch,
-        'saved_trees_count': prefs.getInt(_PrefsKeys.savedTreesCount) ?? 0,
-      },
-      'dream_car_progress': {
-        'dream_car_brand': prefs.getString(DreamCarPrefsKeys.brand),
-        'dream_car_stage': prefs.getInt(DreamCarPrefsKeys.stage) ?? 1,
-      },
-      'cigarette_collection': {
-        'last_collection_window': prefs.getString(_PrefsKeys.lastCollectionWindow),
-        'session_window': prefs.getString(_PrefsKeys.sessionWindow),
-        'session_asset': prefs.getString(_PrefsKeys.sessionAsset),
-        'session_attempts': prefs.getInt(_PrefsKeys.sessionAttempts) ?? 0,
-        'collected_asset_paths':
-            RemoteAssets.normalizeCigaretteKeyPathsPreserveDuplicates(
-          CigaretteCollectionPrefs.expandPathsForSync(cigCounts),
-        ),
-      },
       'game_stats': <String, dynamic>{
         'number_sequence_best_seconds': bestSec,
         'word_game_level': prefs.getInt(_PrefsKeys.wordGameLevel) ?? 1,
-        'timing_tap_best_score': prefs.getInt(_PrefsKeys.timingTapBestScore) ?? 0,
+        'timing_tap_best_score':
+            prefs.getInt(_PrefsKeys.timingTapBestScore) ?? 0,
         'cigarette_catch_best_stage':
             prefs.getInt(_PrefsKeys.cigaretteCatchBestStage) ?? 0,
         'cigarette_catch_best_score':
@@ -454,14 +529,12 @@ abstract final class SupabaseSyncService {
     if (res.statusCode != 200) return;
     final map = jsonDecode(res.body) as Map<String, dynamic>;
 
-    await _applyUserSettings(
-      map['user_settings'] as Map<String, dynamic>?,
-      prefs,
-    );
-    await _applyQuitProgress(
-      map['quit_progress'] as Map<String, dynamic>?,
-      prefs,
-    );
+    // 신규 통합 quit_profile (하위 호환: 구 user_settings/quit_progress도 처리)
+    final qp = map['quit_profile'] as Map<String, dynamic>?;
+    if (qp != null) {
+      await _applyQuitProfile(qp, prefs);
+    }
+
     await _applyReasons(
       map['reasons'] as Map<String, dynamic>?,
       prefs,
@@ -470,36 +543,23 @@ abstract final class SupabaseSyncService {
       map['notification_settings'] as Map<String, dynamic>?,
       prefs,
     );
-    await _applyCoinsAndAttendance(
-      map['coins_and_attendance'] as Map<String, dynamic>?,
-      prefs,
-    );
-    await _applyTreeProgress(
-      map['tree_progress'] as Map<String, dynamic>?,
-      prefs,
-    );
-    await _applyDreamCarProgress(
-      map['dream_car_progress'] as Map<String, dynamic>?,
-      prefs,
-    );
-    await _applyCigaretteCollection(
-      map['cigarette_collection'] as Map<String, dynamic>?,
-      prefs,
-    );
     await _applyGameStats(
       map['game_stats'] as Map<String, dynamic>?,
       prefs,
     );
   }
 
-  static Future<void> _applyUserSettings(
-    Map<String, dynamic>? row,
+  static Future<void> _applyQuitProfile(
+    Map<String, dynamic> row,
     SharedPreferences prefs,
   ) async {
-    if (row == null) return;
+    final startMs = row['start_time_ms'];
+    final hasStartTime = startMs != null && (startMs as num).toInt() > 0;
+    final remoteConfigured = row['is_configured'] as bool? ?? false;
+    final dailyCigs = (row['daily_cigarettes'] as num?)?.toInt() ?? 0;
     await prefs.setBool(
       _PrefsKeys.isConfigured,
-      row['is_configured'] as bool? ?? false,
+      remoteConfigured && hasStartTime && dailyCigs > 0,
     );
     await prefs.setInt(
       _PrefsKeys.dailyCigarettes,
@@ -519,17 +579,11 @@ abstract final class SupabaseSyncService {
     } else {
       await prefs.remove(_PrefsKeys.durationDays);
     }
-  }
 
-  static Future<void> _applyQuitProgress(
-    Map<String, dynamic>? row,
-    SharedPreferences prefs,
-  ) async {
-    if (row == null) return;
-    await prefs.setInt(
-      _PrefsKeys.startTime,
-      (row['start_time_ms'] as num).toInt(),
-    );
+    if (startMs != null) {
+      await prefs.setInt(
+          _PrefsKeys.startTime, (startMs as num).toInt());
+    }
     await prefs.setInt(
       _PrefsKeys.failureCount,
       (row['failure_count'] as num?)?.toInt() ?? 0,
@@ -550,10 +604,11 @@ abstract final class SupabaseSyncService {
       _PrefsKeys.lungHealth,
       (row['lung_health'] as num?)?.toInt() ?? 100,
     );
-    await prefs.setInt(
-      _PrefsKeys.lastUpdatedTime,
-      (row['lung_last_updated_ms'] as num).toInt(),
-    );
+    final lungLast = row['lung_last_updated_ms'];
+    if (lungLast != null) {
+      await prefs.setInt(
+          _PrefsKeys.lastUpdatedTime, (lungLast as num).toInt());
+    }
     final pinned = row['pinned_reason_text'] as String?;
     if (pinned != null && pinned.isNotEmpty) {
       await prefs.setString(_PrefsKeys.pinnedReasonText, pinned);
@@ -590,10 +645,9 @@ abstract final class SupabaseSyncService {
     SharedPreferences prefs,
   ) async {
     if (row == null) return;
+
     final j = row['reminder_times_json'];
     if (j != null) {
-      // 서버·DB 기본값이 [] 인 경우, 로그인 직후 pull 이 로컬에 저장된 알림 시간을
-      // 덮어써 전부 사라지는 문제가 있음 → 빈 서버는 로컬이 비어 있을 때만 적용.
       List<dynamic>? serverList;
       if (j is List) {
         serverList = j;
@@ -622,6 +676,7 @@ abstract final class SupabaseSyncService {
         }
       }
     }
+
     await prefs.setBool(
       dw.kReasonNotificationEnabledKey,
       row['reason_notification_enabled'] as bool? ?? false,
@@ -630,63 +685,42 @@ abstract final class SupabaseSyncService {
       dw.kInactivityNotificationEnabledKey,
       row['inactivity_notification_enabled'] as bool? ?? true,
     );
-    await prefs.setBool(
-      dw.kAttendanceReminderEnabledKey,
-      row['attendance_reminder_enabled'] as bool? ?? true,
-    );
-    final hasLocalCollectionPref =
-        prefs.containsKey(dw.kCigaretteCollectionReminderEnabledKey);
-    final remoteCollectionEnabled =
-        row['cigarette_collection_reminder_enabled'] as bool?;
-    if (remoteCollectionEnabled == false && !hasLocalCollectionPref) {
-      // 최초 동기화에서 DB 기본값/과거 데이터 false가 내려온 경우, 앱 기본 정책(true)로 복구
-      // 이후 pushLocalToRemoteIfEligible()가 DB서버 값을 true로 정정합니다.
-      await prefs.setBool(dw.kCigaretteCollectionReminderEnabledKey, true);
-      unawaited(pushLocalToRemoteIfEligible());
-    } else {
-      await prefs.setBool(
-        dw.kCigaretteCollectionReminderEnabledKey,
-        remoteCollectionEnabled ?? true,
-      );
-    }
+
+    // calendar_reminder_enabled (신규) — 하위 호환: attendance_reminder_enabled도 수용
+    final calendarEnabled = (row['calendar_reminder_enabled'] ??
+            row['attendance_reminder_enabled']) as bool? ??
+        true;
+    await prefs.setBool(dw.kCalendarReminderEnabledKey, calendarEnabled);
+
     await prefs.setBool(
       dw.kPatternReminderEnabledKey,
       row['pattern_reminder_enabled'] as bool? ?? true,
     );
-    // pattern_reminder_slots_json: 서버 기본값이 [] 인 경우 로컬에서 이미 계산된
-    // 피크 시간을 덮어써 알림 예약이 취소되는 문제가 있음 → reminder_times_json 과
-    // 동일하게 "빈 서버는 로컬이 비어 있을 때만" 적용한다. 키가 null 이면 로컬을
-    // 지우지 않는다(구 API/행 누락 시 패턴 알림이 영구히 사라지는 것 방지).
-    final remotePatternSlots = row['pattern_reminder_slots_json'];
-    if (remotePatternSlots != null) {
-      List<dynamic>? serverPatternList;
-      if (remotePatternSlots is List) {
-        serverPatternList = remotePatternSlots;
-      } else {
-        try {
-          final decoded = jsonDecode(jsonEncode(remotePatternSlots));
-          if (decoded is List) serverPatternList = decoded;
-        } catch (_) {}
-      }
-      final serverPatternEmpty =
-          serverPatternList == null || serverPatternList.isEmpty;
-      if (!serverPatternEmpty) {
-        try {
-          await prefs.setString(
-            dw.kPatternReminderSlotsKey,
-            jsonEncode(remotePatternSlots),
-          );
-        } catch (_) {}
-      } else {
-        var localHasPatternSlots = false;
-        final localPatternRaw = prefs.getString(dw.kPatternReminderSlotsKey);
-        if (localPatternRaw != null && localPatternRaw.trim().isNotEmpty) {
+
+    final patternLogs = decodeSmokingPatternLogs(
+      prefs.getString(kSmokingPatternLogsPrefsKey),
+    );
+    final hasPatternData =
+        countRecentPatternLogs(patternLogs) >= kPatternMinLogs;
+
+    if (!hasPatternData) {
+      await dw.clearPatternReminderSlots();
+      await dw.cancelPatternReminders();
+    } else {
+      final remotePatternSlots = row['pattern_reminder_slots_json'];
+      if (remotePatternSlots != null) {
+        List<dynamic>? serverPatternList;
+        if (remotePatternSlots is List) {
+          serverPatternList = remotePatternSlots;
+        } else {
           try {
-            final loc = jsonDecode(localPatternRaw);
-            localHasPatternSlots = loc is List && loc.isNotEmpty;
+            final decoded = jsonDecode(jsonEncode(remotePatternSlots));
+            if (decoded is List) serverPatternList = decoded;
           } catch (_) {}
         }
-        if (!localHasPatternSlots) {
+        final serverPatternEmpty =
+            serverPatternList == null || serverPatternList.isEmpty;
+        if (!serverPatternEmpty) {
           try {
             await prefs.setString(
               dw.kPatternReminderSlotsKey,
@@ -694,176 +728,65 @@ abstract final class SupabaseSyncService {
             );
           } catch (_) {}
         } else {
-          unawaited(pushLocalToRemoteIfEligible());
+          var localHasPatternSlots = false;
+          final localPatternRaw = prefs.getString(dw.kPatternReminderSlotsKey);
+          if (localPatternRaw != null && localPatternRaw.trim().isNotEmpty) {
+            try {
+              final loc = jsonDecode(localPatternRaw);
+              localHasPatternSlots = loc is List && loc.isNotEmpty;
+            } catch (_) {}
+          }
+          if (!localHasPatternSlots) {
+            try {
+              await prefs.setString(
+                dw.kPatternReminderSlotsKey,
+                jsonEncode(remotePatternSlots),
+              );
+            } catch (_) {}
+          } else {
+            unawaited(pushLocalToRemoteIfEligible());
+          }
         }
       }
-    }
-    if ((row['pattern_reminder_enabled'] as bool?) == false) {
-      try {
-        await dw.cancelPatternReminders();
-      } catch (_) {}
-      await prefs.remove(dw.kPatternReminderSlotsKey);
-    } else {
-      try {
-        final slots = await dw.getPatternReminderSlots();
-        if (slots.isEmpty) {
+
+      if ((row['pattern_reminder_enabled'] as bool?) == false) {
+        try {
           await dw.cancelPatternReminders();
-        } else {
-          final nickname = prefs.getString('nickname')?.trim();
-          await dw.schedulePatternRemindersFromSlots(
-            slots: slots,
-            nickname: (nickname != null && nickname.isNotEmpty)
-                ? nickname
-                : '회원',
-          );
-        }
-      } catch (_) {}
+        } catch (_) {}
+        await prefs.remove(dw.kPatternReminderSlotsKey);
+      } else {
+        try {
+          final slots = await dw.getPatternReminderSlots();
+          if (slots.isEmpty) {
+            await dw.cancelPatternReminders();
+          } else {
+            final nickname = prefs.getString('nickname')?.trim();
+            await dw.schedulePatternRemindersFromSlots(
+              slots: slots,
+              nickname:
+                  (nickname != null && nickname.isNotEmpty) ? nickname : '회원',
+            );
+          }
+        } catch (_) {}
+      }
     }
+
     final lastMs = row['last_app_open_time_ms'];
     if (lastMs != null) {
-      await prefs.setInt(dw.kLastAppOpenTimeMsKey, (lastMs as num).toInt());
+      await prefs.setInt(
+          dw.kLastAppOpenTimeMsKey, (lastMs as num).toInt());
     } else {
       await prefs.remove(dw.kLastAppOpenTimeMsKey);
     }
+
     try {
       await dw.scheduleAllDailyReminders();
     } catch (_) {}
-    try {
-      await dw.scheduleCigaretteCollectionReminders();
-    } catch (_) {}
-    if (!(row['attendance_reminder_enabled'] as bool? ?? true)) {
+
+    if (!calendarEnabled) {
       try {
-        await dw.cancelAttendanceReminder();
+        await dw.cancelCalendarReminder();
       } catch (_) {}
-    }
-  }
-
-  static Future<void> _applyCoinsAndAttendance(
-    Map<String, dynamic>? row,
-    SharedPreferences prefs,
-  ) async {
-    if (row == null) return;
-    final remoteCoins = (row['golden_coins'] as num?)?.toInt() ?? 0;
-    final d = row['attendance_last_date'];
-    final hasRemoteAttendanceDate =
-        d != null && d.toString().trim().isNotEmpty;
-
-    if (!hasRemoteAttendanceDate) {
-      final localCoins = prefs.getInt(att.kGoldenCoinsKey) ?? 0;
-      final merged = remoteCoins > localCoins ? remoteCoins : localCoins;
-      await prefs.setInt(att.kGoldenCoinsKey, merged);
-      final localEx = prefs.getInt(kSavingsExchangedToCoinsWonKey) ?? 0;
-      final remoteEx =
-          (row['savings_exchanged_to_coins_won'] as num?)?.toInt() ?? 0;
-      await prefs.setInt(
-        kSavingsExchangedToCoinsWonKey,
-        math.max(localEx, remoteEx),
-      );
-      return;
-    }
-
-    await prefs.setInt(att.kGoldenCoinsKey, remoteCoins);
-    await prefs.setInt(
-      att.kAttendanceStreakDayKey,
-      (row['attendance_streak_day'] as num?)?.toInt() ?? 1,
-    );
-    final s = d.toString();
-    await prefs.setString(
-      att.kAttendanceLastDateKey,
-      s.length >= 10 ? s.substring(0, 10) : s,
-    );
-    await prefs.setInt(
-      kSavingsExchangedToCoinsWonKey,
-      (row['savings_exchanged_to_coins_won'] as num?)?.toInt() ?? 0,
-    );
-  }
-
-  static Future<void> _applyTreeProgress(
-    Map<String, dynamic>? row,
-    SharedPreferences prefs,
-  ) async {
-    if (row == null) return;
-    await prefs.setInt(
-      _PrefsKeys.growthStage,
-      (row['growth_stage'] as num?)?.toInt() ?? 1,
-    );
-    await prefs.setInt(
-      _PrefsKeys.water,
-      (row['water'] as num?)?.toInt() ?? 0,
-    );
-    await prefs.setInt(
-      _PrefsKeys.currentWater,
-      (row['current_water'] as num?)?.toInt() ?? 0,
-    );
-    await prefs.setInt(
-      _PrefsKeys.lastWaterUpdateTime,
-      (row['last_water_update_ms'] as num).toInt(),
-    );
-    await prefs.setInt(
-      _PrefsKeys.savedTreesCount,
-      (row['saved_trees_count'] as num?)?.toInt() ?? 0,
-    );
-  }
-
-  static Future<void> _applyDreamCarProgress(
-    Map<String, dynamic>? row,
-    SharedPreferences prefs,
-  ) async {
-    if (row == null) return;
-    final b = (row['dream_car_brand'] as String?)?.trim().toLowerCase();
-    if (b == 'hcompany' || b == 'hyundai') {
-      await prefs.setString(DreamCarPrefsKeys.brand, 'hcompany');
-    } else if (b == 'kcompany' || b == 'kia') {
-      await prefs.setString(DreamCarPrefsKeys.brand, 'kcompany');
-    } else {
-      await prefs.remove(DreamCarPrefsKeys.brand);
-    }
-    final st = (row['dream_car_stage'] as num?)?.toInt() ?? 1;
-    await prefs.setInt(
-      DreamCarPrefsKeys.stage,
-      st.clamp(1, 10),
-    );
-  }
-
-  static Future<void> _applyCigaretteCollection(
-    Map<String, dynamic>? row,
-    SharedPreferences prefs,
-  ) async {
-    if (row == null) return;
-    final lcw = row['last_collection_window'] as String?;
-    if (lcw != null) {
-      await prefs.setString(_PrefsKeys.lastCollectionWindow, lcw);
-    } else {
-      await prefs.remove(_PrefsKeys.lastCollectionWindow);
-    }
-    final sw = row['session_window'] as String?;
-    if (sw != null) {
-      await prefs.setString(_PrefsKeys.sessionWindow, sw);
-    } else {
-      await prefs.remove(_PrefsKeys.sessionWindow);
-    }
-    final sa = row['session_asset'] as String?;
-    if (sa != null) {
-      await prefs.setString(
-        _PrefsKeys.sessionAsset,
-        RemoteAssets.normalizeCigaretteKey(sa),
-      );
-    } else {
-      await prefs.remove(_PrefsKeys.sessionAsset);
-    }
-    await prefs.setInt(
-      _PrefsKeys.sessionAttempts,
-      (row['session_attempts'] as num?)?.toInt() ?? 0,
-    );
-    final paths = row['collected_asset_paths'];
-    if (paths is List && paths.isNotEmpty) {
-      final remoteCounts = CigaretteCollectionPrefs.countsFromRemotePaths(paths);
-      final localCounts = await CigaretteCollectionPrefs.readCounts(prefs);
-      final merged = CigaretteCollectionPrefs.mergeCountsMax(
-        localCounts,
-        remoteCounts,
-      );
-      await CigaretteCollectionPrefs.writeCounts(prefs, merged);
     }
   }
 
@@ -874,8 +797,7 @@ abstract final class SupabaseSyncService {
     if (row == null) return;
     final best = row['number_sequence_best_seconds'];
     if (best != null) {
-      final v = (best as num).toDouble();
-      await prefs.setDouble(_PrefsKeys.bestRecord, v);
+      await prefs.setDouble(_PrefsKeys.bestRecord, (best as num).toDouble());
     } else {
       await prefs.remove(_PrefsKeys.bestRecord);
     }
@@ -889,18 +811,19 @@ abstract final class SupabaseSyncService {
     );
     final remoteCatch =
         (row['cigarette_catch_best_stage'] as num?)?.toInt() ?? 0;
-    final localCatch =
-        prefs.getInt(_PrefsKeys.cigaretteCatchBestStage) ?? 0;
-    final mergedCatch =
-        remoteCatch > localCatch ? remoteCatch : localCatch;
-    await prefs.setInt(_PrefsKeys.cigaretteCatchBestStage, mergedCatch);
+    final localCatch = prefs.getInt(_PrefsKeys.cigaretteCatchBestStage) ?? 0;
+    await prefs.setInt(
+      _PrefsKeys.cigaretteCatchBestStage,
+      remoteCatch > localCatch ? remoteCatch : localCatch,
+    );
     final remoteCatchScore =
         (row['cigarette_catch_best_score'] as num?)?.toInt() ?? 0;
     final localCatchScore =
         prefs.getInt(_PrefsKeys.cigaretteCatchBestScore) ?? 0;
-    final mergedCatchScore =
-        remoteCatchScore > localCatchScore ? remoteCatchScore : localCatchScore;
-    await prefs.setInt(_PrefsKeys.cigaretteCatchBestScore, mergedCatchScore);
+    await prefs.setInt(
+      _PrefsKeys.cigaretteCatchBestScore,
+      remoteCatchScore > localCatchScore ? remoteCatchScore : localCatchScore,
+    );
 
     final lastClear = row['number_sequence_last_clear_seconds'];
     if (lastClear != null) {

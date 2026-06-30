@@ -236,16 +236,14 @@ class _EmailAuthSheetState extends State<_EmailAuthSheet>
         // 회원가입 직후에는 자동 로그인하지 않고, 로그인 탭에서 명시적으로 로그인하게 유지한다.
         // (계정 전환 시 기존 사용자 데이터가 섞여 보이는 UX를 방지)
         if (session != null) {
-          // 여기서 AuthService.signOut()을 쓰면 lastAuthUid가 신규 uid로 기록되어
-          // 다음 로그인 시 계정 전환 감지를 놓칠 수 있다.
-          // 회원가입 직후 세션만 정리해야 하므로 인증 토큰만 직접 제거한다.
+          // AuthService.signOut()을 쓰면 lastAuthUid가 신규 uid로 기록되어
+          // 다음 로그인 시 계정 전환 감지를 놓칠 수 있으므로 토큰만 제거한다.
           await BffAuthService.instance.signOut();
         }
-        // 신규 가입 완료 시점에 로컬 잔존값을 즉시 비워야
-        // 바로 다음 로그인 프레임부터 온보딩으로 확실히 분기된다.
-        await SupabaseSyncService.clearLocalStateForAccountSwitch();
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setBool('isConfigured', false);
+        // clearLocalStateForAccountSwitch()를 여기서 호출하면 이전 계정(예: Apple 로그인)의
+        // kTermsAgreedPrefsKey 및 pullPendingAfterLogin 등 중요 플래그까지 지워진다.
+        // 계정 전환에 따른 로컬 정리는 신규 계정 로그인 시 prepareLocalStateForCurrentUser()
+        // 가 자동으로 수행하므로 여기서는 온보딩 플래그만 설정한다.
         await SupabaseSyncService.markForceOnboardingOnce();
         if (!mounted) return;
         _password.clear();

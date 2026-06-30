@@ -10,6 +10,7 @@ import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
 import 'pattern_peak_slots.dart';
+import '../data/quit_calendar_prefs.dart';
 
 bool _notificationTzInitialized = false;
 
@@ -108,18 +109,21 @@ const int kMsPerDay = 24 * 60 * 60 * 1000;
 const String kAttendanceReminderTaskName = 'attendance_reminder_task';
 const String kAttendanceReminderUniqueWork = 'attendance_reminder_unique';
 const int kAttendanceReminderNotificationId = 5001;
-const String kAttendanceLastDateKey = 'attendance_last_date';
+/// 구 키(attendanceReminderEnabled) 값을 그대로 유지해 기존 사용자 설정이 손실되지 않도록 함
 const String kAttendanceReminderEnabledKey = 'attendanceReminderEnabled';
+/// 서버 컬럼명(calendar_reminder_enabled)과 대응하는 신규 상수 — 같은 prefs 키를 공유
+const String kCalendarReminderEnabledKey = kAttendanceReminderEnabledKey;
 
+const int kPatternReminderNotificationIdBase = 7001;
+const String kPatternReminderEnabledKey = 'patternReminderEnabled';
+const int kPatternReminderSlotMax = 5;
+const String kPatternReminderSlotsKey = 'pattern_reminder_slots_v1';
+// ─── 담배수집 알림 관련 상수 (기능 제거됨 — 구 WorkManager 작업 정리용으로만 유지) ─────
 const String kCigaretteCollectionReminderTaskName = 'cigarette_collection_reminder_task';
 const String kCigaretteCollectionReminderUniqueWorkPrefix = 'cigarette_collection_reminder_';
 const int kCigaretteCollectionReminderNotificationIdBase = 6001;
 const String kCigaretteCollectionReminderEnabledKey = 'cigaretteCollectionReminderEnabled';
 const String kCigaretteCollectionLastNotifiedWindowKey = 'cigarette_collection_last_notified_window';
-const int kPatternReminderNotificationIdBase = 7001;
-const String kPatternReminderEnabledKey = 'patternReminderEnabled';
-const int kPatternReminderSlotMax = 5;
-const String kPatternReminderSlotsKey = 'pattern_reminder_slots_v1';
 const int kCigaretteCollectionWindowMinutes = 20;
 const List<int> _cigaretteCollectionHours = [9, 12, 18, 22];
 
@@ -159,7 +163,9 @@ void callbackDispatcher() {
     }
 
     if (task == kCigaretteCollectionReminderTaskName) {
-      return _handleCigaretteCollectionReminder(inputData);
+      // 담배수집 기능 제거됨 — 구 WorkManager 작업이 실행될 경우 취소 처리
+      await cancelCigaretteCollectionReminders();
+      return true;
     }
 
     if (task != kDailyReminderTaskName) {
@@ -247,7 +253,7 @@ Future<bool> _handleDailyReminder(Map<String, dynamic>? inputData) async {
   await plugin.show(
     kDailyReminderNotificationIdBase + slotIndex,
     '금연 리마인더 🌿',
-    '오늘도 한 걸음! 금연을 이어가볼까요?',
+    '오늘도 한 개비 참았어요. 지금까지 잘 하고 계세요!',
     const NotificationDetails(
       android: androidDetails,
       iOS: _defaultDarwinNotificationDetails,
@@ -402,7 +408,6 @@ Future<void> setFcmRemotePushEnabled(bool enabled) async {
     }
   } else {
     await scheduleAllDailyReminders();
-    await scheduleCigaretteCollectionReminders();
     await scheduleAttendanceReminderIfNeeded();
     if (prefs.getBool(kInactivityNotificationEnabledKey) ?? true) {
       await scheduleInactivityReminderOneOff(delayDays: kInactivityDaysThreshold);
@@ -839,21 +844,14 @@ Future<bool> getInactivityNotificationEnabled() async {
   return prefs.getBool(kInactivityNotificationEnabledKey) ?? true;
 }
 
-// ─── 출석체크 알림 (저녁 6시 이후 미출석 시 1시간마다) ───────────────────────
-
-String _todayString() {
-  final n = DateTime.now();
-  return '${n.year}-${n.month.toString().padLeft(2, '0')}-${n.day.toString().padLeft(2, '0')}';
-}
+// ─── 금연 캘린더 기록 알림 (저녁 6시 이후 미기록 시 1시간마다) ─────────────────
 
 Future<bool> _handleAttendanceReminder(Map<String, dynamic>? inputData) async {
   final prefs = await SharedPreferences.getInstance();
   final enabled = prefs.getBool(kAttendanceReminderEnabledKey) ?? true;
   if (!enabled) return true;
 
-  final lastDate = prefs.getString(kAttendanceLastDateKey);
-  final today = _todayString();
-  if (lastDate == today) return true;
+  if (hasQuitCalendarRecordToday(prefs)) return true;
 
   final now = DateTime.now();
   if (now.hour < 18) return true;
@@ -865,8 +863,8 @@ Future<bool> _handleAttendanceReminder(Map<String, dynamic>? inputData) async {
 
   const channel = AndroidNotificationChannel(
     'attendance_reminder_channel',
-    '출석 알림',
-    description: '금연코인 획득을 위한 출석 알림',
+    '금연 캘린더 알림',
+    description: '금연 캘린더에 오늘 기록을 남기도록 안내합니다.',
     importance: Importance.high,
   );
   final androidImpl = plugin.resolvePlatformSpecificImplementation<
@@ -875,13 +873,13 @@ Future<bool> _handleAttendanceReminder(Map<String, dynamic>? inputData) async {
 
   await plugin.show(
     kAttendanceReminderNotificationId,
-    '금연뱅크 출석',
-    '금연코인 획득을 위해 금연뱅크에 출석하셔야 합니다.',
+    '금연 캘린더에 기록해 주세요 🌿',
+    '오늘 금연 성공·흡연 여부를 캘린더에 남겨 보세요.',
     const NotificationDetails(
       android: AndroidNotificationDetails(
         'attendance_reminder_channel',
-        '출석 알림',
-        channelDescription: '금연코인 획득을 위한 출석 알림',
+        '금연 캘린더 알림',
+        channelDescription: '금연 캘린더에 오늘 기록을 남기도록 안내합니다.',
         importance: Importance.high,
         priority: Priority.high,
       ),
@@ -913,106 +911,58 @@ Future<void> scheduleAttendanceReminderOnce() async {
   );
 }
 
-/// 출석 시 알림 해제
-Future<void> cancelAttendanceReminder() async {
+/// 금연 캘린더 알림 해제 (cancelAttendanceReminder의 신규 이름)
+Future<void> cancelCalendarReminder() async {
   await Workmanager().cancelByUniqueName(kAttendanceReminderUniqueWork);
   final plugin = FlutterLocalNotificationsPlugin();
   await plugin.cancel(kAttendanceReminderNotificationId);
 }
 
-/// 출석 알림 설정값 저장
-Future<void> setAttendanceReminderEnabled(bool enabled) async {
+/// 하위 호환 alias
+Future<void> cancelAttendanceReminder() => cancelCalendarReminder();
+
+/// 금연 캘린더 알림 설정값 저장
+Future<void> setCalendarReminderEnabled(bool enabled) async {
   final prefs = await SharedPreferences.getInstance();
-  await prefs.setBool(kAttendanceReminderEnabledKey, enabled);
+  await prefs.setBool(kCalendarReminderEnabledKey, enabled);
   if (!enabled) {
-    await cancelAttendanceReminder();
+    await cancelCalendarReminder();
   } else {
     await scheduleAttendanceReminderIfNeeded();
   }
 }
 
-/// 출석 알림 설정값 조회
-Future<bool> getAttendanceReminderEnabled() async {
+/// 하위 호환 alias
+Future<void> setAttendanceReminderEnabled(bool enabled) =>
+    setCalendarReminderEnabled(enabled);
+
+/// 금연 캘린더 알림 설정값 조회
+Future<bool> getCalendarReminderEnabled() async {
   final prefs = await SharedPreferences.getInstance();
-  return prefs.getBool(kAttendanceReminderEnabledKey) ?? true;
+  return prefs.getBool(kCalendarReminderEnabledKey) ?? true;
 }
 
-/// 앱 열릴 때: 18시 이후이고 오늘 미출석이면 1시간 후 출석 알림 예약
+/// 하위 호환 alias
+Future<bool> getAttendanceReminderEnabled() => getCalendarReminderEnabled();
+
+/// 앱 열릴 때: 18시 이후이고 오늘 캘린더 미기록이면 1시간 후 알림 예약
 Future<void> scheduleAttendanceReminderIfNeeded() async {
-  final enabled = await getAttendanceReminderEnabled();
+  final enabled = await getCalendarReminderEnabled();
   if (!enabled) return;
   final prefs = await SharedPreferences.getInstance();
   if (fcmRemotePushEnabled(prefs)) {
-    await cancelAttendanceReminder();
+    await cancelCalendarReminder();
     return;
   }
-  if (prefs.getString(kAttendanceLastDateKey) == _todayString()) return;
+  if (hasQuitCalendarRecordToday(prefs)) {
+    await cancelCalendarReminder();
+    return;
+  }
   final now = DateTime.now();
   if (now.hour >= 18) await scheduleAttendanceReminderOnce();
 }
 
-// ─── 담배 수집 가능 시간 알림 (09:00, 12:00, 18:00, 22:00 정각) ─────────────────
-
-Future<bool> _handleCigaretteCollectionReminder(Map<String, dynamic>? inputData) async {
-  final prefs = await SharedPreferences.getInstance();
-  final enabled = prefs.getBool(kCigaretteCollectionReminderEnabledKey) ?? true;
-  if (!enabled) return true;
-
-  final hour = inputData?['hour'] as int? ?? 9;
-  final now = DateTime.now();
-  final windowStart = DateTime(now.year, now.month, now.day, hour, 0);
-  final windowEnd = windowStart.add(const Duration(minutes: kCigaretteCollectionWindowMinutes));
-  final isInExpectedWindow = !now.isBefore(windowStart) && now.isBefore(windowEnd);
-
-  // WorkManager는 OEM/배터리 정책에 따라 지연 실행될 수 있어
-  // 지정된 시간대(정각~20분) 밖에서 실행되면 이번 알림은 건너뜁니다.
-  if (!isInExpectedWindow) {
-    if (kDebugMode) {
-      debugPrint(
-        'Skip cigarette collection notification: now=$now, expected=$hour:00~$hour:20',
-      );
-    }
-    await scheduleCigaretteCollectionReminderForHour(hour);
-    return true;
-  }
-
-  final plugin = FlutterLocalNotificationsPlugin();
-  await plugin.initialize(_initSettings);
-
-  const channel = AndroidNotificationChannel(
-    'cigarette_collection_reminder_channel',
-    '수집 시간 알림',
-    description: '도감 수집 가능 시간 안내',
-    importance: Importance.high,
-  );
-  final androidImpl = plugin.resolvePlatformSpecificImplementation<
-      AndroidFlutterLocalNotificationsPlugin>();
-  await androidImpl?.createNotificationChannel(channel);
-
-  await plugin.show(
-    kCigaretteCollectionReminderNotificationIdBase + hour,
-    '수집 가능 시간',
-    '지금부터 20분간 도감 수집을 시도할 수 있어요.',
-    const NotificationDetails(
-      android: AndroidNotificationDetails(
-        'cigarette_collection_reminder_channel',
-        '수집 시간 알림',
-        channelDescription: '도감 수집 가능 시간 안내',
-        importance: Importance.high,
-        priority: Priority.high,
-      ),
-      iOS: _defaultDarwinNotificationDetails,
-      macOS: _defaultDarwinNotificationDetails,
-    ),
-  );
-
-  final windowId =
-      '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}-${hour.toString().padLeft(2, '0')}';
-  await prefs.setString(kCigaretteCollectionLastNotifiedWindowKey, windowId);
-
-  await scheduleCigaretteCollectionReminderForHour(hour);
-  return true;
-}
+// ─── 담배수집 알림 (기능 제거됨 — 구 WorkManager 작업 정리용으로만 유지) ──────────
 
 tz.TZDateTime _nextInstanceAtTime(int hour, int minute) {
   ensureNotificationTimezoneInitialized();
@@ -1025,7 +975,7 @@ tz.TZDateTime _nextInstanceAtTime(int hour, int minute) {
   return scheduled;
 }
 
-/// 특정 시각(09/12/18/22)에 담배 수집 알림 1회 예약
+/// 특정 시각(09/12/18/22)에 금연 현황 알림 1회 예약
 Future<void> scheduleCigaretteCollectionReminderForHour(int hour) async {
   ensureNotificationTimezoneInitialized();
   final plugin = FlutterLocalNotificationsPlugin();
@@ -1033,8 +983,8 @@ Future<void> scheduleCigaretteCollectionReminderForHour(int hour) async {
 
   const channel = AndroidNotificationChannel(
     'cigarette_collection_reminder_channel',
-    '수집 시간 알림',
-    description: '도감 수집 가능 시간 안내',
+    '금연 현황 알림',
+    description: '금연 현황을 확인할 수 있도록 안내합니다.',
     importance: Importance.high,
   );
   final androidImpl = plugin.resolvePlatformSpecificImplementation<
@@ -1043,14 +993,14 @@ Future<void> scheduleCigaretteCollectionReminderForHour(int hour) async {
 
   await plugin.zonedSchedule(
     kCigaretteCollectionReminderNotificationIdBase + hour,
-    '수집 가능 시간',
-    '지금부터 20분간 도감 수집을 시도할 수 있어요.',
+    '금연 현황 확인 🌿',
+    '지금까지 절약한 돈과 건강 회복 상태를 확인해보세요!',
     _nextInstanceAtTime(hour, 0),
     const NotificationDetails(
       android: AndroidNotificationDetails(
         'cigarette_collection_reminder_channel',
-        '수집 시간 알림',
-        channelDescription: '도감 수집 가능 시간 안내',
+        '금연 현황 알림',
+        channelDescription: '금연 현황을 확인할 수 있도록 안내합니다.',
         importance: Importance.high,
         priority: Priority.high,
       ),
@@ -1058,7 +1008,7 @@ Future<void> scheduleCigaretteCollectionReminderForHour(int hour) async {
       macOS: _defaultDarwinNotificationDetails,
     ),
     // 제조사/OS 정책에서 exact 알람이 누락되는 경우가 있어,
-    // 담배수집은 20분 윈도우 특성상 inexact가 실사용 안정성이 더 높음.
+    // inexact가 실사용 안정성이 더 높음.
     androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
     matchDateTimeComponents: DateTimeComponents.time,
     uiLocalNotificationDateInterpretation:
@@ -1078,54 +1028,17 @@ Future<void> cancelCigaretteCollectionReminders() async {
   }
 }
 
-/// 앱 실행 시 09:00, 12:00, 18:00, 22:00 담배 수집 알림 예약
+/// 담배수집 기능 제거됨 — 구 예약 정리만 수행
 Future<void> scheduleCigaretteCollectionReminders() async {
-  final prefs = await SharedPreferences.getInstance();
-  final enabled = prefs.getBool(kCigaretteCollectionReminderEnabledKey) ?? true;
-  if (!enabled) {
-    await cancelCigaretteCollectionReminders();
-    return;
-  }
-  if (fcmRemotePushEnabled(prefs)) {
-    await cancelCigaretteCollectionReminders();
-    return;
-  }
-
-  await requestNotificationPermissionIfNeeded();
-
-  // 과거 WorkManager 기반 잔여 작업 정리
-  for (final hour in _cigaretteCollectionHours) {
-    final uniqueName = '$kCigaretteCollectionReminderUniqueWorkPrefix$hour';
-    await Workmanager().cancelByUniqueName(uniqueName);
-  }
-
-  // 기존 예약 정리 후 정각 예약 재등록 (앱 종료 상태 보장)
-  final plugin = FlutterLocalNotificationsPlugin();
-  for (final hour in _cigaretteCollectionHours) {
-    await plugin.cancel(kCigaretteCollectionReminderNotificationIdBase + hour);
-  }
-
-  for (final hour in _cigaretteCollectionHours) {
-    await scheduleCigaretteCollectionReminderForHour(hour);
-  }
+  await cancelCigaretteCollectionReminders();
 }
 
-/// 담배 수집 정각 알림 on/off (기본: 켜짐)
-Future<bool> getCigaretteCollectionReminderEnabled() async {
-  final prefs = await SharedPreferences.getInstance();
-  return prefs.getBool(kCigaretteCollectionReminderEnabledKey) ?? true;
-}
+/// 담배수집 기능 제거됨 — 구 설정 조회는 항상 false 반환
+Future<bool> getCigaretteCollectionReminderEnabled() async => false;
 
+/// 담배수집 기능 제거됨 — 항상 비활성화
 Future<void> setCigaretteCollectionReminderEnabled(bool enabled) async {
-  final prefs = await SharedPreferences.getInstance();
-  await prefs.setBool(kCigaretteCollectionReminderEnabledKey, enabled);
-  if (!enabled) {
-    await cancelCigaretteCollectionReminders();
-  } else {
-    await requestNotificationPermissionIfNeeded();
-    await scheduleCigaretteCollectionReminders();
-    await maybeNotifyCigaretteCollectionWindowOpened();
-  }
+  await cancelCigaretteCollectionReminders();
 }
 
 String? _currentCigaretteCollectionWindowId(DateTime now) {
@@ -1162,8 +1075,8 @@ Future<void> maybeNotifyCigaretteCollectionWindowOpened() async {
 
   const channel = AndroidNotificationChannel(
     'cigarette_collection_reminder_channel',
-    '수집 시간 알림',
-    description: '도감 수집 가능 시간 안내',
+    '금연 현황 알림',
+    description: '금연 현황을 확인할 수 있도록 안내합니다.',
     importance: Importance.high,
   );
   final androidImpl = plugin.resolvePlatformSpecificImplementation<
@@ -1173,13 +1086,13 @@ Future<void> maybeNotifyCigaretteCollectionWindowOpened() async {
   final hour = now.hour;
   await plugin.show(
     kCigaretteCollectionReminderNotificationIdBase + hour,
-    '수집 가능 시간',
-    '지금부터 20분간 도감 수집을 시도할 수 있어요.',
+    '금연 현황 확인 🌿',
+    '지금까지 절약한 돈과 건강 회복 상태를 확인해보세요!',
     const NotificationDetails(
       android: AndroidNotificationDetails(
         'cigarette_collection_reminder_channel',
-        '수집 시간 알림',
-        channelDescription: '도감 수집 가능 시간 안내',
+        '금연 현황 알림',
+        channelDescription: '금연 현황을 확인할 수 있도록 안내합니다.',
         importance: Importance.high,
         priority: Priority.high,
       ),
@@ -1225,23 +1138,29 @@ Future<void> bootstrapCoreReminderSchedulesOnAppOpen() async {
 
   await updateLastAppOpenAndScheduleInactivity();
   await scheduleAttendanceReminderIfNeeded();
-  await scheduleCigaretteCollectionReminders();
-  await maybeNotifyCigaretteCollectionWindowOpened();
+  await cancelCigaretteCollectionReminders();
   if (prefs.getBool(kPatternReminderEnabledKey) ?? true) {
     try {
-      var slots = await getPatternReminderSlots();
-      // 동기화 등으로 슬롯 JSON 만 비었고 흡연 로그는 남은 경우 → 피크 재계산 후 예약
-      if (slots.isEmpty) {
-        slots = await tryRebuildPatternSlotsFromLocalLogs();
-      }
-      final nickname = prefs.getString('nickname') ?? '회원';
-      if (slots.isEmpty) {
+      final logs = decodeSmokingPatternLogs(
+        prefs.getString(kSmokingPatternLogsPrefsKey),
+      );
+      if (countRecentPatternLogs(logs) < kPatternMinLogs) {
         await cancelPatternReminders();
+        await clearPatternReminderSlots();
       } else {
-        await schedulePatternRemindersFromSlots(
-          slots: slots,
-          nickname: nickname,
-        );
+        var slots = await getPatternReminderSlots();
+        if (slots.isEmpty) {
+          slots = await tryRebuildPatternSlotsFromLocalLogs();
+        }
+        final nickname = prefs.getString('nickname') ?? '회원';
+        if (slots.isEmpty) {
+          await cancelPatternReminders();
+        } else {
+          await schedulePatternRemindersFromSlots(
+            slots: slots,
+            nickname: nickname,
+          );
+        }
       }
     } catch (e, st) {
       if (kDebugMode) {
@@ -1482,6 +1401,18 @@ Future<void> clearPatternReminderSlots() async {
 
 Future<List<TimeOfDay>> getPatternReminderSlots() async {
   final prefs = await SharedPreferences.getInstance();
+  final logs = decodeSmokingPatternLogs(
+    prefs.getString(kSmokingPatternLogsPrefsKey),
+  );
+  if (countRecentPatternLogs(logs) < kPatternMinLogs) {
+    final raw = prefs.getString(kPatternReminderSlotsKey);
+    if (raw != null && raw.isNotEmpty) {
+      await clearPatternReminderSlots();
+      await cancelPatternReminders();
+    }
+    return const <TimeOfDay>[];
+  }
+
   final raw = prefs.getString(kPatternReminderSlotsKey);
   if (raw == null || raw.isEmpty) return const <TimeOfDay>[];
   try {

@@ -7,10 +7,8 @@ import '../api/remote_assets.dart';
 import '../theme/app_theme.dart';
 import '../ad_manager.dart';
 import '../supabase/supabase_sync_service.dart';
-import 'attendance_screen.dart';
-import '../api/game_reward_helper.dart';
-import '../api/game_stats_prefs.dart';
 import '../api/game_sync_helper.dart';
+import '../api/game_stats_prefs.dart';
 
 /// 낙하 맞추기: 떨어지는 목표 2개를 시간차로 맞추는 게임. 1~100단계, 단계별 속도 증가, 점수·최종단계 기록.
 class CigaretteCatchGameScreen extends StatefulWidget {
@@ -236,45 +234,29 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
   Future<void> _onFallMiss() async {
     _timer?.cancel();
     if (!mounted) return;
-    final coins = await getGoldenCoins();
-    if (!mounted) return;
     final choice = await showDialog<String>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text('게임 오버'),
-        content: Text(
-          coins >= 1
-              ? '코인 1개를 사용하면 같은 단계에서 이어서 플레이할 수 있어요.'
-              : '포기하고 결과를 확인할까요?\n(코인이 부족하면 이어하기를 할 수 없어요.)',
+        content: const Text(
+          '같은 단계에서 다시 도전할까요?\n아니면 결과를 확인할 수 있어요.',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, 'giveup'),
-            child: const Text('포기'),
+            child: const Text('결과 보기'),
           ),
-          if (coins >= 1)
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, 'revive'),
-              child: const Text('코인 1개로 이어하기'),
-            ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'retry'),
+            child: const Text('다시 도전'),
+          ),
         ],
       ),
     );
     if (!mounted) return;
-    if (choice == 'revive') {
-      final remaining = await consumeCoinsIfPossible(1);
-      if (remaining == null) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('코인이 부족하여 이어하기를 할 수 없습니다.')),
-        );
-        await _finalizeGameOver();
-        return;
-      }
-      unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
-      unawaitedSyncGameStatsToApiIfAvailable();
+    if (choice == 'retry') {
       setState(() {
         _gameOver = false;
         _cigarettes.clear();
@@ -307,13 +289,7 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
     }
     await SupabaseSyncService.pushLocalToRemoteIfEligible();
     await syncGameStatsToApiIfAvailable();
-    if (mounted) {
-      await syncStatsThenClaimGameRewardWithSnackBar(
-        context,
-        game: 'cigarette_catch',
-        proof: {'sessionScore': sessionScore},
-      );
-    }
+    await syncGameStatsToApiIfAvailable();
     if (!mounted) return;
     setState(() => _gameOver = true);
     if (_isGameOverAdShowing) return;

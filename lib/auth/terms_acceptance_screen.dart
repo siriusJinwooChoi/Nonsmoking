@@ -21,10 +21,9 @@ class _TermsAcceptanceScreenState extends State<TermsAcceptanceScreen> {
   bool _t1 = false;
   bool _t2 = false;
   bool _t3 = false;
-  bool _t4 = false;
   bool _busy = false;
 
-  bool get _all => _t1 && _t2 && _t3 && _t4;
+  bool get _all => _t1 && _t2 && _t3;
 
   Future<void> _submit() async {
     if (!_all || _busy) return;
@@ -34,8 +33,6 @@ class _TermsAcceptanceScreenState extends State<TermsAcceptanceScreen> {
       await prefs.setBool(kTermsAgreedPrefsKey, true);
 
       if (SupabaseConfig.isConfigured) {
-        // 모든 동의(이용약관·개인정보·민감정보·만 14세)는 한 화면에서 동시에 체크되므로
-        // 동일한 acceptedAt 으로 묶어 BFF에 일괄 저장한다.
         final acceptedAt = DateTime.now().toUtc().toIso8601String();
         await BffProfileApi.patchProfile(
           termsAcceptedAtIso: acceptedAt,
@@ -43,8 +40,8 @@ class _TermsAcceptanceScreenState extends State<TermsAcceptanceScreen> {
           termsOfServiceVersion: LegalConsentVersions.termsOfService,
           privacyPolicyAcceptedAtIso: acceptedAt,
           privacyPolicyVersion: LegalConsentVersions.privacyPolicy,
-          sensitiveInfoConsentAtIso: acceptedAt,
-          sensitiveInfoConsentVersion: LegalConsentVersions.sensitiveInfoConsent,
+          sensitiveInfoConsentAtIso: null,
+          sensitiveInfoConsentVersion: null,
           ageConfirmedAtIso: acceptedAt,
         );
       }
@@ -128,15 +125,9 @@ class _TermsAcceptanceScreenState extends State<TermsAcceptanceScreen> {
                             TermsDetailActions.openPrivacyPolicy,
                           ),
                           _tile(
-                            '민감정보 수집 및 이용 동의',
+                            '만 14세 이상입니다',
                             _t3,
                             (v) => setState(() => _t3 = v),
-                            TermsDetailActions.openSensitiveInfoNotice,
-                          ),
-                          _tile(
-                            '만 14세 이상입니다',
-                            _t4,
-                            (v) => setState(() => _t4 = v),
                             TermsDetailActions.openAgeNotice,
                           ),
                         ],

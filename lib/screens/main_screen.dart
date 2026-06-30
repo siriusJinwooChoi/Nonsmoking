@@ -1,27 +1,32 @@
 import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // ✅ SystemNavigator.pop
+import 'package:flutter/services.dart';
+
+import '../app_nav.dart';
+import '../supabase/supabase_sync_service.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
-import 'package:url_launcher/url_launcher.dart';
-import '../api/remote_assets.dart';
 import '../api/bff_profile_api.dart';
 import '../auth/bff_auth_service.dart';
 
-import '../data/savings_coin_exchange.dart';
-import 'reason_why_screen.dart';
-import 'nonsmoke_helper_screen.dart';
 import 'reminder_settings_screen.dart';
-import 'savings_coin_exchange_screen.dart';
+import 'habit_settings_screen.dart';
 import 'settings_screen.dart';
-import 'attendance_screen.dart';
-import 'smoking_screen.dart';
 import '../theme/app_theme.dart';
 import '../ad_unit_ids.dart';
+import '../widgets/app_card.dart';
+import '../widgets/future_savings_section.dart';
+import '../widgets/goal_celebration_dialog.dart';
+import '../widgets/home_hero_card.dart';
+import '../widgets/action_list_tile.dart';
+import '../widgets/section_header.dart';
+import '../widgets/sos_overlay.dart';
+import 'quit_room/quit_room_list_screen.dart';
+import 'quit_room/quit_room_models.dart';
 
 // ✅ Analytics helper
 import '../analytics/app_analytics.dart';
@@ -38,15 +43,15 @@ import '../api/smoking_pattern_api_service.dart';
 /// 스토어 앱 페이지 (지인 추천 · 공유용)
 const String _kAppPlayStoreUrl =
     'https://play.google.com/store/apps/details?id=com.cjw.nonsmoking';
-const String _kAppIosStoreUrl =
-    'https://apps.apple.com/kr/app/%EA%B8%88%EC%97%B0%EB%B1%85%ED%81%AC/id6762129911';
+
+/// 금연 시작일로부터 현재까지 경과 일수 (1일차부터 카운트)
+int quitCalendarDayNumber(DateTime startTime) {
+  final days = DateTime.now().difference(startTime).inDays;
+  return days < 0 ? 0 : days + 1;
+}
 
 class MainScreen extends StatefulWidget {
-  final VoidCallback onAlarmTap;
-  final VoidCallback onCravingTap;
-  final VoidCallback onResetTap;
-  final VoidCallback onReasonTap;
-  final VoidCallback onHelperTap;
+  final VoidCallback? onResetTap;
   final int? refreshTrigger;
 
   final int dailyCigarettes;
@@ -56,25 +61,23 @@ class MainScreen extends StatefulWidget {
 
   /// 최초 튜토리얼 스포트라이트용 (없으면 KeyedSubtree 미사용).
   final GlobalKey? tutorialStatsCardKey;
+  final GlobalKey? tutorialSosButtonKey;
   final GlobalKey? tutorialSmokedButtonKey;
   final GlobalKey? tutorialReminderButtonKey;
 
-  /// 튜토리얼에서 「방금 피움」 노출 등 스크롤 조정용 (선택).
+  /// 튜토리얼에서 기록 버튼 노출 등 스크롤 조정용 (선택).
   final ScrollController? mainScrollController;
 
   const MainScreen({
     super.key,
-    required this.onAlarmTap,
-    required this.onCravingTap,
-    required this.onResetTap,
-    required this.onReasonTap,
-    required this.onHelperTap,
+    this.onResetTap,
     this.refreshTrigger,
     required this.dailyCigarettes,
     required this.cigarettesPerPack,
     required this.pricePerPack,
     this.onShowTutorial,
     this.tutorialStatsCardKey,
+    this.tutorialSosButtonKey,
     this.tutorialSmokedButtonKey,
     this.tutorialReminderButtonKey,
     this.mainScrollController,
@@ -124,9 +127,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   int _skippedCigarettes = 0;
   int _failureCount = 0;
   int? _goalDays;
-  int _goldenCoins = 0;
-  /// 절약 금액 중 코인으로 이미 바꾼 누적 원화(메인·환전 화면 동기화).
-  int _savingsExchangedToCoinsWon = 0;
+  bool _goalCelebrationShowing = false;
   Timer? _timer;
   List<TimeOfDay> _reminderTimes = [];
   String _mainReason = '';
@@ -208,8 +209,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   void didUpdateWidget(covariant MainScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.refreshTrigger != widget.refreshTrigger) {
-      _loadGoldenCoins();
-      unawaited(_reloadSavingsExchangePrefs());
       unawaited(_reloadReminderTimesFromPrefs());
     }
     if (oldWidget.dailyCigarettes != widget.dailyCigarettes ||
@@ -232,41 +231,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   static const String _failureCountKey = 'failureCount';
 
-  Future<void> _reloadSavingsExchangePrefs() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (!mounted) return;
-    setState(() {
-      _savingsExchangedToCoinsWon =
-          prefs.getInt(kSavingsExchangedToCoinsWonKey) ?? 0;
-    });
-  }
-
-  Future<void> _openSavingsCoinExchange() async {
-    await Navigator.push<void>(
-      context,
-      MaterialPageRoute<void>(
-        builder: (_) => SavingsCoinExchangeScreen(
-          dailyCigarettes: widget.dailyCigarettes,
-          cigarettesPerPack: widget.cigarettesPerPack,
-          pricePerPack: widget.pricePerPack,
-        ),
-      ),
-    );
-    await _loadGoldenCoins();
-    await _reloadSavingsExchangePrefs();
-    if (mounted) setState(() {});
-  }
-
-  int get _totalSavedWon => _savedMoney.floor().clamp(0, 0x7fffffff);
-
-  int get _exchangeableWon =>
-      (_totalSavedWon - _savingsExchangedToCoinsWon).clamp(0, 0x7fffffff);
-
-  Future<void> _loadGoldenCoins() async {
-    final coins = await getGoldenCoins();
-    if (mounted) setState(() => _goldenCoins = coins);
-  }
-
   /// prefs 기준으로 알림 개수 라벨 동기화 (설정 화면 pop 직후·다른 탭 복귀 등)
   Future<void> _reloadReminderTimesFromPrefs() async {
     final fresh = await getReminderTimes();
@@ -274,60 +238,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     setState(() => _reminderTimes = fresh);
   }
 
-  /// 실패 횟수 1회 차감 (금연코인 5개 소모) 다이얼로그
-  Future<void> _showReduceFailureCountDialog() async {
-    final ctx = context;
-    final coins = await getGoldenCoins();
-    final canReduce = coins >= 5 && _failureCount > 0;
-    if (!ctx.mounted) return;
-    final confirmed = await showDialog<bool>(
-      context: ctx,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('실패 횟수 차감'),
-        content: Text(
-          canReduce
-              ? '금연코인 5개를 사용하여 실패 횟수를 1개 차감하시겠습니까?'
-              : '금연코인이 부족합니다. (5코인 필요)\n현재 보유: $coins코인',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('취소'),
-          ),
-          if (canReduce)
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('확인'),
-            ),
-        ],
-      ),
-    );
-    if (confirmed != true || !canReduce) return;
-    final remaining = await consumeCoinsIfPossible(5);
-    if (remaining == null) {
-      if (!ctx.mounted) return;
-      ScaffoldMessenger.of(ctx).showSnackBar(
-        const SnackBar(content: Text('금연코인이 부족합니다. (5코인 필요)')),
-      );
-      return;
-    }
-    final prefs = await SharedPreferences.getInstance();
-    _failureCount = (_failureCount - 1).clamp(0, 0x7fffffff);
-    await prefs.setInt(_failureCountKey, _failureCount);
-    await _loadGoldenCoins();
-    if (!ctx.mounted) return;
-    setState(() {});
-  }
-
   Future<void> _loadPersistedData() async {
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
     final millis = prefs.getInt('startTime');
     _failureCount = prefs.getInt(_failureCountKey) ?? 0;
-    _goldenCoins = prefs.getInt(kGoldenCoinsKey) ?? 0;
-    _savingsExchangedToCoinsWon =
-        prefs.getInt(kSavingsExchangedToCoinsWonKey) ?? 0;
     _mainReason = prefs.getString('pinnedReasonText') ?? '';
     _reasonController.text = _mainReason;
     _showReasonEditor = _mainReason.isEmpty;
@@ -441,7 +356,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       // 목표일 도달 시 축하 알림 (한 번만) — 누적일과 동일하게 달력 일차 기준
       final goalDaysElapsed = quitCalendarDayNumber(_startTime!);
       if (_goalDays != null && goalDaysElapsed >= _goalDays!) {
-        showGoalReachedNotificationIfNeeded(goalDaysElapsed, _goalDays);
+        unawaited(_maybeCelebrateGoal(goalDaysElapsed));
       }
 
       // 위젯 데이터도 주기적으로 동기화 (대략 1분마다)
@@ -449,6 +364,36 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
         syncWidgetData();
       }
     });
+  }
+
+  Future<void> _maybeCelebrateGoal(int goalDaysElapsed) async {
+    if (_goalDays == null || goalDaysElapsed < _goalDays!) return;
+    if (_goalCelebrationShowing) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final last = prefs.getInt(kGoalCongratulatedDayKey);
+    if (last != null && last >= _goalDays!) return;
+
+    _goalCelebrationShowing = true;
+    await prefs.setInt(kGoalCongratulatedDayKey, _goalDays!);
+
+    if (!mounted) {
+      _goalCelebrationShowing = false;
+      return;
+    }
+    try {
+      await showGoalCelebrationDialog(
+        context,
+        goalDays: _goalDays!,
+        savedMoney: _savedMoney,
+        skippedCigarettes: _skippedCigarettes,
+      );
+      if (mounted) {
+        await showGoalReachedNotificationIfNeeded(goalDaysElapsed, _goalDays);
+      }
+    } finally {
+      _goalCelebrationShowing = false;
+    }
   }
 
   Future<void> _pickGoalDays() async {
@@ -464,10 +409,20 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                for (final d in [7, 14, 30, 60, 90, 365])
+                for (final option in const [
+                  (7, '7일'),
+                  (14, '14일'),
+                  (30, '30일'),
+                  (60, '60일'),
+                  (90, '90일'),
+                  (365, '365일 (1년)'),
+                  (730, '730일 (2년)'),
+                  (1095, '1,095일 (3년)'),
+                  (1825, '1,825일 (5년)'),
+                ])
                   ListTile(
-                    title: Text('$d일'),
-                    onTap: () => Navigator.pop(ctx, d),
+                    title: Text(option.$2),
+                    onTap: () => Navigator.pop(ctx, option.$1),
                   ),
               ],
             ),
@@ -517,117 +472,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       ),
     );
     await _reloadReminderTimesFromPrefs();
-  }
-
-  /// 흡연 욕구 시 금연시간, 절약금액, 별표(고정)한 금연할 이유, 응원메시지 표시
-  Future<void> _showCravingSheet() async {
-    final prefs = await SharedPreferences.getInstance();
-    final reasonText = prefs.getString('pinnedReasonText');
-    if (!mounted) return;
-    showModalBottomSheet(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: Colors.transparent,
-        builder: (ctx) => Container(
-          padding: EdgeInsets.only(
-            left: 24,
-            right: 24,
-            top: 24,
-            bottom: MediaQuery.of(ctx).padding.bottom + 24,
-          ),
-          decoration: const BoxDecoration(
-            color: AppTheme.surfaceCard,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-          ),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text('마음이 흔들릴 때', style: AppTheme.titleLarge),
-                const SizedBox(height: 20),
-                _cravingRow(Icons.timer_outlined, '금연 시간', formatDurationLong(_elapsed)),
-                const SizedBox(height: 12),
-                _cravingRow(Icons.savings_outlined, '절약 금액', '₩${_moneyFormatter.format(_savedMoney.round())}'),
-                if (reasonText != null && reasonText.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  _cravingRow(Icons.format_quote_rounded, '금연할 이유', reasonText),
-                ],
-                const SizedBox(height: 20),
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: AppTheme.primary.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    '지금까지 $_skippedCigarettes개비를 넘기셨어요! 조금만 더 힘내세요.',
-                    style: AppTheme.bodyLarge.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: AppTheme.primary,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: AppTheme.surface.withValues(alpha: 0.6),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppTheme.primary.withValues(alpha: 0.15)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('금연 스트레스 완화 영상', style: AppTheme.titleMedium),
-                      const SizedBox(height: 8),
-                      Text(
-                        '아래 버튼을 누르면 유튜브에서 관련 영상 목록을 바로 볼 수 있어요.',
-                        style: AppTheme.bodyMedium.copyWith(color: AppTheme.textMuted),
-                      ),
-                      const SizedBox(height: 10),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          ActionChip(
-                            label: const Text('금연 스트레스 완화'),
-                            onPressed: () => _openExternalYoutubeSearch('금연 스트레스 완화'),
-                          ),
-                          ActionChip(
-                            label: const Text('금연 불안 호흡'),
-                            onPressed: () => _openExternalYoutubeSearch('금연 불안 호흡 명상'),
-                          ),
-                          ActionChip(
-                            label: const Text('욕구 이겨내기'),
-                            onPressed: () => _openExternalYoutubeSearch('금연 욕구 이겨내기'),
-                          ),
-                          ActionChip(
-                            label: const Text('금연하는 방법'),
-                            onPressed: () => _openExternalYoutubeSearch('금연하는 방법'),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-  }
-
-  Widget _cravingRow(IconData icon, String label, String value) {
-    return Row(
-      children: [
-        Icon(icon, color: AppTheme.primary, size: 22),
-        const SizedBox(width: 10),
-        Text('$label: ', style: AppTheme.bodyMedium.copyWith(color: AppTheme.textSecondary)),
-        Expanded(child: Text(value, style: AppTheme.titleMedium)),
-      ],
-    );
   }
 
   Future<void> _saveMainReasonFromInput() async {
@@ -790,16 +634,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     } catch (_) {}
   }
 
-  Future<void> _openExternalYoutubeSearch(String keyword) async {
-    final url = 'https://www.youtube.com/results?search_query=${Uri.encodeComponent(keyword)}';
-    final ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-    if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('유튜브를 열 수 없습니다.')),
-      );
-    }
-  }
-
   void _openReasonEditorInline() {
     setState(() {
       _showReasonEditor = true;
@@ -833,17 +667,17 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     // 이후 단계는 로컬 알림 예약·취소이며, OS 권한/플러그인 이슈로 실패해도
     // "저장 실패"로 보이면 안 되므로 별도로 잡아 메시지로만 안내한다.
     try {
-      final recentSmokedCount = countRecentSmokedLogs(list);
+      final recentPatternCount = countRecentPatternLogs(list);
 
       final nickname = await _resolveNicknameForPatternNotification() ?? '회원';
-      if (recentSmokedCount < kPatternMinLogs) {
+      if (recentPatternCount < kPatternMinLogs) {
         await cancelPatternReminders();
         await clearPatternReminderSlots();
         unawaited(_syncPatternLogToApi(log));
         return;
       }
 
-      final slots = buildPatternPeakSlots(list);
+      final slots = buildPatternAverageSlots(list);
       await schedulePatternRemindersFromSlots(
         slots: slots,
         nickname: nickname,
@@ -858,18 +692,6 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       }
       unawaited(_syncPatternLogToApi(log));
     }
-  }
-
-  Future<void> _savePatternLogOnly(_SmokingPatternLog log) async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(kSmokingPatternLogsPrefsKey);
-    final list = decodeSmokingPatternLogs(raw);
-    list.add(log.toJson());
-    if (list.length > 200) {
-      list.removeRange(0, list.length - 200);
-    }
-    await prefs.setString(kSmokingPatternLogsPrefsKey, jsonEncode(list));
-    unawaited(_syncPatternLogToApi(log));
   }
 
   Future<void> _syncPatternLogToApi(_SmokingPatternLog log) async {
@@ -891,91 +713,11 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   Future<bool> _showSmokingReasonDialog({required String action}) async {
-    String timeValue = '아침';
-    String situationValue = '스트레스';
-    String emotionValue = '짜증';
-    final situationEtcController = TextEditingController();
-    final emotionEtcController = TextEditingController();
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-          title: Text(action == 'smoked' ? '방금 피움 이유 기록' : '강한 욕구 기록'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                DropdownButtonFormField<String>(
-                  value: timeValue,
-                  decoration: const InputDecoration(labelText: '시간대'),
-                  items: const [
-                    DropdownMenuItem(value: '아침', child: Text('아침')),
-                    DropdownMenuItem(value: '식사 전후', child: Text('식사 전후')),
-                    DropdownMenuItem(value: '밤', child: Text('밤')),
-                  ],
-                  onChanged: (v) => setDialogState(() => timeValue = v ?? '아침'),
-                ),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
-                  value: situationValue,
-                  decoration: const InputDecoration(labelText: '상황'),
-                  items: const [
-                    DropdownMenuItem(value: '스트레스', child: Text('스트레스')),
-                    DropdownMenuItem(value: '심심함', child: Text('심심함')),
-                    DropdownMenuItem(value: '술자리', child: Text('술자리')),
-                    DropdownMenuItem(value: '습관', child: Text('습관')),
-                    DropdownMenuItem(value: '기타', child: Text('기타(직접입력)')),
-                  ],
-                  onChanged: (v) => setDialogState(() => situationValue = v ?? '스트레스'),
-                ),
-                if (situationValue == '기타') ...[
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: situationEtcController,
-                    decoration: const InputDecoration(hintText: '상황 입력'),
-                  ),
-                ],
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
-                  value: emotionValue,
-                  decoration: const InputDecoration(labelText: '감정'),
-                  items: const [
-                    DropdownMenuItem(value: '짜증', child: Text('짜증')),
-                    DropdownMenuItem(value: '피곤', child: Text('피곤')),
-                    DropdownMenuItem(value: '집중 안됨', child: Text('집중 안됨')),
-                    DropdownMenuItem(value: '기타', child: Text('기타(직접입력)')),
-                  ],
-                  onChanged: (v) => setDialogState(() => emotionValue = v ?? '짜증'),
-                ),
-                if (emotionValue == '기타') ...[
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: emotionEtcController,
-                    decoration: const InputDecoration(hintText: '감정 입력'),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('취소'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
-              child: const Text('저장'),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    if (confirmed != true) return false;
+    final result = await _RecordBottomSheet.show(context: context, action: action);
+    if (result == null) return false;
+    final timeValue = result['time'] as String;
+    final situationValue = result['situation'] as String;
+    final emotionValue = result['emotion'] as String;
     final now = DateTime.now();
     final log = _SmokingPatternLog(
       id: now.millisecondsSinceEpoch,
@@ -983,16 +725,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       hour: now.hour,
       minute: now.minute,
       timeLabel: timeValue,
-      situation: situationValue == '기타'
-          ? (situationEtcController.text.trim().isEmpty
-              ? '기타'
-              : situationEtcController.text.trim())
-          : situationValue,
-      emotion: emotionValue == '기타'
-          ? (emotionEtcController.text.trim().isEmpty
-              ? '기타'
-              : emotionEtcController.text.trim())
-          : emotionValue,
+      situation: situationValue,
+      emotion: emotionValue,
       tsMs: now.millisecondsSinceEpoch,
     );
     try {
@@ -1022,6 +756,30 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     }
     if (!mounted) return false;
     return true;
+  }
+
+  /// 저장 완료 피드백은 오버레이 다이얼로그로 표시한다.
+  Future<void> _showCravingSavedFeedback() async {
+    if (!mounted) return;
+    HapticFeedback.mediumImpact();
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('욕구 기록이 저장되었습니다'),
+        content: Text(
+          '욕구가 올라온 시간을 기록했어요.\n패턴 알림 분석에 반영됩니다.',
+          style: AppTheme.bodyMedium.copyWith(color: AppTheme.textPrimary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('확인'),
+          ),
+        ],
+      ),
+    );
   }
 
   /// 저장 완료 피드백은 오버레이 다이얼로그로 표시한다.
@@ -1066,23 +824,173 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _onStrongCravingTap() async {
+    final saved = await _showSmokingReasonDialog(action: 'craving');
+    if (!saved) return;
+    await _showCravingSavedFeedback();
+  }
+
+  Future<void> _onSosTap() async {
+    if (!mounted) return;
+    await SosOverlay.show(
+      context,
+      reason: _mainReason.isNotEmpty ? _mainReason : null,
+      onDone: () {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('3분 미션 완료! 잘 버텨냈어요 💪')),
+          );
+        }
+      },
+      onSmoked: _onSmokedTap,
+    );
+  }
+
+  Future<void> _shareTodayRecord() async {
+    final days = _startTime != null ? quitCalendarDayNumber(_startTime!) : 0;
+    final savedStr = _moneyFormatter.format(_savedMoney.round());
+    final cigsStr = _skippedCigarettes;
     final now = DateTime.now();
-    await _savePatternLogOnly(
-      _SmokingPatternLog(
-        id: now.millisecondsSinceEpoch,
-        action: 'craving',
-        hour: now.hour,
-        minute: now.minute,
-        timeLabel: '',
-        situation: '',
-        emotion: '',
-        tsMs: now.millisecondsSinceEpoch,
+    final dateStr = DateFormat('yyyy년 MM월 dd일').format(now);
+
+    if (!mounted) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.fromLTRB(
+          24, 20, 24,
+          24 + MediaQuery.of(ctx).padding.bottom,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppTheme.border,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              '오늘의 기록 공유하기',
+              style: Theme.of(ctx).textTheme.titleLarge,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '$dateStr · $days일째 금연 중',
+              style: Theme.of(ctx).textTheme.bodyMedium,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            _ShareOptionTile(
+              icon: Icons.chat_bubble_rounded,
+              color: const Color(0xFFFAE100),
+              iconColor: const Color(0xFF3A1D00),
+              title: '카카오톡으로 공유',
+              subtitle: '지인에게 금연 현황을 전달해요',
+              onTap: () {
+                Navigator.pop(ctx);
+                _shareToKakao(days, savedStr, cigsStr);
+              },
+            ),
+            const SizedBox(height: 10),
+            _ShareOptionTile(
+              icon: Icons.people_rounded,
+              color: AppTheme.primary,
+              iconColor: Colors.white,
+              title: '금연방에 공유',
+              subtitle: '파트너들에게 오늘 기록을 알려요',
+              onTap: () {
+                Navigator.pop(ctx);
+                _shareToQuitRoom(days, savedStr, cigsStr);
+              },
+            ),
+          ],
+        ),
       ),
     );
+  }
+
+  Future<void> _shareToKakao(int days, String savedStr, int cigsStr) async {
+    final text = '[$days일째 금연 중이에요 🌱]\n\n'
+        '오늘도 담배를 참았어요!\n'
+        '지금까지 ₩$savedStr 절약, 담배 $cigsStr개비를 넘겼어요.\n\n'
+        '금연뱅크와 함께해요!\n'
+        'Android: $_kAppPlayStoreUrl';
+    try {
+      await SharePlus.instance.share(ShareParams(text: text));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('공유 화면을 열 수 없습니다.')));
+    }
+  }
+
+  Future<void> _shareToQuitRoom(int days, String savedStr, int cigsStr) async {
+    final prefs = await SharedPreferences.getInstance();
+    final rooms = decodeRooms(prefs.getString(kQuitRoomsKey));
+    if (rooms.isEmpty) {
+      if (!mounted) return;
+      final go = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('금연방이 없어요'),
+          content: const Text('금연방을 개설하면 파트너와 함께 기록을 나눌 수 있어요.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('취소')),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('금연방 열기')),
+          ],
+        ),
+      );
+      if (go == true && mounted) {
+        await Navigator.push<void>(
+          context,
+          MaterialPageRoute(builder: (_) => const QuitRoomListScreen()),
+        );
+      }
+      return;
+    }
+
+    final postContent = '$days일째 금연 중이에요 🌱\n₩$savedStr 절약 · $cigsStr개비 참았어요!';
+
+    QuitRoom? targetRoom = rooms.first;
+    if (rooms.length > 1 && mounted) {
+      targetRoom = await showDialog<QuitRoom>(
+        context: context,
+        builder: (_) => SimpleDialog(
+          title: const Text('어느 금연방에 공유할까요?'),
+          children: rooms.map((r) => SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, r),
+                child: Text(r.name),
+              )).toList(),
+        ),
+      );
+    }
+    if (targetRoom == null || !mounted) return;
+
+    final post = RoomPost(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      authorName: targetRoom.myName,
+      content: postContent,
+      createdAt: DateTime.now(),
+    );
+    final updated = targetRoom.copyWith(posts: [...targetRoom.posts, post]);
+    final updatedRooms = rooms.map((r) => r.id == updated.id ? updated : r).toList();
+    await prefs.setString(kQuitRoomsKey, encodeRooms(updatedRooms));
+
     if (!mounted) return;
-    await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const SmokingScreen()),
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('「${targetRoom.name}」에 공유했어요!')),
     );
   }
 
@@ -1107,570 +1015,144 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     return parts.join(' ');
   }
 
-  Future<void> _resetSmokingStatus() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text('⚠️ 금연 리셋'),
-          content: const Text('정말로 금연 리셋을 진행하시겠습니까?\n기록이 초기화됩니다.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('취소'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
-              child: const Text('확인'),
-            ),
-          ],
-        );
-      },
+  Future<void> _openHabitSettings() async {
+    final updated = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => const HabitSettingsScreen()),
     );
-
-    if (confirmed != true) return;
-
-    final prefs = await SharedPreferences.getInstance();
-    final now = DateTime.now();
-    await prefs.setInt('startTime', now.millisecondsSinceEpoch);
-    setState(() => _startTime = now);
-    _refreshQuitMetricsDisplay();
-    await syncWidgetData();
-
-    // (기존 로직 유지: 폐 건강 -10)
-    final before = prefs.getInt('lungHealth') ?? 100;
-    final after = (before - 10).clamp(0, 100);
-    await prefs.setInt('lungHealth', after);
-
-    // ✅ Analytics
-    await AppAnalytics.log('reset_quit', params: {
-      'lung_before': before,
-      'lung_after': after,
-      'source': 'main_screen',
-    });
-
-    widget.onResetTap();
-
-    if (mounted) {
+    if (updated == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('금연 리셋이 완료되었습니다.')),
+        const SnackBar(content: Text('설정값을 저장했습니다.')),
       );
+      await Future.delayed(const Duration(milliseconds: 250));
+      relaunchAppRoot();
     }
   }
 
-  // ✅ 설정 아이콘: "처음 설정으로 돌아가기" 구현
-  Future<void> _confirmAndGoToFirstSetup() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('처음 설정으로 돌아가기'),
-        content: const Text(
-          '처음 설정 화면으로 돌아가시겠습니까?\n\n'
-              '⚠️ 입력한 설정(흡연량/가격 등)과 진행 기록이 초기화될 수 있습니다.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('돌아가기'),
-          ),
-        ],
-      ),
-    );
+  Future<void> _performFullReset() async {
+    await AppAnalytics.log('full_reset_from_settings', params: {'source': 'settings'});
 
-    if (confirmed != true) return;
-
-    // ✅ Analytics
-    await AppAnalytics.log('go_to_first_setup', params: {'source': 'main_screen'});
-
-    // ✅ 알림 OFF(예약 작업 취소 + 설정 제거)
     await disableDailyReminder();
 
-    // ✅ 설정값 초기화 (필요 키만 삭제해도 되지만, 안전하게 관련 키 정리)
     final prefs = await SharedPreferences.getInstance();
-
-    // "처음 설정"에 영향을 주는 값들
-    await prefs.setBool('isConfigured', false);
-    await prefs.remove('dailyCigarettes');
-    await prefs.remove('cigarettesPerPack');
-    await prefs.remove('pricePerPack');
-
-    // 시작시간/리마인더 관련
-    await prefs.remove('startTime');
     await prefs.remove('reminderHour');
     await prefs.remove('reminderMinute');
 
-    // (선택) 광고 클릭 카운트도 초기화하고 싶으면
-    // await prefs.remove('clickCount');
-
-    // (선택) 나무/게임/폐 건강 등도 "처음부터"로 돌리고 싶으면 같이 초기화
-    // await prefs.remove('growthStage');
-    // await prefs.remove('water');
-    // await prefs.remove('currentWater');
-    // await prefs.remove('bestRecord');
-    // await prefs.remove('lungHealth');
-    // await prefs.remove('lastUpdatedTime');
-    // await prefs.remove('lastExitTime');
+    await SupabaseSyncService.resetOnboardingForIntroReplay();
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('초기 설정으로 돌아갑니다. 앱을 다시 시작합니다.')),
+        const SnackBar(content: Text('처음부터 다시 시작합니다.')),
       );
     }
 
-    // ✅ 현재 구조에서 가장 안전한 방식: 앱 종료 후 재실행
-    // (재실행하면 isConfigured=false라 IntroFlowWrapper가 다시 뜸)
-    await Future.delayed(const Duration(milliseconds: 400));
-    SystemNavigator.pop();
+    await Future.delayed(const Duration(milliseconds: 300));
+    relaunchAppRoot();
   }
 
-  Future<void> _shareAppRecommendation() async {
-    final text = '금연뱅크 앱으로 금연을 기록하고 있어요. 함께 써보세요!\n\n'
-        '• Android: $_kAppPlayStoreUrl\n'
-        '• iPhone: $_kAppIosStoreUrl';
-    try {
-      await SharePlus.instance.share(ShareParams(text: text));
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('공유 화면을 열 수 없습니다.')),
-      );
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
     final formattedStart =
-    _startTime != null ? DateFormat('yyyy년 MM월 dd일').format(_startTime!) : '';
+        _startTime != null ? DateFormat('yyyy년 MM월 dd일').format(_startTime!) : '';
     final days = _startTime != null ? quitCalendarDayNumber(_startTime!) : 0;
     final savedMoneyStr = _moneyFormatter.format(_savedMoney.round());
-    final exchangeableStr = _moneyFormatter.format(_exchangeableWon);
-    final appBarFg =
-        Theme.of(context).appBarTheme.foregroundColor ?? Colors.white;
+    final goalProgress = _goalDays != null && _goalDays! > 0
+        ? (days / _goalDays!).clamp(0.0, 1.0)
+        : null;
 
     return Scaffold(
       backgroundColor: AppTheme.surface,
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        centerTitle: false,
-        titleSpacing: 0,
-        // 좌·우 영역을 동일한 Expanded로 잡아야 「금연 현황」이 화면 기준으로 정확히 중앙에 온다.
-        title: Padding(
-          padding: const EdgeInsets.only(right: 4),
-          child: Row(
-            children: [
-              Expanded(
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      onTap: _openSavingsCoinExchange,
-                      borderRadius: BorderRadius.circular(10),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 6),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Flexible(
-                              child: Text(
-                                '금연코인',
-                                overflow: TextOverflow.ellipsis,
-                                maxLines: 1,
-                                style: TextStyle(
-                                  color: appBarFg,
-                                  fontSize: 12.5,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            RemoteAssetImage(
-                              assetKey: 'scoin.png',
-                              width: 22,
-                              height: 22,
-                              memCacheWidth: 64,
-                              error: Icon(
-                                Icons.monetization_on_rounded,
-                                color: appBarFg.withValues(alpha: 0.95),
-                                size: 22,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              '$_goldenCoins',
-                              style: TextStyle(
-                                color: appBarFg,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ],
-                        ),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: Image.asset('assets/app_icon.png', width: 28, height: 28, fit: BoxFit.cover),
+            ),
+            const SizedBox(width: 8),
+            const Text('홈'),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.ios_share_rounded),
+            tooltip: '오늘의 기록 공유',
+            onPressed: _shareTodayRecord,
+          ),
+          Builder(
+            builder: (innerCtx) {
+              return IconButton(
+                icon: const Icon(Icons.settings_rounded),
+                tooltip: '설정',
+                onPressed: () async {
+                  await Navigator.push<void>(
+                    innerCtx,
+                    MaterialPageRoute(
+                      builder: (_) => SettingsScreen(
+                        reminderTimes: List.from(_reminderTimes),
+                        onReminderUpdated: (list) =>
+                            setState(() => _reminderTimes = list),
+                        onEditHabits: _openHabitSettings,
+                        onFullReset: _performFullReset,
+                        onShowTutorial: widget.onShowTutorial,
                       ),
                     ),
-                  ),
-                ),
-              ),
-              Text(
-                '금연 현황',
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: appBarFg,
-                  fontSize: 17,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              Expanded(
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        icon: Icon(
-                          Icons.ios_share_rounded,
-                          size: 21,
-                          color: appBarFg,
-                        ),
-                        tooltip: '지인에게 앱 공유하기',
-                        onPressed: _shareAppRecommendation,
-                      ),
-                      Builder(
-                        builder: (innerCtx) {
-                          return IconButton(
-                            icon: const Icon(Icons.settings_rounded),
-                            tooltip: '설정',
-                            color: appBarFg,
-                            onPressed: () async {
-                              await Navigator.push<void>(
-                                innerCtx,
-                                MaterialPageRoute(
-                                  builder: (_) => SettingsScreen(
-                                    reminderTimes: List.from(_reminderTimes),
-                                    onReminderUpdated: (list) =>
-                                        setState(() => _reminderTimes = list),
-                                    onGoToFirstSetup: _confirmAndGoToFirstSetup,
-                                    onShowTutorial: widget.onShowTutorial,
-                                  ),
-                                ),
-                              );
-                              await _reloadReminderTimesFromPrefs();
-                            },
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
+                  );
+                  await _reloadReminderTimesFromPrefs();
+                },
+              );
+            },
           ),
-        ),
+        ],
       ),
       body: SingleChildScrollView(
         controller: widget.mainScrollController,
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // 금연 시간 위젯 (한눈에 보이는 영역)
-            Container(
-              margin: const EdgeInsets.only(bottom: 16),
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-              decoration: BoxDecoration(
-                color: AppTheme.surfaceCard,
-                borderRadius: BorderRadius.circular(14),
-                boxShadow: AppTheme.cardShadowSubtle,
-                border: Border.all(color: AppTheme.primary.withValues(alpha: 0.2), width: 1),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Icon(Icons.timer_outlined, color: AppTheme.primary, size: 24),
-                  const SizedBox(width: 10),
-                  Text('금연 시간', style: AppTheme.labelMedium.copyWith(color: AppTheme.textSecondary)),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      formatDurationLong(_elapsed),
-                      textAlign: TextAlign.right,
-                      maxLines: 2,
-                      softWrap: true,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.titleLarge.copyWith(
-                        color: AppTheme.primary,
-                        fontSize: 13,
-                        height: 1.25,
-                        letterSpacing: 0.1,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Material(
-              color: Colors.transparent,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: _openReasonEditorInline,
-                child: Container(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: AppTheme.surfaceCard,
-                    borderRadius: BorderRadius.circular(12),
-                    boxShadow: AppTheme.cardShadowSubtle,
-                    border: Border.all(color: AppTheme.primary.withValues(alpha: 0.15), width: 1),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          _mainReason.isEmpty
-                              ? '금연할 이유: 아직 입력된 이유가 없습니다.'
-                              : '금연할 이유: $_mainReason',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: AppTheme.bodyMedium.copyWith(
-                            color: AppTheme.textPrimary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      IconButton(
-                        visualDensity: VisualDensity.compact,
-                        padding: const EdgeInsets.all(12),
-                        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                        style: IconButton.styleFrom(
-                          backgroundColor: AppTheme.primary.withValues(alpha: 0.12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        ),
-                        icon: Icon(Icons.edit_rounded, size: 20, color: AppTheme.primary),
-                        tooltip: '이유 편집',
-                        onPressed: _openReasonEditorInline,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            // 상단 요약 카드
             Builder(
               builder: (context) {
-                final inner = Container(
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [AppTheme.primaryLight, AppTheme.primaryDark],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppTheme.primary.withValues(alpha: 0.25),
-                    blurRadius: 16,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
-              ),
-              padding: const EdgeInsets.all(24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('시작일', style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 13)),
-                      Text(formattedStart, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500)),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('누적일', style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 13)),
-                      Text('$days일', style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500)),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  InkWell(
-                    onTap: _pickGoalDays,
-                    borderRadius: BorderRadius.circular(8),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text('목표일', style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 13)),
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                _goalDays != null ? '$_goalDays일' : '설정',
-                                style: const TextStyle(
-                                  color: Colors.amberAccent,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              Icon(Icons.touch_app_rounded, size: 14, color: Colors.white.withValues(alpha: 0.7)),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('참은 담배 개수', style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 13)),
-                      Text('$_skippedCigarettes개비', style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500)),
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-                  Container(height: 1, color: Colors.white24),
-                  const SizedBox(height: 22),
-                  Text(
-                    formatDurationLong(_elapsed),
-                    style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.25, fontWeight: FontWeight.w700),
-                  ),
-                  if (_failureCount > 0) ...[
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: GestureDetector(
-                        onTap: _showReduceFailureCountDialog,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              '실패 $_failureCount회',
-                              style: const TextStyle(
-                                color: Colors.amberAccent,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Icon(Icons.touch_app_rounded, size: 12, color: Colors.white.withValues(alpha: 0.7)),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-                          decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(10)),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('총 절약 금액', style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 12)),
-                              Text('₩$savedMoneyStr', style: const TextStyle(color: Colors.amberAccent, fontSize: 16, fontWeight: FontWeight.w700)),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Material(
-                          color: Colors.transparent,
-                          child: InkWell(
-                            onTap: _openSavingsCoinExchange,
-                            borderRadius: BorderRadius.circular(10),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-                              decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(10)),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          '환전 가능 금액',
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            color: Colors.white.withValues(alpha: 0.9),
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 4),
-                                      Icon(
-                                        Icons.touch_app_rounded,
-                                        size: 12,
-                                        color: Colors.white.withValues(alpha: 0.65),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    '₩$exchangeableStr',
-                                    style: TextStyle(
-                                      color: Colors.lightGreenAccent.shade100,
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            );
+                final hero = HomeHeroCard(
+                  days: days,
+                  durationLabel: formatDurationLong(_elapsed),
+                  startLabel: formattedStart.isEmpty ? '' : '시작 $formattedStart',
+                  savedMoneyLabel: savedMoneyStr,
+                  skippedCigarettes: _skippedCigarettes,
+                  goalDays: _goalDays,
+                  goalProgress: goalProgress,
+                  failureCount: _failureCount,
+                  reasonText: _mainReason.isEmpty ? null : _mainReason,
+                  onGoalTap: _pickGoalDays,
+                  onReasonTap: _openReasonEditorInline,
+                );
                 final tk = widget.tutorialStatsCardKey;
-                if (tk != null) return KeyedSubtree(key: tk, child: inner);
-                return inner;
+                if (tk != null) return KeyedSubtree(key: tk, child: hero);
+                return hero;
               },
             ),
-            const SizedBox(height: 24),
+            FutureSavingsSection(
+              dailyCigarettes: widget.dailyCigarettes,
+              cigarettesPerPack: widget.cigarettesPerPack,
+              pricePerPack: widget.pricePerPack,
+            ),
             if (_showReasonEditor)
-              Container(
+              AppCard(
                 margin: const EdgeInsets.only(bottom: 16),
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: AppTheme.surfaceCard,
-                  borderRadius: BorderRadius.circular(14),
-                  boxShadow: AppTheme.cardShadowSubtle,
-                  border: Border.all(color: AppTheme.primary.withValues(alpha: 0.18), width: 1),
-                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Icon(Icons.format_quote_rounded, color: AppTheme.primary, size: 22),
-                        const SizedBox(width: 8),
-                        Text('금연할 이유', style: AppTheme.titleMedium),
-                      ],
+                    const SectionHeader(
+                      icon: Icons.edit_note_rounded,
+                      title: '금연할 이유 적기',
+                      subtitle: '힘든 순간, 이 한 줄이 버티게 해줘요.',
+                      iconColor: AppTheme.primary,
+                      iconBackground: AppTheme.primarySurface,
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '힘든 순간에 떠올릴 한 문장을 적어두세요.',
-                      style: AppTheme.bodyMedium.copyWith(color: AppTheme.textMuted),
-                    ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 12),
                     TextField(
                       controller: _reasonController,
                       focusNode: _reasonFocusNode,
@@ -1679,139 +1161,125 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                       maxLength: 120,
                       textInputAction: TextInputAction.done,
                       decoration: const InputDecoration(
-                        hintText: '예) 가족과 더 건강하게 오래 살고 싶어요.',
+                        hintText: '예) 아이와 더 오래 건강하게 살고 싶어요',
                       ),
                       onSubmitted: (_) => _saveMainReasonFromInput(),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 10),
                     SizedBox(
                       width: double.infinity,
-                      child: ElevatedButton.icon(
+                      child: FilledButton(
                         onPressed: _saveMainReasonFromInput,
-                        icon: const Icon(Icons.save_rounded, size: 18),
-                        label: const Text('이유 저장'),
+                        child: const Text('저장하기'),
                       ),
                     ),
                   ],
                 ),
               ),
+            // ─── 응급 SOS ────────────────────────────────────
+            const SizedBox(height: 4),
+            Builder(
+              builder: (context) {
+                final sos = _SosButton(onTap: _onSosTap);
+                final sk = widget.tutorialSosButtonKey;
+                if (sk != null) return KeyedSubtree(key: sk, child: sos);
+                return sos;
+              },
+            ),
+            const SizedBox(height: 20),
 
-            // 알림 / 마음 다잡기
-            Row(
-              children: [
-                Expanded(
-                  child: Builder(
-                    builder: (_) {
-                      final reminderBtn = ElevatedButton.icon(
-                        onPressed: _openReminderSettings,
-                        icon: const Icon(Icons.notifications_active_rounded, size: 20),
-                        label: Text(_reminderTimes.isEmpty ? '알림 설정' : '알림 ${_reminderTimes.length}개'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF6366F1),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        ),
-                      );
-                      final rk = widget.tutorialReminderButtonKey;
-                      if (rk != null) return KeyedSubtree(key: rk, child: reminderBtn);
-                      return reminderBtn;
-                    },
+            // ─── 오늘의 기록 공유하기 ─────────────────────
+            AppCard(
+              padding: const EdgeInsets.all(16),
+              onTap: _shareTodayRecord,
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: AppTheme.primarySurface,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.ios_share_rounded, color: AppTheme.primary, size: 22),
                   ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _showCravingSheet,
-                    icon: const Icon(Icons.self_improvement_rounded, size: 20),
-                    label: const Text('마음 다잡기'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF7C3AED),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('오늘의 기록 공유하기', style: Theme.of(context).textTheme.titleMedium),
+                        const SizedBox(height: 2),
+                        Text(
+                          '카카오톡 또는 금연방에 공유',
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ],
                     ),
                   ),
-                ),
-              ],
+                  const Icon(Icons.arrow_forward_ios_rounded, color: AppTheme.border, size: 16),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // ─── 오늘 기록하기 ───────────────────────────
+            const SectionHeader(
+              icon: Icons.fact_check_outlined,
+              title: '오늘 기록하기',
+              subtitle: '패턴을 남기면 레포트와 알림이 맞춰져요.',
+              iconColor: AppTheme.primary,
+              iconBackground: AppTheme.primarySurface,
             ),
             const SizedBox(height: 10),
-            // 금연할 이유 / 금연 도우미
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.format_list_bulleted_rounded, size: 20),
-                    label: const Text('금연할 이유'),
-                    onPressed: () {
-                      Navigator.push(context, MaterialPageRoute(builder: (_) => const ReasonWhyScreen()));
-                    },
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppTheme.warning,
-                      side: const BorderSide(color: AppTheme.warning),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            Builder(
+              builder: (context) {
+                final recordSection = Row(
+                  children: [
+                    Expanded(
+                      child: _RecordTypeButton(
+                        icon: Icons.smoking_rooms_rounded,
+                        label: '흡연했어요',
+                        description: '상황 기록',
+                        color: AppTheme.error,
+                        bgColor: const Color(0xFFFEE2E2),
+                        onTap: _onSmokedTap,
+                      ),
                     ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.volunteer_activism_rounded, size: 20),
-                    label: const Text('금연 도우미'),
-                    onPressed: () {
-                      Navigator.push(context, MaterialPageRoute(builder: (_) => const NonsmokeHelperScreen()));
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.success,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _RecordTypeButton(
+                        icon: Icons.whatshot_rounded,
+                        label: '욕구가 올라요',
+                        description: '참은 순간 기록',
+                        color: AppTheme.craving,
+                        bgColor: const Color(0xFFFFEDD5),
+                        onTap: _onStrongCravingTap,
+                      ),
                     ),
-                  ),
-                ),
-              ],
+                  ],
+                );
+                final sk = widget.tutorialSmokedButtonKey;
+                if (sk != null) return KeyedSubtree(key: sk, child: recordSection);
+                return recordSection;
+              },
             ),
-            const SizedBox(height: 10),
-            // 방금 피움 / 지금 너무 피우고 싶을때
-            Row(
-              children: [
-                Expanded(
-                  child: Builder(
-                    builder: (context) {
-                      final smokedBtn = OutlinedButton.icon(
-                        onPressed: _onSmokedTap,
-                        icon: const Icon(Icons.waves_rounded, size: 16),
-                        label: const Text('방금 피움(패턴 기록)', style: TextStyle(fontSize: 12)),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppTheme.error,
-                          side: const BorderSide(color: AppTheme.error),
-                          padding: const EdgeInsets.symmetric(vertical: 10),
-                        ),
-                      );
-                      final sk = widget.tutorialSmokedButtonKey;
-                      if (sk != null) return KeyedSubtree(key: sk, child: smokedBtn);
-                      return smokedBtn;
-                    },
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _onStrongCravingTap,
-                    icon: const Icon(Icons.local_fire_department_rounded, size: 16),
-                    label: const Text('지금 너무 피우고싶을때', style: TextStyle(fontSize: 12)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.warning,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                    ),
-                  ),
-                ),
-              ],
+            const SizedBox(height: 18),
+            Builder(
+              builder: (_) {
+                final reminderBtn = ActionListTile(
+                  icon: Icons.notifications_none_rounded,
+                  title: _reminderTimes.isEmpty ? '알림 맞추기' : '알림 ${_reminderTimes.length}개 켜짐',
+                  subtitle: '피우고 싶을 때를 미리 챙겨두세요',
+                  iconColor: AppTheme.primary,
+                  iconBackground: AppTheme.primarySurface,
+                  onTap: _openReminderSettings,
+                );
+                final rk = widget.tutorialReminderButtonKey;
+                if (rk != null) return KeyedSubtree(key: rk, child: reminderBtn);
+                return reminderBtn;
+              },
             ),
-            const SizedBox(height: 16),
-
             if (_isBannerReady && _bannerAd != null)
               Padding(
                 padding: const EdgeInsets.only(top: 24),
@@ -1824,6 +1292,432 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                 ),
               ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── 기록 타입 버튼 ───────────────────────────────────────────────────
+class _RecordTypeButton extends StatelessWidget {
+  const _RecordTypeButton({
+    required this.icon,
+    required this.label,
+    required this.description,
+    required this.color,
+    required this.bgColor,
+    required this.onTap,
+  });
+  final IconData icon;
+  final String label;
+  final String description;
+  final Color color;
+  final Color bgColor;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 14),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+          border: Border.all(color: color.withValues(alpha: 0.25)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, color: color, size: 26),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: color,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              description,
+              style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── 기록 바텀시트 ────────────────────────────────────────────────────
+class _RecordBottomSheet extends StatefulWidget {
+  const _RecordBottomSheet({required this.action});
+  final String action;
+
+  static Future<Map<String, String>?> show({
+    required BuildContext context,
+    required String action,
+  }) {
+    return showModalBottomSheet<Map<String, String>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _RecordBottomSheet(action: action),
+    );
+  }
+
+  @override
+  State<_RecordBottomSheet> createState() => _RecordBottomSheetState();
+}
+
+class _RecordBottomSheetState extends State<_RecordBottomSheet> {
+  static const _times = [
+    ('🌅', '이른 아침'),
+    ('☀️', '오전'),
+    ('🍱', '점심 후'),
+    ('🌤️', '오후'),
+    ('🌆', '저녁'),
+    ('🌙', '밤'),
+    ('🌛', '자정'),
+  ];
+
+  static const _situations = [
+    ('😤', '스트레스'),
+    ('🥱', '지루함'),
+    ('🍺', '술자리'),
+    ('🔄', '습관적으로'),
+    ('☕', '커피 마실 때'),
+    ('📱', '쉬는 시간'),
+    ('🚗', '운전 중'),
+    ('💼', '업무 중'),
+    ('💔', '힘든 감정'),
+  ];
+
+  static const _emotions = [
+    ('😠', '짜증나요'),
+    ('😴', '피곤해요'),
+    ('😰', '불안해요'),
+    ('😢', '우울해요'),
+    ('😤', '답답해요'),
+    ('😶', '멍해요'),
+    ('🙂', '괜찮아요'),
+    ('😄', '기분 좋아요'),
+  ];
+
+  String _time = '오후';
+  String _situation = '스트레스';
+  String _emotion = '짜증나요';
+
+  @override
+  Widget build(BuildContext context) {
+    final isSmoked = widget.action == 'smoked';
+    final accentColor = isSmoked ? AppTheme.error : AppTheme.craving;
+    final bottomPad = MediaQuery.of(context).viewInsets.bottom +
+        MediaQuery.of(context).padding.bottom;
+
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppTheme.surfaceCard,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      padding: EdgeInsets.fromLTRB(24, 20, 24, 24 + bottomPad),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // 핸들 + 헤더
+          Center(
+            child: Container(
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                color: AppTheme.border,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: isSmoked ? const Color(0xFFFEE2E2) : const Color(0xFFFFEDD5),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  isSmoked ? Icons.smoking_rooms_rounded : Icons.whatshot_rounded,
+                  color: accentColor,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    isSmoked ? '흡연 기록' : '욕구 기록',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  Text(
+                    isSmoked ? '패턴을 알면 더 쉽게 끊을 수 있어요' : '참아낸 순간도 기록이에요',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+
+          // 시간대
+          _ChipGroup(
+            label: '⏰  언제였나요?',
+            options: _times,
+            selected: _time,
+            onSelected: (v) => setState(() => _time = v),
+            color: accentColor,
+          ),
+          const SizedBox(height: 16),
+
+          // 상황
+          _ChipGroup(
+            label: '📍  어떤 상황이었나요?',
+            options: _situations,
+            selected: _situation,
+            onSelected: (v) => setState(() => _situation = v),
+            color: accentColor,
+          ),
+          const SizedBox(height: 16),
+
+          // 감정
+          _ChipGroup(
+            label: '💭  감정이 어땠나요?',
+            options: _emotions,
+            selected: _emotion,
+            onSelected: (v) => setState(() => _emotion = v),
+            color: accentColor,
+          ),
+          const SizedBox(height: 24),
+
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('취소'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 2,
+                child: FilledButton(
+                  onPressed: () => Navigator.pop(context, {
+                    'time': _time,
+                    'situation': _situation,
+                    'emotion': _emotion,
+                  }),
+                  style: FilledButton.styleFrom(backgroundColor: accentColor),
+                  child: const Text('기록하기'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChipGroup extends StatelessWidget {
+  const _ChipGroup({
+    required this.label,
+    required this.options,
+    required this.selected,
+    required this.onSelected,
+    required this.color,
+  });
+  final String label;
+  final List<(String, String)> options;
+  final String selected;
+  final ValueChanged<String> onSelected;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.labelLarge?.copyWith(color: AppTheme.textSecondary)),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: options.map((opt) {
+            final isSelected = selected == opt.$2;
+            return GestureDetector(
+              onTap: () => onSelected(opt.$2),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                decoration: BoxDecoration(
+                  color: isSelected ? color.withValues(alpha: 0.12) : AppTheme.surface,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: isSelected ? color : AppTheme.border,
+                    width: isSelected ? 1.5 : 1,
+                  ),
+                ),
+                child: Text(
+                  '${opt.$1} ${opt.$2}',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                    color: isSelected ? color : AppTheme.textSecondary,
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
+}
+
+// ─── 응급 SOS 버튼 ────────────────────────────────────────────────────
+class _SosButton extends StatelessWidget {
+  const _SosButton({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [Color(0xFFB91C1C), Color(0xFFE53E3E)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFFB91C1C).withValues(alpha: 0.35),
+              offset: const Offset(0, 4),
+              blurRadius: 12,
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.15),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.emergency_rounded, color: Colors.white, size: 24),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '못참겠어요',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.3,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '지금 당장 피우고 싶다면 눌러요',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.85),
+                      fontSize: 12,
+                    ),
+                  ),
+                  Text(
+                    '3분 미션',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.75),
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              Icons.arrow_forward_ios_rounded,
+              color: Colors.white.withValues(alpha: 0.7),
+              size: 16,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── 공유 선택지 타일 ─────────────────────────────────────────────────
+class _ShareOptionTile extends StatelessWidget {
+  const _ShareOptionTile({
+    required this.icon,
+    required this.color,
+    required this.iconColor,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+  final IconData icon;
+  final Color color;
+  final Color iconColor;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppTheme.surfaceCard,
+      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: iconColor, size: 22),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title, style: Theme.of(context).textTheme.titleMedium),
+                    const SizedBox(height: 2),
+                    Text(subtitle, style: Theme.of(context).textTheme.bodyMedium),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, color: AppTheme.textMuted, size: 20),
+            ],
+          ),
         ),
       ),
     );

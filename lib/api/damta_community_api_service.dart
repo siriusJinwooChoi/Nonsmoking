@@ -1,10 +1,20 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import 'api_config.dart';
 import '../auth/bff_auth_service.dart';
+
+enum DamtaPostFailure {
+  notConfigured,
+  notLoggedIn,
+  rateLimited,
+  emptyAfterFilter,
+  serverError,
+  serviceUnavailable,
+}
 
 class DamtaCommunityMessage {
   final String id;
@@ -130,10 +140,28 @@ class DamtaCommunityApiService {
     required Color color,
     String? authorName,
   }) async {
-    if (!ApiConfig.isConfigured) return null;
+    final result = await postMessageDetailed(
+      text: text,
+      color: color,
+      authorName: authorName,
+    );
+    return result.message;
+  }
+
+  Future<({DamtaCommunityMessage? message, DamtaPostFailure? failure})>
+      postMessageDetailed({
+    required String text,
+    required Color color,
+    String? authorName,
+  }) async {
+    if (!ApiConfig.isConfigured) {
+      return (message: null, failure: DamtaPostFailure.notConfigured);
+    }
     try {
       final headers = await _authHeaders();
-      if (headers == null) return null;
+      if (headers == null) {
+        return (message: null, failure: DamtaPostFailure.notLoggedIn);
+      }
       final res = await http
           .post(
             _uri('/v1/community/damta/messages'),
@@ -149,27 +177,54 @@ class DamtaCommunityApiService {
             }),
           )
           .timeout(const Duration(seconds: 12));
-      if (res.statusCode != 201 && res.statusCode != 200) return null;
+      if (res.statusCode == 429) {
+        return (message: null, failure: DamtaPostFailure.rateLimited);
+      }
+      if (res.statusCode == 401) {
+        return (message: null, failure: DamtaPostFailure.notLoggedIn);
+      }
+      if (res.statusCode == 400) {
+        return (message: null, failure: DamtaPostFailure.emptyAfterFilter);
+      }
+      if (res.statusCode == 503) {
+        return (message: null, failure: DamtaPostFailure.serviceUnavailable);
+      }
+      if (res.statusCode != 201 && res.statusCode != 200) {
+        if (kDebugMode) {
+          debugPrint(
+            'DamtaCommunityApi postMessage: HTTP ${res.statusCode} ${res.body}',
+          );
+        }
+        return (message: null, failure: DamtaPostFailure.serverError);
+      }
       final body = jsonDecode(res.body) as Map<String, dynamic>;
       final item = body['item'];
-      if (item is! Map<String, dynamic>) return null;
+      if (item is! Map<String, dynamic>) {
+        return (message: null, failure: DamtaPostFailure.serverError);
+      }
       final id = item['id']?.toString();
       final t = item['text']?.toString();
-      if (id == null || t == null) return null;
+      if (id == null || t == null) {
+        return (message: null, failure: DamtaPostFailure.serverError);
+      }
       final authorFromServer = item['authorName']?.toString().trim();
       final ts = item['ts'];
       final tsMs = ts is num ? ts.toInt() : DateTime.now().millisecondsSinceEpoch;
-      return DamtaCommunityMessage(
-        id: id,
-        text: t,
-        color: _parseColor(item['color']?.toString()),
-        authorName: (authorFromServer == null || authorFromServer.isEmpty)
-            ? '익명'
-            : authorFromServer,
-        tsMs: tsMs,
+      return (
+        message: DamtaCommunityMessage(
+          id: id,
+          text: t,
+          color: _parseColor(item['color']?.toString()),
+          authorName: (authorFromServer == null || authorFromServer.isEmpty)
+              ? '익명'
+              : authorFromServer,
+          tsMs: tsMs,
+        ),
+        failure: null,
       );
-    } catch (_) {
-      return null;
+    } catch (e, st) {
+      if (kDebugMode) debugPrint('DamtaCommunityApi postMessage error: $e\n$st');
+      return (message: null, failure: DamtaPostFailure.serverError);
     }
   }
 }

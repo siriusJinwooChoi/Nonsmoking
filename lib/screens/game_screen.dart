@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import '../widgets/banner_ad_bar.dart';
-import '../api/game_reward_helper.dart';
+import '../api/game_sync_helper.dart';
 import '../api/game_stats_prefs.dart';
 
 // ✅ Analytics helper
@@ -105,11 +105,7 @@ class _GameScreenState extends State<GameScreen> {
       }
 
       if (mounted) {
-        unawaited(syncStatsThenClaimGameRewardWithSnackBar(
-          context,
-          game: 'number_sequence',
-          proof: {'elapsedSeconds': elapsed},
-        ));
+        unawaited(syncGameStatsToApiIfAvailable());
       }
 
       // ✅ 먼저 다이얼로그 띄우기 (Analytics 지연/오류로 “안 눌림” 체감 방지)
@@ -174,10 +170,12 @@ class _GameScreenState extends State<GameScreen> {
         title: const Text('1부터 30까지 빠르게!'),
       ),
       body: SafeArea(
+        bottom: false,
         child: LayoutBuilder(
           builder: (context, constraints) {
+            final bottomInset = MediaQuery.of(context).padding.bottom;
             return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              padding: EdgeInsets.fromLTRB(12, 6, 12, 6 + bottomInset),
               child: Column(
                 children: [
                   // 상단 기록 카드 (컴팩트)
@@ -276,21 +274,18 @@ class _GameScreenState extends State<GameScreen> {
                   const SizedBox(height: 6),
 
                   // 하단 버튼
-                  SafeArea(
-                    top: false,
-                    child: SizedBox(
-                      width: double.infinity,
-                      height: 46,
-                      child: ElevatedButton.icon(
-                        onPressed: resetGame,
-                        icon: const Icon(Icons.refresh_rounded, size: 22),
-                        label: const Text('다시 시작'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTheme.primary,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 46,
+                    child: ElevatedButton.icon(
+                      onPressed: resetGame,
+                      icon: const Icon(Icons.refresh_rounded, size: 22),
+                      label: const Text('다시 시작'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primary,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
                         ),
                       ),
                     ),

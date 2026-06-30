@@ -48,6 +48,7 @@ app.*.map.json
 android/key.properties
 *.jks
 ios/Runner/GoogleService-Info.plist
+android/app/google-services.json
 **/.env
 **/.env.*
 *.secret

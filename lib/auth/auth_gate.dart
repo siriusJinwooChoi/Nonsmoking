@@ -26,21 +26,35 @@ class _AuthGateState extends State<AuthGate> {
   int _termsVersion = 0;
   int _profileGateVersion = 0;
   int _sessionGateVersion = 0;
+  bool _lastGateLoggedIn = false;
+  String? _lastGateUid;
 
   @override
   void initState() {
     super.initState();
+    _lastGateLoggedIn = BffAuthService.instance.isLoggedIn;
+    _lastGateUid = BffAuthService.instance.userId;
     BffAuthService.instance.addListener(_onAuthChanged);
     _schedulePostLoginPull();
   }
 
   void _onAuthChanged() {
-    if (mounted) {
+    final auth = BffAuthService.instance;
+    final loggedIn = auth.isLoggedIn;
+    final uid = auth.userId;
+    final sessionChanged =
+        loggedIn != _lastGateLoggedIn || uid != _lastGateUid;
+    _lastGateLoggedIn = loggedIn;
+    _lastGateUid = uid;
+
+    if (mounted && sessionChanged) {
       setState(() {
         _sessionGateVersion++;
       });
     }
-    _schedulePostLoginPull();
+    if (sessionChanged) {
+      _schedulePostLoginPull();
+    }
   }
 
   void _schedulePostLoginPull() {
@@ -60,9 +74,8 @@ class _AuthGateState extends State<AuthGate> {
     return prefs.getBool(kTermsAgreedPrefsKey) ?? false;
   }
 
-  Future<bool> _isConfiguredFuture() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getBool('isConfigured') ?? false;
+  Future<bool> _needsIntroFuture() async {
+    return SupabaseSyncService.shouldShowIntroFlow();
   }
 
   /// 캐시가 있으면 즉시 반환하고 서버는 백그라운드에서 맞춤. 없으면 네트워크를 기다림.
@@ -152,9 +165,9 @@ class _AuthGateState extends State<AuthGate> {
                       );
                     }
                     return FutureBuilder<bool>(
-                      future: _isConfiguredFuture(),
-                      builder: (context, configuredSnap) {
-                        if (!configuredSnap.hasData) {
+                      future: _needsIntroFuture(),
+                      builder: (context, introSnap) {
+                        if (!introSnap.hasData) {
                           return const Scaffold(
                             body: Center(child: CircularProgressIndicator()),
                           );
@@ -162,7 +175,7 @@ class _AuthGateState extends State<AuthGate> {
 
                         // 신규 계정은 사용자 입력(온보딩)부터 먼저 진행하고,
                         // 온보딩 완료 후에 닉네임 게이트를 거치도록 순서를 보장한다.
-                        if (!configuredSnap.data!) {
+                        if (introSnap.data!) {
                           return UpdatePromptGate(child: widget.child);
                         }
 

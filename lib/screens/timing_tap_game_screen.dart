@@ -3,11 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../supabase/supabase_sync_service.dart';
 import '../theme/app_theme.dart';
-import 'attendance_screen.dart';
 import '../widgets/banner_ad_bar.dart';
-import '../api/game_reward_helper.dart';
-import '../api/game_stats_prefs.dart';
 import '../api/game_sync_helper.dart';
+import '../api/game_stats_prefs.dart';
 
 /// 완벽 타이밍: 움직이는 표시가 중앙에 올 때 탭하는 타이밍 게임
 class TimingTapGameScreen extends StatefulWidget {
@@ -90,7 +88,7 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
       _position = 1.0;
     });
     unawaited(_showFailDialog(
-      message: '시간이 초과되었습니다.\n코인으로 이어하면 현재 레벨과 점수를 유지할 수 있어요.',
+      message: '시간이 초과되었습니다.\n다시 도전하거나 결과를 확인할 수 있어요.',
     ));
   }
 
@@ -99,46 +97,136 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
     if (!mounted) return;
     _isFailDialogShowing = true;
     final text = message ??
-        '실패했습니다.\n코인으로 이어하면 현재 레벨과 점수를 유지한 채 다시 도전할 수 있어요.';
-    final coins = await getGoldenCoins();
-    if (!mounted) return;
-    final choice = await showDialog<String>(
+        '중앙에 표시된 영역 밖에서 멈췄습니다.';
+    final choice = await showModalBottomSheet<String>(
       context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('게임 실패'),
-        content: Text(
-          text,
-          textAlign: TextAlign.center,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'giveup'),
-            child: const Text('포기'),
+      isDismissible: false,
+      enableDrag: false,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        final bottom = MediaQuery.of(ctx).padding.bottom;
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
           ),
-          if (coins >= 1)
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, 'revive'),
-              child: const Text('코인 1개로 이어하기'),
-            ),
-        ],
-      ),
+          padding: EdgeInsets.fromLTRB(24, 12, 24, 24 + bottom),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40, height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 24),
+              Container(
+                width: 64, height: 64,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF2F2),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: const Color(0xFFFECACA), width: 2),
+                ),
+                child: const Icon(
+                  Icons.sentiment_dissatisfied_rounded,
+                  color: Color(0xFFEF4444),
+                  size: 32,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                '아쉽게도 실패했어요',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  color: AppTheme.textPrimary,
+                  letterSpacing: -0.5,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                text,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: AppTheme.textSecondary,
+                  height: 1.5,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppTheme.surface,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.bar_chart_rounded, size: 16, color: AppTheme.primary),
+                    const SizedBox(width: 6),
+                    Text(
+                      '현재 점수: $_score점',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.primary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () => Navigator.pop(ctx, 'retry'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppTheme.primary,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  icon: const Icon(Icons.refresh_rounded, size: 20),
+                  label: const Text(
+                    '다시 도전',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  onPressed: () => Navigator.pop(ctx, 'giveup'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.textSecondary,
+                    side: BorderSide(color: AppTheme.border),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: const Text(
+                    '결과 보기',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
     if (!mounted) return;
     _isFailDialogShowing = false;
-    if (choice == 'revive') {
-      final remaining = await consumeCoinsIfPossible(1);
-      if (remaining == null) {
-        setState(() {
-          _lastResult = '코인이 부족하여 이어하기를 할 수 없습니다.';
-        });
-        _resetGame();
-        return;
-      }
-      unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
-      unawaitedSyncGameStatsToApiIfAvailable();
+    if (choice == 'retry') {
       setState(() {
+        _score = 0;
+        _level = 1;
         _lastResult = '중앙에 가까울수록 높은 점수!';
       });
       _startRound();
@@ -148,11 +236,7 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(GameStatsPrefsKeys.timingTapLastSessionScore, sessionScore);
     if (!mounted) return;
-    await syncStatsThenClaimGameRewardWithSnackBar(
-      context,
-      game: 'timing_tap',
-      proof: {'sessionScore': sessionScore},
-    );
+    await syncGameStatsToApiIfAvailable();
     if (!mounted) return;
     _resetGame();
     setState(() {
@@ -172,7 +256,7 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
         _lastResult = '중앙 밖에서 멈췄습니다. 실패!';
       });
       unawaited(_showFailDialog(
-        message: '중앙에 표시된 영역 밖에서 멈췄습니다.\n코인으로 이어하면 현재 레벨과 점수를 유지할 수 있어요.',
+        message: '중앙에 표시된 영역 밖에서 멈췄습니다.\n다시 도전하거나 결과를 확인할 수 있어요.',
       ));
       return;
     }

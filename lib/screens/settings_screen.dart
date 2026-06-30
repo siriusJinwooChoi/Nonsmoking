@@ -14,22 +14,23 @@ import '../theme/app_theme.dart';
 import '../notifications/daily_reminder_worker.dart';
 import 'app_info_screen.dart';
 import 'help_screen.dart';
-import 'badge_screen.dart';
 import 'notification_opt_out_screen.dart';
 import 'reminder_settings_screen.dart';
 
-/// 설정 화면: 알림, 초기 설정으로 돌아가기, 앱 정보
+/// 설정 화면: 알림, 습관 설정 변경, 전체 리셋, 앱 정보
 class SettingsScreen extends StatefulWidget {
   final List<TimeOfDay> reminderTimes;
   final void Function(List<TimeOfDay>) onReminderUpdated;
-  final Future<void> Function() onGoToFirstSetup;
+  final Future<void> Function() onEditHabits;
+  final Future<void> Function() onFullReset;
   final Future<void> Function()? onShowTutorial;
 
   const SettingsScreen({
     super.key,
     required this.reminderTimes,
     required this.onReminderUpdated,
-    required this.onGoToFirstSetup,
+    required this.onEditHabits,
+    required this.onFullReset,
     this.onShowTutorial,
   });
 
@@ -39,8 +40,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _inactivityNotificationEnabled = true;
-  bool _attendanceReminderEnabled = true;
-  bool _cigaretteCollectionReminderEnabled = true;
+  bool _calendarReminderEnabled = true;
   bool _patternReminderEnabled = true;
   late List<TimeOfDay> _reminderTimes;
   String? _displayName;
@@ -51,8 +51,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     _reminderTimes = List<TimeOfDay>.from(widget.reminderTimes);
     _loadInactivitySetting();
-    _loadAttendanceReminderSetting();
-    _loadCigaretteCollectionReminderSetting();
+    _loadCalendarReminderSetting();
     _loadPatternReminderSetting();
     unawaited(_loadDisplayName());
   }
@@ -76,14 +75,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (mounted) setState(() => _inactivityNotificationEnabled = v);
   }
 
-  Future<void> _loadAttendanceReminderSetting() async {
-    final v = await getAttendanceReminderEnabled();
-    if (mounted) setState(() => _attendanceReminderEnabled = v);
-  }
-
-  Future<void> _loadCigaretteCollectionReminderSetting() async {
-    final v = await getCigaretteCollectionReminderEnabled();
-    if (mounted) setState(() => _cigaretteCollectionReminderEnabled = v);
+  Future<void> _loadCalendarReminderSetting() async {
+    final v = await getCalendarReminderEnabled();
+    if (mounted) setState(() => _calendarReminderEnabled = v);
   }
 
   Future<void> _loadPatternReminderSetting() async {
@@ -150,29 +144,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Future<void> _setAttendanceReminder(bool value) async {
+  Future<void> _setCalendarReminder(bool value) async {
     if (!mounted) return;
-    setState(() => _attendanceReminderEnabled = value);
-    await setAttendanceReminderEnabled(value);
-    if (!mounted) return;
-    unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(value ? '출석 알림을 켰습니다.' : '출석 알림을 껐습니다.'),
-        duration: const Duration(seconds: 1),
-      ),
-    );
-  }
-
-  Future<void> _setCigaretteCollectionReminder(bool value) async {
-    if (!mounted) return;
-    setState(() => _cigaretteCollectionReminderEnabled = value);
-    await setCigaretteCollectionReminderEnabled(value);
+    setState(() => _calendarReminderEnabled = value);
+    await setCalendarReminderEnabled(value);
     if (!mounted) return;
     unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(value ? '수집 시간 알림을 켰습니다.' : '수집 시간 알림을 껐습니다.'),
+        content: Text(value ? '금연 캘린더 알림을 켰습니다.' : '금연 캘린더 알림을 껐습니다.'),
         duration: const Duration(seconds: 1),
       ),
     );
@@ -210,31 +190,104 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _applyReminderTimes(fresh);
   }
 
-  Future<void> _confirmGoToFirstSetup(BuildContext context) async {
+  Future<void> _confirmFullReset() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('처음 설정으로 돌아가기'),
-        content: const Text(
-          '처음 설정 화면으로 돌아가시겠습니까?\n\n'
-          '입력한 설정(흡연량/가격 등)과 진행 기록이 초기화될 수 있습니다.',
+      barrierDismissible: true,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 60,
+                height: 60,
+                decoration: BoxDecoration(
+                  color: AppTheme.error.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.restart_alt_rounded,
+                  color: AppTheme.error,
+                  size: 30,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                '처음부터 다시 시작',
+                style: Theme.of(ctx).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 10),
+              Text(
+                '금연 기록·절약 금액·금연 이유가 모두 초기화되고\n'
+                '처음 가입할 때처럼 설정 화면부터 다시 진행합니다.',
+                style: Theme.of(ctx).textTheme.bodyMedium?.copyWith(
+                      color: AppTheme.textSecondary,
+                      height: 1.45,
+                    ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppTheme.error.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '되돌릴 수 없으니 신중히 선택해 주세요.',
+                  style: Theme.of(ctx).textTheme.labelMedium?.copyWith(
+                        color: AppTheme.error,
+                        fontWeight: FontWeight.w600,
+                      ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(height: 22),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text('취소'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppTheme.error,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text('다시 시작'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('돌아가기'),
-          ),
-        ],
       ),
     );
     if (confirmed == true) {
-      await widget.onGoToFirstSetup();
+      await widget.onFullReset();
     }
   }
 
@@ -333,20 +386,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         children: [
           const SizedBox(height: 8),
-          _sectionTitle('관리'),
-          _settingsTile(
-            context,
-            icon: Icons.emoji_events_rounded,
-            title: '금연 뱃지',
-            subtitle: '넘긴 개비·금연 일수 뱃지 확인',
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const BadgeScreen()),
-              );
-            },
-          ),
-          const SizedBox(height: 24),
           _sectionTitle('일반'),
           if (SupabaseConfig.isConfigured && BffAuthService.instance.isLoggedIn)
             _settingsTile(
@@ -373,19 +412,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             context,
             icon: Icons.notifications_off_rounded,
             title: '알림 해지',
-            subtitle: '비접속·출석·수집 시간 알림 설정',
+            subtitle: '비접속·캘린더·패턴 알림 설정',
             onTap: () {
               Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder: (_) => NotificationOptOutScreen(
                     inactivityNotificationEnabled: _inactivityNotificationEnabled,
-                    attendanceReminderEnabled: _attendanceReminderEnabled,
-                    cigaretteCollectionReminderEnabled: _cigaretteCollectionReminderEnabled,
+                    calendarReminderEnabled: _calendarReminderEnabled,
                     patternReminderEnabled: _patternReminderEnabled,
                     onInactivityChanged: _setInactivityNotification,
-                    onAttendanceChanged: _setAttendanceReminder,
-                    onCigaretteCollectionChanged: _setCigaretteCollectionReminder,
+                    onCalendarReminderChanged: _setCalendarReminder,
                     onPatternReminderChanged: _setPatternReminder,
                   ),
                 ),
@@ -396,11 +433,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _sectionTitle('데이터'),
           _settingsTile(
             context,
+            icon: Icons.tune_rounded,
+            title: '내 설정값 변경',
+            subtitle: '흡연량·가격·한 갑당 개비·흡연 기간 (금연 기록 유지)',
+            onTap: () => widget.onEditHabits(),
+          ),
+          const SizedBox(height: 8),
+          _settingsTile(
+            context,
             icon: Icons.restart_alt_rounded,
-            title: '초기 설정으로 돌아가기',
-            subtitle: '흡연량·가격 등 처음부터 다시 설정',
-            onTap: () => _confirmGoToFirstSetup(context),
-            titleColor: AppTheme.warning,
+            title: '처음부터 다시 시작',
+            subtitle: '모든 기록을 초기화하고 처음 설정부터 진행',
+            onTap: _confirmFullReset,
+            titleColor: AppTheme.error,
           ),
           const SizedBox(height: 24),
           _sectionTitle('설정'),

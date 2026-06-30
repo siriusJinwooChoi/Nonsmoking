@@ -5,7 +5,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import '../ad_manager.dart';
 import '../widgets/banner_ad_bar.dart';
-import '../api/game_reward_helper.dart';
 import '../api/game_sync_helper.dart';
 
 /// 7x8 그리드에 들어갈 수 있는 단어만 사용 (최대 길이 7)
@@ -132,11 +131,7 @@ class _WordGameScreenState extends State<WordGameScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_levelKey, _level);
     if (tryDailyReward && mounted) {
-      unawaited(syncStatsThenClaimGameRewardWithSnackBar(
-        context,
-        game: 'word_game',
-        proof: {'level': _level},
-      ));
+      unawaited(syncGameStatsToApiIfAvailable());
     } else {
       unawaited(syncGameStatsToApiIfAvailable());
     }

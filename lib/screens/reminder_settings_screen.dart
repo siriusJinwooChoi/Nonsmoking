@@ -248,7 +248,7 @@ class _ReminderSettingsScreenState extends State<ReminderSettingsScreen>
                         ),
                         children: [
                           Text(
-                            '방금 피움 기록을 분석해 자동으로 생성되는 예방 알림 시간대입니다.',
+                            '흡연/욕구 기록을 분석해 자동으로 생성되는 예방 알림 시간대입니다.',
                             style: AppTheme.bodyMedium.copyWith(color: AppTheme.textSecondary),
                           ),
                           const SizedBox(height: 10),
@@ -261,7 +261,7 @@ class _ReminderSettingsScreenState extends State<ReminderSettingsScreen>
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: Text(
-                                '아직 생성된 패턴 알림이 없습니다.\n방금 피움 기록 5건 이상부터 자동 생성됩니다.',
+                                '아직 생성된 패턴 알림이 없습니다.\n흡연/욕구 기록 3건 이상부터 자동 생성됩니다.',
                                 style: AppTheme.bodyMedium.copyWith(color: AppTheme.textSecondary),
                               ),
                             )
@@ -282,8 +282,8 @@ class _ReminderSettingsScreenState extends State<ReminderSettingsScreen>
                                     style: AppTheme.titleMedium,
                                   ),
                                   subtitle: Text(
-                                    '위 시각은 흡연 욕구가 많이 나는 피크입니다.\n'
-                                    '알림은 그보다 정확히 3분 전에 발송됩니다(예: 피크 14:57 → 알림 14:54).\n'
+                                    '위 시각은 흡연·욕구 기록의 평균 시간대입니다.\n'
+                                    '알림은 그보다 정확히 3분 전에 발송됩니다(예: 평균 14:57 → 알림 14:54).\n'
                                     '자동 생성된 패턴 알림(직접 수정 불가)',
                                     style: const TextStyle(fontSize: 12, color: AppTheme.textMuted),
                                   ),
