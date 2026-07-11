@@ -692,83 +692,85 @@ abstract final class SupabaseSyncService {
         true;
     await prefs.setBool(dw.kCalendarReminderEnabledKey, calendarEnabled);
 
-    await prefs.setBool(
-      dw.kPatternReminderEnabledKey,
-      row['pattern_reminder_enabled'] as bool? ?? true,
-    );
+    final patternReminderEnabled =
+        row['pattern_reminder_enabled'] as bool? ?? true;
+    await prefs.setBool(dw.kPatternReminderEnabledKey, patternReminderEnabled);
+
+    List<dynamic>? serverPatternList;
+    final remotePatternSlots = row['pattern_reminder_slots_json'];
+    if (remotePatternSlots != null) {
+      if (remotePatternSlots is List) {
+        serverPatternList = remotePatternSlots;
+      } else {
+        try {
+          final decoded = jsonDecode(jsonEncode(remotePatternSlots));
+          if (decoded is List) serverPatternList = decoded;
+        } catch (_) {}
+      }
+    }
+    final serverHasPatternSlots =
+        serverPatternList != null && serverPatternList.isNotEmpty;
 
     final patternLogs = decodeSmokingPatternLogs(
       prefs.getString(kSmokingPatternLogsPrefsKey),
     );
-    final hasPatternData =
+    final hasLocalPatternData =
         countRecentPatternLogs(patternLogs) >= kPatternMinLogs;
 
-    if (!hasPatternData) {
+    if (!patternReminderEnabled) {
+      try {
+        await dw.cancelPatternReminders();
+      } catch (_) {}
+      await prefs.remove(dw.kPatternReminderSlotsKey);
+      unawaited(pushLocalToRemoteIfEligible());
+    } else if (hasLocalPatternData) {
+      if (serverHasPatternSlots) {
+        try {
+          await prefs.setString(
+            dw.kPatternReminderSlotsKey,
+            jsonEncode(serverPatternList),
+          );
+        } catch (_) {}
+      } else {
+        var localHasPatternSlots = false;
+        final localPatternRaw = prefs.getString(dw.kPatternReminderSlotsKey);
+        if (localPatternRaw != null && localPatternRaw.trim().isNotEmpty) {
+          try {
+            final loc = jsonDecode(localPatternRaw);
+            localHasPatternSlots = loc is List && loc.isNotEmpty;
+          } catch (_) {}
+        }
+        if (localHasPatternSlots) {
+          unawaited(pushLocalToRemoteIfEligible());
+        }
+      }
+    } else if (serverHasPatternSlots) {
+      // 재설치 등으로 로컬 기록은 없지만 서버에 슬롯이 남아 있는 경우 복구
+      try {
+        await prefs.setString(
+          dw.kPatternReminderSlotsKey,
+          jsonEncode(serverPatternList),
+        );
+      } catch (_) {}
+    } else {
       await dw.clearPatternReminderSlots();
       await dw.cancelPatternReminders();
-    } else {
-      final remotePatternSlots = row['pattern_reminder_slots_json'];
-      if (remotePatternSlots != null) {
-        List<dynamic>? serverPatternList;
-        if (remotePatternSlots is List) {
-          serverPatternList = remotePatternSlots;
-        } else {
-          try {
-            final decoded = jsonDecode(jsonEncode(remotePatternSlots));
-            if (decoded is List) serverPatternList = decoded;
-          } catch (_) {}
-        }
-        final serverPatternEmpty =
-            serverPatternList == null || serverPatternList.isEmpty;
-        if (!serverPatternEmpty) {
-          try {
-            await prefs.setString(
-              dw.kPatternReminderSlotsKey,
-              jsonEncode(remotePatternSlots),
-            );
-          } catch (_) {}
-        } else {
-          var localHasPatternSlots = false;
-          final localPatternRaw = prefs.getString(dw.kPatternReminderSlotsKey);
-          if (localPatternRaw != null && localPatternRaw.trim().isNotEmpty) {
-            try {
-              final loc = jsonDecode(localPatternRaw);
-              localHasPatternSlots = loc is List && loc.isNotEmpty;
-            } catch (_) {}
-          }
-          if (!localHasPatternSlots) {
-            try {
-              await prefs.setString(
-                dw.kPatternReminderSlotsKey,
-                jsonEncode(remotePatternSlots),
-              );
-            } catch (_) {}
-          } else {
-            unawaited(pushLocalToRemoteIfEligible());
-          }
-        }
-      }
+    }
 
-      if ((row['pattern_reminder_enabled'] as bool?) == false) {
-        try {
+    if (patternReminderEnabled) {
+      try {
+        final slots = await dw.getPatternReminderSlots();
+        if (slots.isEmpty) {
           await dw.cancelPatternReminders();
-        } catch (_) {}
-        await prefs.remove(dw.kPatternReminderSlotsKey);
-      } else {
-        try {
-          final slots = await dw.getPatternReminderSlots();
-          if (slots.isEmpty) {
-            await dw.cancelPatternReminders();
-          } else {
-            final nickname = prefs.getString('nickname')?.trim();
-            await dw.schedulePatternRemindersFromSlots(
-              slots: slots,
-              nickname:
-                  (nickname != null && nickname.isNotEmpty) ? nickname : '회원',
-            );
-          }
-        } catch (_) {}
-      }
+        } else {
+          final nickname = prefs.getString('nickname')?.trim();
+          await dw.schedulePatternRemindersFromSlots(
+            slots: slots,
+            nickname:
+                (nickname != null && nickname.isNotEmpty) ? nickname : '회원',
+          );
+        }
+      } catch (_) {}
     }
 
     final lastMs = row['last_app_open_time_ms'];

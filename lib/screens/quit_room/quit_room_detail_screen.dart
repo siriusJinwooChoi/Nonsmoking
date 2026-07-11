@@ -437,46 +437,82 @@ class _QuitRoomDetailScreenState extends State<QuitRoomDetailScreen> {
       _refreshRoomMeta();
       return;
     }
-    showDialog<void>(
+    showModalBottomSheet<void>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('초대 코드'),
-        content: Column(
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        decoration: const BoxDecoration(
+          color: AppTheme.surfaceCard,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: EdgeInsets.fromLTRB(
+          24,
+          16,
+          24,
+          MediaQuery.of(ctx).padding.bottom + 24,
+        ),
+        child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppTheme.textMuted,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEDE9FE),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(
+                Icons.vpn_key_rounded,
+                color: Color(0xFF7C3AED),
+                size: 28,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text('초대 코드', style: AppTheme.titleMedium),
+            const SizedBox(height: 12),
+            SelectableText(
               code,
               style: const TextStyle(
-                fontSize: 36,
+                fontSize: 32,
                 fontWeight: FontWeight.w800,
-                letterSpacing: 8,
+                letterSpacing: 6,
                 color: AppTheme.primary,
               ),
+              textAlign: TextAlign.center,
             ),
             const SizedBox(height: 12),
             Text(
               '이 코드를 공유하면 친구가 방에 참여할 수 있어요.',
-              style: Theme.of(context).textTheme.bodyMedium,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: AppTheme.textSecondary,
+                  ),
               textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: code));
+                  Navigator.pop(ctx);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('초대 코드를 클립보드에 복사했어요')),
+                  );
+                },
+                icon: const Icon(Icons.copy_rounded),
+                label: const Text('코드 복사'),
+              ),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Clipboard.setData(ClipboardData(text: code));
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('초대 코드를 클립보드에 복사했어요')),
-              );
-            },
-            child: const Text('코드 복사'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('확인'),
-          ),
-        ],
       ),
     );
   }
@@ -494,9 +530,9 @@ class _QuitRoomDetailScreenState extends State<QuitRoomDetailScreen> {
           ),
           if (_room.type == 'group')
             IconButton(
-              icon: const Icon(Icons.person_add_rounded),
-              tooltip: '초대 코드',
-              onPressed: _room.inviteCode != null ? _showInviteCode : null,
+              icon: const Icon(Icons.vpn_key_rounded),
+              tooltip: '초대 코드 보기',
+              onPressed: _showInviteCode,
             ),
         ],
       ),
@@ -537,22 +573,6 @@ class _QuitRoomDetailScreenState extends State<QuitRoomDetailScreen> {
                 ),
               ],
             ),
-          ),
-
-          if (_room.type == 'group') _InviteCodeBanner(
-            inviteCode: _room.inviteCode,
-            onCopy: () {
-              final code = _room.inviteCode;
-              if (code == null) {
-                _refreshRoomMeta();
-                return;
-              }
-              Clipboard.setData(ClipboardData(text: code));
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('초대 코드를 복사했어요')),
-              );
-            },
-            onTap: _showInviteCode,
           ),
 
           // 피드
@@ -880,84 +900,6 @@ class _SosAlertChip extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _InviteCodeBanner extends StatelessWidget {
-  const _InviteCodeBanner({
-    required this.inviteCode,
-    required this.onCopy,
-    required this.onTap,
-  });
-
-  final String? inviteCode;
-  final VoidCallback onCopy;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final hasCode = inviteCode != null && inviteCode!.isNotEmpty;
-
-    return Material(
-      color: const Color(0xFFEDE9FE),
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.8),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Icon(
-                  Icons.vpn_key_rounded,
-                  color: Color(0xFF7C3AED),
-                  size: 18,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      hasCode ? '초대 코드' : '초대 코드 불러오는 중…',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF6D28D9),
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      hasCode ? inviteCode! : '탭해서 다시 시도',
-                      style: TextStyle(
-                        fontSize: hasCode ? 18 : 13,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: hasCode ? 4 : 0,
-                        color: hasCode
-                            ? const Color(0xFF5B21B6)
-                            : const Color(0xFF9CA3AF),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (hasCode)
-                IconButton(
-                  onPressed: onCopy,
-                  icon: const Icon(Icons.copy_rounded, size: 20),
-                  color: const Color(0xFF7C3AED),
-                  tooltip: '복사',
-                ),
-            ],
-          ),
-        ),
       ),
     );
   }

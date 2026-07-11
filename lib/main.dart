@@ -45,6 +45,7 @@ import 'auth/bff_oauth_service.dart';
 import 'api/remote_assets.dart';
 import 'supabase/supabase_config.dart';
 import 'supabase/supabase_sync_service.dart';
+import 'notifications/pattern_slots_remote_sync.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'services/fcm_daily_reminder_service.dart' show firebaseMessagingBackgroundHandler, FcmDailyReminderService;
 
@@ -86,6 +87,8 @@ void main() async {
     if (SupabaseConfig.isConfigured) {
       await BffAuthService.instance.restoreSession();
     }
+    PatternSlotsRemoteSync.onSlotsChanged =
+        SupabaseSyncService.pushLocalToRemoteIfEligible;
     await RemoteAssets.migrateLegacyCigarettePathsInPrefs();
     // 수집/도감 진입 시 첫 렌더 지연을 줄이기 위해 담배갑 목록을 백그라운드로 워밍업
     unawaited(RemoteAssets.fetchCigarettePackKeysCached());

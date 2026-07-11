@@ -10,6 +10,7 @@ import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
 
 import 'pattern_peak_slots.dart';
+import 'pattern_slots_remote_sync.dart';
 import '../data/quit_calendar_prefs.dart';
 
 bool _notificationTzInitialized = false;
@@ -1144,23 +1145,18 @@ Future<void> bootstrapCoreReminderSchedulesOnAppOpen() async {
       final logs = decodeSmokingPatternLogs(
         prefs.getString(kSmokingPatternLogsPrefsKey),
       );
-      if (countRecentPatternLogs(logs) < kPatternMinLogs) {
+      var slots = await getPatternReminderSlots();
+      if (slots.isEmpty && countRecentPatternLogs(logs) >= kPatternMinLogs) {
+        slots = await tryRebuildPatternSlotsFromLocalLogs();
+      }
+      final nickname = prefs.getString('nickname') ?? '회원';
+      if (slots.isEmpty) {
         await cancelPatternReminders();
-        await clearPatternReminderSlots();
       } else {
-        var slots = await getPatternReminderSlots();
-        if (slots.isEmpty) {
-          slots = await tryRebuildPatternSlotsFromLocalLogs();
-        }
-        final nickname = prefs.getString('nickname') ?? '회원';
-        if (slots.isEmpty) {
-          await cancelPatternReminders();
-        } else {
-          await schedulePatternRemindersFromSlots(
-            slots: slots,
-            nickname: nickname,
-          );
-        }
+        await schedulePatternRemindersFromSlots(
+          slots: slots,
+          nickname: nickname,
+        );
       }
     } catch (e, st) {
       if (kDebugMode) {
@@ -1392,27 +1388,17 @@ Future<void> setPatternReminderSlots(List<TimeOfDay> slots) async {
       .map((t) => {'h': t.hour, 'm': t.minute})
       .toList();
   await prefs.setString(kPatternReminderSlotsKey, jsonEncode(payload));
+  PatternSlotsRemoteSync.notifySlotsChanged();
 }
 
 Future<void> clearPatternReminderSlots() async {
   final prefs = await SharedPreferences.getInstance();
   await prefs.remove(kPatternReminderSlotsKey);
+  PatternSlotsRemoteSync.notifySlotsChanged();
 }
 
 Future<List<TimeOfDay>> getPatternReminderSlots() async {
   final prefs = await SharedPreferences.getInstance();
-  final logs = decodeSmokingPatternLogs(
-    prefs.getString(kSmokingPatternLogsPrefsKey),
-  );
-  if (countRecentPatternLogs(logs) < kPatternMinLogs) {
-    final raw = prefs.getString(kPatternReminderSlotsKey);
-    if (raw != null && raw.isNotEmpty) {
-      await clearPatternReminderSlots();
-      await cancelPatternReminders();
-    }
-    return const <TimeOfDay>[];
-  }
-
   final raw = prefs.getString(kPatternReminderSlotsKey);
   if (raw == null || raw.isEmpty) return const <TimeOfDay>[];
   try {

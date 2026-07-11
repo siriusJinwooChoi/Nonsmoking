@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../api/remote_assets.dart';
 import '../theme/app_theme.dart';
-import '../ad_manager.dart';
+import '../interstitial_ad_policy.dart';
 import '../supabase/supabase_sync_service.dart';
 import '../api/game_sync_helper.dart';
 import '../api/game_stats_prefs.dart';
@@ -294,9 +294,12 @@ class _CigaretteCatchGameScreenState extends State<CigaretteCatchGameScreen>
     setState(() => _gameOver = true);
     if (_isGameOverAdShowing) return;
     _isGameOverAdShowing = true;
-    AdManager.showAd(onAdClosed: () {
-      _isGameOverAdShowing = false;
-    });
+    unawaited(InterstitialAdPolicy.showIfEligible(
+      placement: InterstitialPlacement.catchGameOver,
+      onComplete: () {
+        _isGameOverAdShowing = false;
+      },
+    ));
   }
 
   @override

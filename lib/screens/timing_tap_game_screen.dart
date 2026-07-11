@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../supabase/supabase_sync_service.dart';
+import '../interstitial_ad_policy.dart';
 import '../theme/app_theme.dart';
 import '../widgets/banner_ad_bar.dart';
 import '../api/game_sync_helper.dart';
@@ -29,6 +30,7 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
   int _bestScore = 0;
   String _lastResult = '중앙에 가까울수록 높은 점수!';
   bool _isFailDialogShowing = false;
+  bool _isSessionAdShowing = false;
 
   @override
   void initState() {
@@ -238,10 +240,25 @@ class _TimingTapGameScreenState extends State<TimingTapGameScreen> {
     if (!mounted) return;
     await syncGameStatsToApiIfAvailable();
     if (!mounted) return;
-    _resetGame();
-    setState(() {
-      _lastResult = '실패 후 재시작! 다시 도전해보세요.';
-    });
+    if (_isSessionAdShowing) {
+      _resetGame();
+      setState(() {
+        _lastResult = '실패 후 재시작! 다시 도전해보세요.';
+      });
+      return;
+    }
+    _isSessionAdShowing = true;
+    await InterstitialAdPolicy.showIfEligible(
+      placement: InterstitialPlacement.timingGameOver,
+      onComplete: () {
+        _isSessionAdShowing = false;
+        if (!mounted) return;
+        _resetGame();
+        setState(() {
+          _lastResult = '실패 후 재시작! 다시 도전해보세요.';
+        });
+      },
+    );
   }
 
   void _onTap() {
