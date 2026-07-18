@@ -50,6 +50,10 @@ abstract final class QuitRoomsApiService {
     required String name,
     required String roomType, // "solo" | "group"
     required String nickname,
+    String goalType = 'none',
+    int? goalDays,
+    String? goalEndDate,
+    String? pledgeText,
   }) async {
     if (!ApiConfig.isConfigured) return null;
     final headers = await _headers();
@@ -63,6 +67,11 @@ abstract final class QuitRoomsApiService {
               'name': name,
               'room_type': roomType,
               'nickname': nickname,
+              if (goalType != 'none') 'goal_type': goalType,
+              if (goalDays != null) 'goal_days': goalDays,
+              if (goalEndDate != null) 'goal_end_date': goalEndDate,
+              if (pledgeText != null && pledgeText.isNotEmpty)
+                'pledge_text': pledgeText,
             }),
           )
           .timeout(const Duration(seconds: 10));
@@ -218,6 +227,138 @@ abstract final class QuitRoomsApiService {
     }
   }
 
+  /// 방 stats
+  static Future<Map<String, dynamic>?> fetchStats(String roomId) async {
+    if (!ApiConfig.isConfigured) return null;
+    final headers = await _headers();
+    if (headers.isEmpty) return null;
+    try {
+      final res = await http
+          .get(_uri('/v1/quit-rooms/$roomId/stats'), headers: headers)
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode != 200) return null;
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      return body['stats'] as Map<String, dynamic>?;
+    } catch (e) {
+      if (kDebugMode) debugPrint('QuitRoomsApi fetchStats error: $e');
+      return null;
+    }
+  }
+
+  /// 방 목표·서약 수정
+  static Future<Map<String, dynamic>?> updateRoom(
+    String roomId, {
+    String? goalType,
+    int? goalDays,
+    String? goalEndDate,
+    String? pledgeText,
+  }) async {
+    if (!ApiConfig.isConfigured) return null;
+    final headers = await _headers();
+    if (headers.isEmpty) return null;
+    try {
+      final res = await http
+          .patch(
+            _uri('/v1/quit-rooms/$roomId'),
+            headers: headers,
+            body: jsonEncode({
+              if (goalType != null) 'goal_type': goalType,
+              if (goalDays != null) 'goal_days': goalDays,
+              if (goalEndDate != null) 'goal_end_date': goalEndDate,
+              if (pledgeText != null) 'pledge_text': pledgeText,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (res.statusCode != 200) return null;
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      return body['room'] as Map<String, dynamic>?;
+    } catch (e) {
+      if (kDebugMode) debugPrint('QuitRoomsApi updateRoom error: $e');
+      return null;
+    }
+  }
+
+  /// 담타 시작
+  static Future<({Map<String, dynamic>? session, Map<String, dynamic>? post, String? error})>
+      startDamta(String roomId) async {
+    if (!ApiConfig.isConfigured) {
+      return (session: null, post: null, error: '서버 연결 설정이 필요해요.');
+    }
+    final headers = await _headers();
+    if (headers.isEmpty) {
+      return (session: null, post: null, error: '로그인이 필요해요.');
+    }
+    try {
+      final res = await http
+          .post(_uri('/v1/quit-rooms/$roomId/damta/start'), headers: headers)
+          .timeout(const Duration(seconds: 15));
+      if (res.statusCode != 201) {
+        return (session: null, post: null, error: _parseErrorMessage(res.body));
+      }
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      return (
+        session: body['session'] as Map<String, dynamic>?,
+        post: body['post'] as Map<String, dynamic>?,
+        error: null,
+      );
+    } catch (e) {
+      if (kDebugMode) debugPrint('QuitRoomsApi startDamta error: $e');
+      return (session: null, post: null, error: '네트워크 오류가 발생했어요.');
+    }
+  }
+
+  static Future<bool> joinDamta(String roomId, String sessionId) async {
+    if (!ApiConfig.isConfigured) return false;
+    final headers = await _headers();
+    if (headers.isEmpty) return false;
+    try {
+      final res = await http
+          .post(
+            _uri('/v1/quit-rooms/$roomId/damta/join'),
+            headers: headers,
+            body: jsonEncode({'session_id': sessionId}),
+          )
+          .timeout(const Duration(seconds: 10));
+      return res.statusCode == 200;
+    } catch (e) {
+      if (kDebugMode) debugPrint('QuitRoomsApi joinDamta error: $e');
+      return false;
+    }
+  }
+
+  static Future<Map<String, dynamic>?> completeDamta(
+    String roomId,
+    String sessionId,
+  ) async {
+    if (!ApiConfig.isConfigured) return null;
+    final headers = await _headers();
+    if (headers.isEmpty) return null;
+    try {
+      final res = await http
+          .post(
+            _uri('/v1/quit-rooms/$roomId/damta/complete'),
+            headers: headers,
+            body: jsonEncode({'session_id': sessionId}),
+          )
+          .timeout(const Duration(seconds: 15));
+      if (res.statusCode != 201) return null;
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      return body['post'] as Map<String, dynamic>?;
+    } catch (e) {
+      if (kDebugMode) debugPrint('QuitRoomsApi completeDamta error: $e');
+      return null;
+    }
+  }
+
+  static String _parseErrorMessage(String body) {
+    try {
+      final json = jsonDecode(body) as Map<String, dynamic>;
+      return json['message'] as String? ?? '요청에 실패했어요.';
+    } catch (_) {
+      return '요청에 실패했어요.';
+    }
+  }
+
   /// 게시물 작성 (imageBase64 → 서버에서 Storage 업로드 후 image_url 저장)
   static Future<QuitRoomCreatePostResult> createPost(
     String roomId, {
@@ -225,7 +366,8 @@ abstract final class QuitRoomsApiService {
     String? imageUrl,
     String? imageBase64,
     String imageContentType = 'image/jpeg',
-    String postType = 'text', // "text" | "share" | "sos"
+    String postType = 'text',
+    Map<String, dynamic>? metadata,
   }) async {
     if (!ApiConfig.isConfigured) {
       return QuitRoomCreatePostResult.failure();
@@ -246,6 +388,7 @@ abstract final class QuitRoomsApiService {
               if (hasImage) 'image_base64': imageBase64,
               if (hasImage) 'image_content_type': imageContentType,
               'post_type': postType,
+              if (metadata != null && metadata.isNotEmpty) 'metadata': metadata,
             }),
           )
           .timeout(Duration(seconds: hasImage ? 60 : 15));
@@ -258,6 +401,11 @@ abstract final class QuitRoomsApiService {
             final body = jsonDecode(res.body) as Map<String, dynamic>;
             final code = body['error'] as String? ?? '';
             final message = body['message'] as String?;
+            if (code == 'CERTIFY_LIMIT') {
+              return QuitRoomCreatePostResult.failure(
+                errorMessage: message ?? '하루 3회까지 인증할 수 있어요.',
+              );
+            }
             final userMessage = _uploadLimitMessage(code, message);
             return QuitRoomCreatePostResult.failure(
               errorMessage: userMessage,
@@ -270,6 +418,13 @@ abstract final class QuitRoomsApiService {
             );
           }
         }
+        try {
+          final body = jsonDecode(res.body) as Map<String, dynamic>;
+          final message = body['message'] as String?;
+          if (message != null && message.isNotEmpty) {
+            return QuitRoomCreatePostResult.failure(errorMessage: message);
+          }
+        } catch (_) {}
         return QuitRoomCreatePostResult.failure();
       }
       final body = jsonDecode(res.body) as Map<String, dynamic>;

@@ -4,12 +4,19 @@ import 'dart:convert';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../api/quit_rooms_api_service.dart';
 
 import '../api/api_config.dart';
 import '../auth/bff_auth_service.dart';
 import '../firebase_options.dart';
+import '../app_nav.dart';
 import '../notifications/daily_reminder_worker.dart' as dw;
+import '../screens/quit_room/quit_room_detail_screen.dart';
+import '../screens/quit_room/quit_room_models.dart';
 
 /// 백그라운드에서 수신 시 Firebase 초기화 (FCM)
 @pragma('vm:entry-point')
@@ -51,7 +58,63 @@ class FcmDailyReminderService {
     });
 
     BffAuthService.instance.addListener(_authListener);
+    FirebaseMessaging.onMessageOpenedApp.listen(_onQuitRoomPushOpened);
+    FirebaseMessaging.instance.getInitialMessage().then((m) {
+      if (m != null) _onQuitRoomPushOpened(m);
+    });
+    FirebaseMessaging.onMessage.listen(_onForegroundMessage);
     await _syncWithAuth();
+  }
+
+  void _onForegroundMessage(RemoteMessage message) {
+    final type = message.data['type'] as String?;
+    if (type != 'quit_room_sos') return;
+    final roomId = message.data['room_id'] as String?;
+    if (roomId == null) return;
+    final ctx = appRootNavigatorKey.currentContext;
+    if (ctx == null) return;
+    ScaffoldMessenger.of(ctx).showSnackBar(
+      SnackBar(
+        content: Text(message.notification?.body ?? '금연방 SOS가 도착했어요'),
+        action: SnackBarAction(
+          label: '보기',
+          onPressed: () => _openQuitRoomById(roomId),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _onQuitRoomPushOpened(RemoteMessage message) async {
+    final type = message.data['type'] as String?;
+    if (type != 'quit_room_sos') return;
+    final roomId = message.data['room_id'] as String?;
+    if (roomId == null) return;
+    await _openQuitRoomById(roomId);
+  }
+
+  Future<void> _openQuitRoomById(String roomId) async {
+    final nav = appRootNavigatorKey.currentState;
+    if (nav == null) return;
+
+    final serverRooms = await QuitRoomsApiService.fetchRooms();
+    Map<String, dynamic>? match;
+    if (serverRooms != null) {
+      match = serverRooms.where((r) => r['id'] == roomId).firstOrNull;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final cached = decodeRooms(prefs.getString(kQuitRoomsKey));
+    QuitRoom? room;
+    if (match != null) {
+      room = QuitRoom.fromServerJson(match);
+    } else {
+      room = cached.where((r) => r.id == roomId).firstOrNull;
+    }
+    if (room == null) return;
+
+    await nav.push(
+      MaterialPageRoute(builder: (_) => QuitRoomDetailScreen(room: room!)),
+    );
   }
 
   void _authListener() {

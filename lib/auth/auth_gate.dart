@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../supabase/supabase_config.dart';
 import '../supabase/supabase_sync_service.dart';
 import '../widgets/update_prompt_gate.dart';
+import '../app_nav.dart';
 import 'bff_auth_service.dart';
 import 'login_screen.dart';
 import '../screens/nickname_setup_screen.dart';
@@ -165,6 +166,10 @@ class _AuthGateState extends State<AuthGate> {
                       );
                     }
                     return FutureBuilder<bool>(
+                      key: ValueKey(
+                        'needs_intro_${BffAuthService.instance.userId}_'
+                        '${appRootGeneration.value}_$_sessionGateVersion',
+                      ),
                       future: _needsIntroFuture(),
                       builder: (context, introSnap) {
                         if (!introSnap.hasData) {

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:lottie/lottie.dart';
 import 'dart:async';
@@ -364,291 +365,419 @@ class _SmokingScreenState extends State<SmokingScreen>
     if (_cigLoadFailed || !ApiConfig.isConfigured) {
       return Icon(
         Icons.smoking_rooms_rounded,
-        size: 120,
-        color: Colors.grey.shade600,
+        size: 100,
+        color: Colors.white.withValues(alpha: 0.55),
       );
     }
     return const Center(
       child: SizedBox(
         width: 36,
         height: 36,
-        child: CircularProgressIndicator(strokeWidth: 2.5),
+        child: CircularProgressIndicator(
+          strokeWidth: 2.5,
+          color: Colors.white70,
+        ),
       ),
     );
   }
 
+  String get _remainingLabel {
+    final m = (_remainingSeconds ~/ 60).toInt();
+    final s = (_remainingSeconds % 60).toInt().toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
   @override
   Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    final presence = _damtaPresenceCount;
+
     return Scaffold(
-      backgroundColor: AppTheme.surface,
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: const Text('담타시간(커뮤니티)'),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        foregroundColor: Colors.white,
+        title: const Text('담타시간'),
+        centerTitle: true,
       ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: EdgeInsets.fromLTRB(
-            20,
-            24,
-            20,
-            16 + MediaQuery.of(context).viewInsets.bottom,
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xFF0A3D38),
+              Color(0xFF0F524A),
+              Color(0xFF1A3A36),
+              Color(0xFF152826),
+            ],
+            stops: [0.0, 0.35, 0.7, 1.0],
           ),
-          child: Column(
-            children: [
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-                decoration: BoxDecoration(
-                  color: AppTheme.surfaceCard,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: AppTheme.cardShadow,
-                ),
-                child: Column(
-                  children: [
-                    Text(
-                      _isBurning
-                          ? '담배가 자동으로 타는 중이에요'
-                          : '버튼을 누르면 담타가 시작됩니다.',
-                      textAlign: TextAlign.center,
-                      style: AppTheme.bodyLarge.copyWith(
-                        color:
-                            _isBurning ? AppTheme.error : AppTheme.textPrimary,
-                        fontWeight: FontWeight.w600,
-                      ),
+        ),
+        child: SafeArea(
+          child: SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(20, 8, 20, 20 + bottomInset),
+            child: Column(
+              children: [
+                // 함께하는 사람들
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 400),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.12),
                     ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '담배 이미지를 누르면 더 빨리 탑니다.',
-                      textAlign: TextAlign.center,
-                      style: AppTheme.bodyMedium,
-                    ),
-                    const SizedBox(height: 10),
-                    LinearProgressIndicator(
-                      value: _burnProgress,
-                      minHeight: 8,
-                      borderRadius: BorderRadius.circular(99),
-                      backgroundColor:
-                          AppTheme.textMuted.withValues(alpha: 0.25),
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        _isFastBurn ? AppTheme.warning : AppTheme.primary,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _isBurning
-                          ? '남은 시간 ${(_remainingSeconds ~/ 60).toInt()}분 ${(_remainingSeconds % 60).toInt().toString().padLeft(2, '0')}초'
-                          : '남은 시간 5분 00초',
-                      style: AppTheme.labelMedium
-                          .copyWith(color: AppTheme.textSecondary),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                height: 300,
-                width: double.infinity,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    AnimatedOpacity(
-                      opacity: _isBurning ? 1 : 0,
-                      duration: const Duration(milliseconds: 600),
-                      child: Container(
-                        height: 240,
-                        width: 240,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
                         decoration: BoxDecoration(
+                          color: presence != null && presence > 0
+                              ? const Color(0xFF6EE7B7)
+                              : Colors.white38,
                           shape: BoxShape.circle,
-                          color: Colors.grey.withValues(alpha: 0.15),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.grey.withValues(alpha: 0.3),
-                              blurRadius: 40,
-                              spreadRadius: 10,
-                            ),
-                          ],
+                          boxShadow: presence != null && presence > 0
+                              ? [
+                                  BoxShadow(
+                                    color: const Color(0xFF6EE7B7)
+                                        .withValues(alpha: 0.55),
+                                    blurRadius: 8,
+                                  ),
+                                ]
+                              : null,
                         ),
                       ),
-                    ),
-                    Listener(
-                      behavior: HitTestBehavior.opaque,
-                      onPointerDown: (_) {
-                        if (!_isBurning) return;
-                        _setFastBurnPressed(true);
-                        _startHoldHaptic();
-                      },
-                      onPointerUp: (_) {
-                        _setFastBurnPressed(false);
-                        _stopHoldHaptic();
-                      },
-                      onPointerCancel: (_) {
-                        _setFastBurnPressed(false);
-                        _stopHoldHaptic();
-                      },
-                      child: _buildCigaretteVisual(),
-                    ),
-                    IgnorePointer(
-                      ignoring: true,
-                      child: Stack(
-                        children: [
-                          for (final chat
-                              in [..._serverDamtaChats, ..._localDamtaChats])
-                            Align(
-                              alignment: _chatAnchors[chat.anchorIndex],
-                              child: AnimatedOpacity(
-                                duration: const Duration(milliseconds: 1200),
-                                curve: Curves.easeOut,
-                                opacity: chat.visible ? 1 : 0,
-                                child: Transform.translate(
-                                  offset: Offset(
-                                    chat.dx,
-                                    chat.visible ? chat.dy : chat.dy - 12,
-                                  ),
-                                  child: Text(
-                                    chat.renderedText,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      color: chat.color,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w800,
-                                      shadows: const [
-                                        Shadow(
-                                          color: Colors.white,
-                                          blurRadius: 6,
-                                        ),
-                                      ],
+                      const SizedBox(width: 8),
+                      Text(
+                        ApiConfig.isConfigured
+                            ? '지금 ${presence ?? '—'}명이 함께 있어요'
+                            : '조용한 밤, 혼자도 괜찮아요',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 28),
+
+                // 시적인 헤드라인
+                Text(
+                  _isBurning ? '천천히, 태워내세요' : '욕구가 올 때\n여기서 잠깐 쉬어가요',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.notoSansKr(
+                    fontSize: _isBurning ? 22 : 24,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                    height: 1.35,
+                    letterSpacing: -0.4,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _isBurning
+                      ? '담배 이미지를 길게 누르면 더 빨리 탑니다'
+                      : '한 대를 태우는 동안, 한마디를 남겨 보세요',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.55),
+                    fontSize: 13,
+                    height: 1.4,
+                  ),
+                ),
+                const SizedBox(height: 28),
+
+                // 담배 + 플로팅 채팅
+                SizedBox(
+                  height: 280,
+                  width: double.infinity,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      // 은은한 원형 글로우
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 800),
+                        height: _isBurning ? 220 : 180,
+                        width: _isBurning ? 220 : 180,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: RadialGradient(
+                            colors: [
+                              (_isBurning
+                                      ? (_isFastBurn
+                                          ? const Color(0xFFE8A54B)
+                                          : const Color(0xFF2DD4A8))
+                                      : const Color(0xFF1A6B5E))
+                                  .withValues(alpha: _isBurning ? 0.28 : 0.14),
+                              Colors.transparent,
+                            ],
+                          ),
+                        ),
+                      ),
+                      Listener(
+                        behavior: HitTestBehavior.opaque,
+                        onPointerDown: (_) {
+                          if (!_isBurning) return;
+                          _setFastBurnPressed(true);
+                          _startHoldHaptic();
+                        },
+                        onPointerUp: (_) {
+                          _setFastBurnPressed(false);
+                          _stopHoldHaptic();
+                        },
+                        onPointerCancel: (_) {
+                          _setFastBurnPressed(false);
+                          _stopHoldHaptic();
+                        },
+                        child: SizedBox(
+                          height: 160,
+                          width: double.infinity,
+                          child: _buildCigaretteVisual(),
+                        ),
+                      ),
+                      IgnorePointer(
+                        ignoring: true,
+                        child: Stack(
+                          children: [
+                            for (final chat
+                                in [..._serverDamtaChats, ..._localDamtaChats])
+                              Align(
+                                alignment: _chatAnchors[chat.anchorIndex],
+                                child: AnimatedOpacity(
+                                  duration: const Duration(milliseconds: 900),
+                                  curve: Curves.easeOut,
+                                  opacity: chat.visible ? 1 : 0,
+                                  child: Transform.translate(
+                                    offset: Offset(
+                                      chat.dx,
+                                      chat.visible ? chat.dy : chat.dy - 14,
                                     ),
+                                    child: _FloatingWhisper(chat: chat),
                                   ),
                                 ),
                               ),
-                            ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                    if (_isBurning)
-                      Positioned(
-                        bottom: 8,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: (_isFastBurn
-                                    ? AppTheme.warning
-                                    : AppTheme.primary)
-                                .withValues(alpha: 0.14),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(
-                            _isFastBurn ? '2배속 ON (누르는 중)' : '누르고 있으면 2배속',
-                            style: AppTheme.labelMedium.copyWith(
-                              color: _isFastBurn
-                                  ? AppTheme.warning
-                                  : AppTheme.primary,
-                              fontWeight: FontWeight.w700,
+                      if (_isBurning)
+                        Positioned(
+                          bottom: 0,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.35),
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.1),
+                              ),
+                            ),
+                            child: Text(
+                              _isFastBurn ? '2배속으로 타는 중' : '길게 누르면 2배속',
+                              style: TextStyle(
+                                color: _isFastBurn
+                                    ? const Color(0xFFFBBF24)
+                                    : Colors.white70,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                  ],
-                ),
-              ),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _isBurning ? null : _onTapStart,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor:
-                        _isBurning ? AppTheme.textMuted : AppTheme.error,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 18),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                  ),
-                  child: Text(
-                    _isBurning ? '담타 진행 중...' : '담타 시작',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                    ),
+                    ],
                   ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              Container(
-                decoration: BoxDecoration(
-                  color: AppTheme.surfaceCard,
-                  borderRadius: BorderRadius.circular(14),
-                  boxShadow: AppTheme.cardShadowSubtle,
-                ),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _chatController,
-                        focusNode: _chatFocusNode,
-                        textInputAction: TextInputAction.send,
-                        onSubmitted: (_) => _sendEphemeralChat(),
-                        decoration: const InputDecoration(
-                          hintText: '한마디 입력...',
-                          border: InputBorder.none,
-                          isDense: true,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: _sendEphemeralChat,
-                      icon: const Icon(Icons.send_rounded),
-                      tooltip: '보내기',
-                      color: AppTheme.primary,
-                    ),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.only(top: 12, bottom: 6),
-                child: Text(
-                  ApiConfig.isConfigured
-                      ? '지금 동시 접속자수 : ${_damtaPresenceCount ?? '-'}명'
-                      : '지금 동시 접속자수 : -명',
-                  textAlign: TextAlign.center,
-                  style: AppTheme.labelMedium.copyWith(
-                    color: AppTheme.textMuted,
-                    fontSize: 12,
-                  ),
-                ),
-              ),
-              if (ApiConfig.isConfigured)
+                const SizedBox(height: 8),
+
+                // 진행률
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(
-                    '매주 일요일 밤 24:00에 올린 글은 초기화됩니다.',
-                    textAlign: TextAlign.center,
-                    style: AppTheme.labelMedium.copyWith(
-                      color: AppTheme.textMuted,
-                      fontSize: 11,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Column(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(99),
+                        child: LinearProgressIndicator(
+                          value: _isBurning ? _burnProgress : 0,
+                          minHeight: 6,
+                          backgroundColor:
+                              Colors.white.withValues(alpha: 0.12),
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            _isFastBurn
+                                ? const Color(0xFFFBBF24)
+                                : const Color(0xFF5EEAD4),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        _isBurning ? '남은 시간  $_remainingLabel' : '한 대 · 5:00',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.65),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 28),
+
+                // 시작 버튼
+                SizedBox(
+                  width: double.infinity,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 300),
+                    child: FilledButton(
+                      onPressed: _isBurning ? null : _onTapStart,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _isBurning
+                            ? Colors.white12
+                            : const Color(0xFFE8A54B),
+                        foregroundColor: _isBurning
+                            ? Colors.white54
+                            : const Color(0xFF1A2421),
+                        disabledBackgroundColor: Colors.white12,
+                        disabledForegroundColor: Colors.white54,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      child: Text(
+                        _isBurning ? '담타 진행 중…' : '담타 시작하기',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 16),
-                child: Text(
+                const SizedBox(height: 16),
+
+                // 한마디 입력
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.2),
+                    ),
+                  ),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _chatController,
+                          focusNode: _chatFocusNode,
+                          textInputAction: TextInputAction.send,
+                          onSubmitted: (_) => _sendEphemeralChat(),
+                          style: const TextStyle(
+                            color: Color(0xFF1A2421),
+                            fontSize: 15,
+                          ),
+                          cursorColor: AppTheme.primary,
+                          decoration: InputDecoration(
+                            hintText: '한마디를 남겨요…',
+                            hintStyle: TextStyle(
+                              color: AppTheme.textMuted.withValues(alpha: 0.8),
+                            ),
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 12,
+                            ),
+                            isDense: true,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: _sendEphemeralChat,
+                        icon: const Icon(Icons.send_rounded),
+                        tooltip: '보내기',
+                        color: AppTheme.primary,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+
+                // 풋터 카피
+                Text(
                   _isBurning
-                      ? '한순간의 선택이 회복 시간을 늘립니다.'
-                      : '중요한 건 완벽이 아니라 다시 복귀하는 습관입니다.',
+                      ? '한순간의 선택이 회복을 늦춥니다.\n여기는 그 순간을 넘기는 자리예요.'
+                      : '완벽하지 않아도 괜찮아요.\n다시 돌아오는 습관이 곧 금연입니다.',
                   textAlign: TextAlign.center,
-                  style: AppTheme.bodyMedium.copyWith(
-                    color: _isBurning ? AppTheme.error : AppTheme.textSecondary,
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.4),
+                    fontSize: 12,
+                    height: 1.55,
                     fontStyle: FontStyle.italic,
                   ),
                 ),
-              ),
-            ],
+                if (ApiConfig.isConfigured) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    '올린 한마디는 매주 일요일 밤 24:00에 비워져요',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.28),
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FloatingWhisper extends StatelessWidget {
+  const _FloatingWhisper({required this.chat});
+
+  final _EphemeralChat chat;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 140),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: chat.color.withValues(alpha: 0.45),
+        ),
+      ),
+      child: Text(
+        chat.renderedText,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: chat.color,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          height: 1.3,
         ),
       ),
     );

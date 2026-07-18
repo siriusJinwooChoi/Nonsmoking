@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'theme/app_theme.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
@@ -17,6 +18,9 @@ import 'notifications/daily_reminder_worker.dart';
 import 'screens/intro/intro_a_welcome.dart';
 import 'screens/intro/intro_b_habits.dart';
 import 'screens/intro/intro_c_start.dart';
+import 'screens/intro/intro_d_quit_mode.dart';
+import 'screens/intro/intro_e_summary.dart';
+import 'data/quit_mode_prefs.dart';
 
 // 주요 앱 화면
 import 'screens/main_screen.dart';
@@ -224,11 +228,28 @@ class _QuitSmokingAppState extends State<QuitSmokingApp>
       navigatorKey: appRootNavigatorKey,
       debugShowCheckedModeBanner: false,
       title: '금연뱅크',
+      locale: const Locale('ko', 'KR'),
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('ko', 'KR'),
+      ],
       theme: AppTheme.lightTheme,
       navigatorObservers: [
         FirebaseAnalyticsObserver(analytics: FirebaseAnalytics.instance),
       ],
-      home: const AppRootScreen(),
+      home: ValueListenableBuilder<int>(
+        valueListenable: appRootGeneration,
+        builder: (_, gen, __) {
+          return KeyedSubtree(
+            key: ValueKey('app_home_$gen'),
+            child: const AppRootScreen(),
+          );
+        },
+      ),
     );
   }
 }
@@ -254,6 +275,7 @@ class AppRootScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return AuthGate(
       child: FutureBuilder<bool>(
+        key: ValueKey('configured_${appRootGeneration.value}'),
         future: _checkIfConfigured(),
         builder: (context, snapshot) {
           if (!snapshot.hasData) {
@@ -308,6 +330,7 @@ class _IntroFlowWrapperState extends State<IntroFlowWrapper> {
   int _pricePerPack = 4500;
   int _durationDays = 365;
   DateTime? _startTime;
+  QuitMode _quitMode = QuitMode.continuous;
 
   void _next() => setState(() => _step++);
   void _back() => setState(() { if (_step > 0) _step--; });
@@ -316,17 +339,21 @@ class _IntroFlowWrapperState extends State<IntroFlowWrapper> {
     final prefs = await SharedPreferences.getInstance();
 
     await prefs.setInt('startTime', startTime.millisecondsSinceEpoch);
+    await prefs.setInt(QuitModePrefs.originStartTimeKey, startTime.millisecondsSinceEpoch);
+    await QuitModePrefs.setMode(_quitMode, prefs: prefs);
     await prefs.setInt('dailyCigarettes', _dailyCigarettes);
     await prefs.setInt('cigarettesPerPack', _cigarettesPerPack);
     await prefs.setInt('pricePerPack', _pricePerPack);
     await prefs.setInt('duration_days', _durationDays);
     await prefs.setBool('isConfigured', true);
+    await SupabaseSyncService.clearForceOnboardingFlag();
 
     await AppAnalytics.log('onboarding_complete', params: {
       'daily_cigs': _dailyCigarettes,
       'cigs_per_pack': _cigarettesPerPack,
       'price_per_pack': _pricePerPack,
       'duration_days': _durationDays,
+      'quit_mode': _quitMode.storageValue,
     });
 
     final reason = _quitReason.trim();
@@ -351,15 +378,16 @@ class _IntroFlowWrapperState extends State<IntroFlowWrapper> {
       await prefs.setBool(kReasonNotificationEnabledKey, true);
     }
 
-    unawaited(SupabaseSyncService.pushLocalToRemoteIfEligible());
+    // 서버에 완료 상태를 먼저 반영한 뒤 루트로 이동해 intro 재진입을 막는다.
+    try {
+      await SupabaseSyncService.pushLocalToRemoteIfEligible();
+    } catch (_) {}
 
     if (!mounted) return;
 
     Navigator.pushAndRemoveUntil(
       context,
       MaterialPageRoute(
-        // 루트(AuthGate)를 유지한 채 재진입해야 로그아웃/계정삭제 시
-        // 로그인 화면으로 정확히 복귀하고, 재로그인 게이트도 일관된다.
         builder: (_) => const AppRootScreen(),
       ),
       (_) => false,
@@ -403,8 +431,30 @@ class _IntroFlowWrapperState extends State<IntroFlowWrapper> {
         );
 
       case 2:
+        return IntroESummary(
+          dailyCigarettes: _dailyCigarettes,
+          cigarettesPerPack: _cigarettesPerPack,
+          pricePerPack: _pricePerPack,
+          durationDays: _durationDays,
+          onBack: _back,
+          onNext: _next,
+        );
+
+      case 3:
+        return IntroDQuitMode(
+          initialMode: _quitMode,
+          onBack: _back,
+          onNext: (mode) {
+            setState(() => _quitMode = mode);
+            _next();
+          },
+        );
+
+      case 4:
         return IntroCStart(
           initialStartTime: _startTime,
+          quitMode: _quitMode,
+          onChangeQuitMode: _back,
           onStartTimeDraft: (t) => _startTime = t,
           onBack: _back,
           onNext: (startTime) {

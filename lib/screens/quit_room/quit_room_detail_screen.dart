@@ -7,8 +7,12 @@ import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../api/quit_rooms_api_service.dart';
+import '../../data/quit_mode_prefs.dart';
+import '../../services/quit_room_stats_loader.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/app_card.dart';
 import 'quit_room_models.dart';
+import 'quit_room_post_cards.dart';
 
 class QuitRoomDetailScreen extends StatefulWidget {
   const QuitRoomDetailScreen({super.key, required this.room});
@@ -20,11 +24,23 @@ class QuitRoomDetailScreen extends StatefulWidget {
 
 class _QuitRoomDetailScreenState extends State<QuitRoomDetailScreen> {
   late QuitRoom _room;
+  RoomStats? _stats;
   final _textCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
   bool _posting = false;
   bool _loadingPosts = false;
   bool _postsLoadFailed = false;
+  bool _bannerCollapsed = false;
+  bool _inputPanelExpanded = false;
+  bool _inputFocused = false;
+  final _collapsedDates = <String>{};
+
+  static const _cheerChips = [
+    ('👏', 'cheer', '응원해요!'),
+    ('💪', 'cheer', '힘내요, 같이 버텨요!'),
+    ('🌱', 'cheer', '잘하고 있어요 🌱'),
+    ('🆘', 'sos', '지금 힘들어요…'),
+  ];
 
   @override
   void initState() {
@@ -33,9 +49,16 @@ class _QuitRoomDetailScreenState extends State<QuitRoomDetailScreen> {
     unawaited(_hydratePostsFromCacheIfNeeded());
     _refreshRoomMeta();
     _loadPosts();
+    _loadStats();
   }
 
-  /// 목록 새로고침 등으로 posts 가 비어 들어온 경우 로컬 캐시에서 먼저 복원
+  @override
+  void dispose() {
+    _textCtrl.dispose();
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
   Future<void> _hydratePostsFromCacheIfNeeded() async {
     if (_room.posts.isNotEmpty) return;
     final prefs = await SharedPreferences.getInstance();
@@ -45,30 +68,36 @@ class _QuitRoomDetailScreenState extends State<QuitRoomDetailScreen> {
     setState(() => _room = _room.copyWith(posts: match.posts));
   }
 
-  /// 서버에서 방 정보(초대 코드, 멤버 수, 관리자 여부 등) 최신화
   Future<void> _refreshRoomMeta() async {
     final serverRooms = await QuitRoomsApiService.fetchRooms();
     if (serverRooms == null || !mounted) return;
-
     final match = serverRooms
         .map((j) => QuitRoom.fromServerJson(j))
         .where((r) => r.id == _room.id)
         .firstOrNull;
     if (match == null) return;
-
     final updated = _room.copyWith(
       inviteCode: match.inviteCode,
       memberCount: match.memberCount,
       isAdmin: match.isAdmin,
+      goalType: match.goalType,
+      goalDays: match.goalDays,
+      goalEndDate: match.goalEndDate,
+      pledgeText: match.pledgeText,
     );
     await _saveRoom(updated);
     if (mounted) setState(() => _room = updated);
   }
 
-  /// 서버에서 최신 게시물 목록을 가져와 로컬 상태에 반영 (실패 시 최대 3회 재시도)
+  Future<void> _loadStats() async {
+    if (_room.id.startsWith('local_')) return;
+    final raw = await QuitRoomsApiService.fetchStats(_room.id);
+    if (raw == null || !mounted) return;
+    setState(() => _stats = RoomStats.fromServerJson(raw));
+  }
+
   Future<void> _loadPosts({bool userInitiated = false}) async {
     if (_loadingPosts && !userInitiated) return;
-
     final hadCachedPosts = _room.posts.isNotEmpty;
     if (!hadCachedPosts) {
       setState(() {
@@ -79,12 +108,11 @@ class _QuitRoomDetailScreenState extends State<QuitRoomDetailScreen> {
       setState(() => _postsLoadFailed = false);
     }
 
-    const maxAttempts = 3;
     List<Map<String, dynamic>>? serverPosts;
-    for (var attempt = 0; attempt < maxAttempts; attempt++) {
-      serverPosts = await QuitRoomsApiService.fetchPosts(_room.id);
+    for (var attempt = 0; attempt < 3; attempt++) {
+      serverPosts = await QuitRoomsApiService.fetchPosts(_room.id, limit: 100);
       if (serverPosts != null) break;
-      if (attempt < maxAttempts - 1) {
+      if (attempt < 2) {
         await Future<void>.delayed(Duration(milliseconds: 400 * (attempt + 1)));
       }
     }
@@ -96,11 +124,6 @@ class _QuitRoomDetailScreenState extends State<QuitRoomDetailScreen> {
         _loadingPosts = false;
         _postsLoadFailed = true;
       });
-      if (userInitiated && !hadCachedPosts) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('글 목록을 불러오지 못했어요. 다시 시도해 주세요.')),
-        );
-      }
       return;
     }
 
@@ -113,52 +136,27 @@ class _QuitRoomDetailScreenState extends State<QuitRoomDetailScreen> {
       _loadingPosts = false;
       _postsLoadFailed = false;
     });
+    unawaited(_loadStats());
   }
 
-  @override
-  void dispose() {
-    _textCtrl.dispose();
-    _scrollCtrl.dispose();
-    super.dispose();
+  Future<void> _saveRoom(QuitRoom updated) async {
+    final prefs = await SharedPreferences.getInstance();
+    final rooms = decodeRooms(prefs.getString(kQuitRoomsKey));
+    final idx = rooms.indexWhere((r) => r.id == updated.id);
+    if (idx >= 0) rooms[idx] = updated;
+    await prefs.setString(kQuitRoomsKey, encodeRooms(rooms));
   }
 
-  Future<void> _post({String? imageBase64}) async {
-    final text = _textCtrl.text.trim();
-    if (text.isEmpty && imageBase64 == null) return;
-    setState(() => _posting = true);
-
-    // 서버에 게시물 생성 (이미지는 base64 → Storage 업로드 → image_url 저장)
-    final result = await QuitRoomsApiService.createPost(
-      _room.id,
-      content: text.isNotEmpty ? text : null,
-      imageBase64: imageBase64,
-      postType: 'text',
-    );
-
-    if (!result.isSuccess) {
-      if (!mounted) return;
-      setState(() => _posting = false);
-      final message = result.errorMessage ??
-          (result.isUploadLimit
-              ? '사진 업로드 한도를 초과했어요.'
-              : '서버 연결에 실패했어요. 다시 시도해 주세요.');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
-      );
-      return;
-    }
-
-    final post = RoomPost.fromServerJson(result.post!);
-
+  Future<void> _appendPost(RoomPost post) async {
     final updated = _room.copyWith(posts: [..._room.posts, post]);
     await _saveRoom(updated);
-
     if (!mounted) return;
-    _textCtrl.clear();
-    setState(() {
-      _room = updated;
-      _posting = false;
-    });
+    setState(() => _room = updated);
+    _scrollToBottom();
+    unawaited(_loadStats());
+  }
+
+  void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollCtrl.hasClients) {
         _scrollCtrl.animateTo(
@@ -170,12 +168,189 @@ class _QuitRoomDetailScreenState extends State<QuitRoomDetailScreen> {
     });
   }
 
-  Future<void> _saveRoom(QuitRoom updated) async {
-    final prefs = await SharedPreferences.getInstance();
-    final rooms = decodeRooms(prefs.getString(kQuitRoomsKey));
-    final idx = rooms.indexWhere((r) => r.id == updated.id);
-    if (idx >= 0) rooms[idx] = updated;
-    await prefs.setString(kQuitRoomsKey, encodeRooms(rooms));
+  Future<void> _createPost({
+    required String postType,
+    String? content,
+    Map<String, dynamic>? metadata,
+    String? imageBase64,
+  }) async {
+    if (_room.id.startsWith('local_')) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('오프라인 방은 서버 동기화 후 이용할 수 있어요.')),
+      );
+      return;
+    }
+
+    setState(() => _posting = true);
+    final result = await QuitRoomsApiService.createPost(
+      _room.id,
+      content: content,
+      postType: postType,
+      metadata: metadata,
+      imageBase64: imageBase64,
+    );
+
+    if (!mounted) return;
+    setState(() => _posting = false);
+
+    if (!result.isSuccess) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.errorMessage ?? '전송에 실패했어요. 다시 시도해 주세요.'),
+        ),
+      );
+      return;
+    }
+
+    await _appendPost(RoomPost.fromServerJson(result.post!));
+  }
+
+  Future<void> _showCertifyPreview() async {
+    if (_stats?.myCertifyLimitReached == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('오늘 인증은 ${_stats!.myCertifyLimit}회까지 가능해요.'),
+        ),
+      );
+      return;
+    }
+
+    final stats = await QuitRoomStatsLoader.loadFromPrefs();
+    final msgCtrl = TextEditingController();
+    final bottom = MediaQuery.of(context).padding.bottom;
+    var message = '';
+
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.fromLTRB(24, 16, 24, 24 + bottom),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppTheme.border,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text('오늘의 금연 인증', style: Theme.of(ctx).textTheme.titleMedium),
+            const SizedBox(height: 14),
+            AppCard(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  Text('${stats.quitDays}', style: AppTheme.heroNumber.copyWith(fontSize: 36)),
+                  Text(
+                    '일째${stats.quitMode == QuitMode.restart ? ' · 이번 시도' : ''}',
+                    style: Theme.of(ctx).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '${formatSavedMoney(stats.savedMoney)} · ${formatSkippedCigs(stats.skippedCigs)}',
+                    style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                          color: AppTheme.textSecondary,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: msgCtrl,
+              maxLength: 80,
+              decoration: const InputDecoration(
+                hintText: '한 줄 메시지 (선택)',
+                counterText: '',
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('취소'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: FilledButton(
+                    onPressed: () {
+                      message = msgCtrl.text.trim();
+                      Navigator.pop(ctx, true);
+                    },
+                    child: const Text('방에 올리기'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+
+    msgCtrl.dispose();
+    if (ok != true || !mounted) return;
+
+    await _createPost(
+      postType: 'certify',
+      content: message.isEmpty ? null : message,
+      metadata: stats.toMetadata(),
+    );
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('인증했어요 🌱')),
+      );
+    }
+  }
+
+  Future<void> _sendCheerChip(String emoji, String postType, String text) async {
+    if (postType == 'sos') {
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('SOS 알리기'),
+          content: const Text('방에 SOS를 알릴까요?\n파트너에게 응원을 요청해요.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('취소')),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('알리기')),
+          ],
+        ),
+      );
+      if (confirm != true) return;
+      final stats = await QuitRoomStatsLoader.loadFromPrefs();
+      await _createPost(
+        postType: 'sos',
+        content: text,
+        metadata: stats.toMetadata(),
+      );
+      return;
+    }
+
+    await _createPost(
+      postType: 'cheer',
+      content: text,
+      metadata: {'cheer_kind': emoji},
+    );
+  }
+
+  Future<void> _postText({String? imageBase64}) async {
+    final text = _textCtrl.text.trim();
+    if (text.isEmpty && imageBase64 == null) return;
+    await _createPost(content: text.isNotEmpty ? text : null, postType: 'text', imageBase64: imageBase64);
+    _textCtrl.clear();
   }
 
   Future<void> _addReaction(int postIdx, String emoji) async {
@@ -186,25 +361,24 @@ class _QuitRoomDetailScreenState extends State<QuitRoomDetailScreen> {
     } else {
       reactions.add(emoji);
     }
-    final updatedPost = post.copyWith(reactions: reactions);
     final updatedPosts = [..._room.posts];
-    updatedPosts[postIdx] = updatedPost;
+    updatedPosts[postIdx] = post.copyWith(reactions: reactions);
     final updated = _room.copyWith(posts: updatedPosts);
     await _saveRoom(updated);
     if (!mounted) return;
     setState(() => _room = updated);
-
-    // 서버에 반응 동기화 (로컬 이미 반영됨 — 백그라운드)
     QuitRoomsApiService.addReaction(_room.id, post.id, emoji);
+  }
+
+  Future<void> _cheerSosPost(int postIdx) async {
+    await _sendCheerChip('💪', 'cheer', '힘내요, 같이 버텨요!');
+    await _addReaction(postIdx, '💪');
   }
 
   void _showReactionPicker(int postIdx) {
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: Colors.transparent,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
       builder: (ctx) {
         final bottom = MediaQuery.of(ctx).padding.bottom;
         return Container(
@@ -216,41 +390,17 @@ class _QuitRoomDetailScreenState extends State<QuitRoomDetailScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                width: 36, height: 4,
-                decoration: BoxDecoration(
-                  color: AppTheme.border,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                '반응 남기기',
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                  color: AppTheme.textPrimary,
-                ),
-              ),
+              const Text('반응 남기기', style: TextStyle(fontWeight: FontWeight.w700)),
               const SizedBox(height: 16),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: ['❤️', '💪', '👏', '🔥', '😢'].map((emoji) {
+                children: ['❤️', '💪', '👏', '🔥', '🌱'].map((emoji) {
                   return GestureDetector(
                     onTap: () {
                       Navigator.pop(ctx);
                       _addReaction(postIdx, emoji);
                     },
-                    child: Container(
-                      width: 56, height: 56,
-                      decoration: BoxDecoration(
-                        color: AppTheme.surface,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Center(
-                        child: Text(emoji, style: const TextStyle(fontSize: 28)),
-                      ),
-                    ),
+                    child: Text(emoji, style: const TextStyle(fontSize: 28)),
                   );
                 }).toList(),
               ),
@@ -262,164 +412,361 @@ class _QuitRoomDetailScreenState extends State<QuitRoomDetailScreen> {
   }
 
   Future<void> _showMemberList() async {
-    // 서버에서 멤버 목록 가져오기 (바텀시트 열기 전에 로딩)
-    List<RoomMember>? serverMembers;
-
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
-      builder: (ctx) {
-        return _MemberListSheet(
-          room: _room,
-          fetchMembers: () async {
-            if (serverMembers != null) return serverMembers!;
-            final raw = await QuitRoomsApiService.fetchMembers(_room.id);
-            if (raw != null) {
-              serverMembers = raw.map(RoomMember.fromServerJson).toList();
-            } else {
-              // 폴백: 로컬 캐시 멤버 또는 내 닉네임만
-              final cached = _room.members.isNotEmpty
-                  ? _room.members
-                  : [_room.myName];
-              serverMembers = cached
-                  .map((n) => RoomMember(nickname: n, isAdmin: n == _room.myName && _room.isAdmin))
-                  .toList();
-            }
-            return serverMembers!;
-          },
-          onDeleteRoom: _room.isAdmin ? _deleteRoomAsAdmin : null,
-        );
-      },
+      builder: (ctx) => _MemberListSheet(
+        room: _room,
+        fetchMembers: () async {
+          final raw = await QuitRoomsApiService.fetchMembers(_room.id);
+          if (raw != null) return raw.map(RoomMember.fromServerJson).toList();
+          return [RoomMember(nickname: _room.myName, isAdmin: _room.isAdmin)];
+        },
+        onDeleteRoom: _room.isAdmin ? _deleteRoomAsAdmin : null,
+      ),
     );
   }
 
-  /// 관리자가 방을 삭제 (서버에서 방 전체 삭제 → 모든 멤버 강제 퇴장)
   Future<void> _deleteRoomAsAdmin() async {
-    if (!mounted) return;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFEDED),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(Icons.delete_forever_rounded, color: AppTheme.error, size: 22),
-            ),
-            const SizedBox(width: 12),
-            const Expanded(child: Text('방 삭제', style: TextStyle(fontWeight: FontWeight.w700))),
-          ],
-        ),
-        content: Text(
-          '「${_room.name}」 방을 삭제하면\n모든 멤버가 강제로 퇴장되고\n모든 기록이 영구 삭제됩니다.\n\n정말 삭제하시겠어요?',
-          style: const TextStyle(fontSize: 14, height: 1.6),
-        ),
+        title: const Text('방 삭제'),
+        content: Text('「${_room.name}」 방을 삭제할까요?\n모든 기록이 사라져요.'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('취소'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('취소')),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: AppTheme.error),
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('방 삭제'),
+            child: const Text('삭제'),
           ),
         ],
       ),
     );
     if (confirm != true || !mounted) return;
-
     final ok = await QuitRoomsApiService.deleteRoom(_room.id);
     if (!mounted) return;
-
     if (ok) {
-      // 로컬 캐시에서 방 제거
       final prefs = await SharedPreferences.getInstance();
       final rooms = decodeRooms(prefs.getString(kQuitRoomsKey));
-      final updated = rooms.where((r) => r.id != _room.id).toList();
-      await prefs.setString(kQuitRoomsKey, encodeRooms(updated));
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('방이 삭제되었어요.')),
-        );
-        Navigator.pop(context); // 목록 화면으로 돌아가기
-      }
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('방 삭제에 실패했어요. 다시 시도해 주세요.')),
+      await prefs.setString(
+        kQuitRoomsKey,
+        encodeRooms(rooms.where((r) => r.id != _room.id).toList()),
       );
+      Navigator.pop(context);
     }
   }
 
   Future<void> _pickImage(ImageSource source) async {
-    try {
-      final picker = ImagePicker();
-      final picked = await picker.pickImage(
-        source: source,
-        maxWidth: 1080,
-        maxHeight: 1080,
-        imageQuality: 80,
-      );
-      if (picked == null) return;
-      final bytes = await picked.readAsBytes();
-      await _post(imageBase64: base64Encode(bytes));
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('사진을 불러올 수 없어요: $e')),
-      );
-    }
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(
+      source: source,
+      maxWidth: 1080,
+      maxHeight: 1080,
+      imageQuality: 80,
+    );
+    if (picked == null) return;
+    final bytes = await picked.readAsBytes();
+    await _postText(imageBase64: base64Encode(bytes));
   }
 
-  void _showPhotoOption() {
+  @override
+  Widget build(BuildContext context) {
+    final stats = _stats;
+    final certifiedToday = (stats?.myCertifyToday ?? 0) > 0;
+    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final compactChrome = keyboardOpen || _inputFocused;
+
+    return Scaffold(
+      resizeToAvoidBottomInset: true,
+      appBar: AppBar(
+        title: Text(_room.name),
+        toolbarHeight: compactChrome ? 48 : null,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.group_rounded),
+            onPressed: _showMemberList,
+          ),
+          if (_room.type == 'group')
+            IconButton(
+              icon: const Icon(Icons.vpn_key_rounded),
+              onPressed: _showInviteCode,
+            ),
+        ],
+      ),
+      body: Column(
+        children: [
+          if (!compactChrome) ...[
+            _StatusBanner(
+              room: _room,
+              stats: stats,
+              collapsed: _bannerCollapsed,
+              onToggle: () => setState(() => _bannerCollapsed = !_bannerCollapsed),
+            ),
+            if (_room.pledgeText != null && _room.pledgeText!.isNotEmpty)
+              _PledgePin(text: _room.pledgeText!),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '오늘의 기록',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+              ),
+            ),
+          ] else
+            _CompactStatusStrip(
+              room: _room,
+              stats: stats,
+              certifiedToday: certifiedToday,
+            ),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: () async {
+                await _loadPosts(userInitiated: true);
+                await _loadStats();
+              },
+              child: _buildFeed(
+                certifiedToday: certifiedToday,
+              ),
+            ),
+          ),
+          _RoomInputBar(
+            controller: _textCtrl,
+            posting: _posting,
+            panelExpanded: _inputPanelExpanded,
+            certifiedToday: certifiedToday,
+            certifyLimitReached: stats?.myCertifyLimitReached ?? false,
+            onTogglePanel: () =>
+                setState(() => _inputPanelExpanded = !_inputPanelExpanded),
+            onFocusChanged: (focused) {
+              setState(() {
+                _inputFocused = focused;
+                if (focused) _inputPanelExpanded = false;
+              });
+            },
+            onCertify: _showCertifyPreview,
+            onCheer: _sendCheerChip,
+            onSend: () => _postText(),
+            onPhoto: () => _showPhotoOption(),
+            cheerChips: _cheerChips,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFeed({required bool certifiedToday}) {
+    final posts = _room.posts;
+
+    if (_loadingPosts && posts.isEmpty) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: const [
+          SizedBox(height: 80),
+          Center(child: CircularProgressIndicator()),
+        ],
+      );
+    }
+
+    if (posts.isEmpty) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(32),
+        children: [
+          const Icon(Icons.eco_rounded, size: 48, color: AppTheme.primary),
+          const SizedBox(height: 12),
+          Text(
+            '아직 기록이 없어요',
+            style: Theme.of(context).textTheme.titleMedium,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '「오늘 인증하기」로 첫 금연 인증을 남겨 보세요.\n일수·절약이 자동으로 붙어요.',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: AppTheme.textSecondary,
+                ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          FilledButton.icon(
+            onPressed: _showCertifyPreview,
+            icon: const Icon(Icons.eco_rounded, size: 18),
+            label: const Text('오늘 인증'),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(0, 40),
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+            ),
+          ),
+        ],
+      );
+    }
+
+    final sections = _groupPostsByDate(posts);
+    final items = <Widget>[];
+
+    if (_postsLoadFailed) {
+      items.add(
+        ListTile(
+          leading: const Icon(Icons.cloud_off_rounded),
+          title: const Text('최신 글을 불러오지 못했어요'),
+          trailing: IconButton(
+            icon: const Icon(Icons.refresh_rounded),
+            onPressed: () => _loadPosts(userInitiated: true),
+          ),
+        ),
+      );
+    }
+
+    for (final section in sections) {
+      final dateKey = section.dateKey;
+      final collapsed = _collapsedDates.contains(dateKey);
+      items.add(
+        QuitRoomDateHeader(
+          date: section.date,
+          certifySummary: section.certifySummary,
+          collapsed: collapsed,
+          onTap: () {
+            setState(() {
+              if (collapsed) {
+                _collapsedDates.remove(dateKey);
+              } else {
+                _collapsedDates.add(dateKey);
+              }
+            });
+          },
+        ),
+      );
+      if (!collapsed) {
+        for (final entry in section.entries) {
+          final post = entry.post;
+          final postIdx = entry.index;
+          items.add(
+            QuitRoomPostTile(
+              post: post,
+              isMe: post.authorName == _room.myName,
+              onReact: () => _showReactionPicker(postIdx),
+              onCheerSos: post.postType == 'sos'
+                  ? () => _cheerSosPost(postIdx)
+                  : null,
+            ),
+          );
+          items.add(const SizedBox(height: 8));
+        }
+      }
+    }
+
+    return ListView(
+      controller: _scrollCtrl,
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+      children: items,
+    );
+  }
+
+  List<_DateSection> _groupPostsByDate(List<RoomPost> posts) {
+    final map = <String, _DateSection>{};
+    for (var i = 0; i < posts.length; i++) {
+      final post = posts[i];
+      final local = post.createdAt.toLocal();
+      final key = '${local.year}-${local.month}-${local.day}';
+      map.putIfAbsent(
+        key,
+        () => _DateSection(
+          dateKey: key,
+          date: DateTime(local.year, local.month, local.day),
+          entries: [],
+        ),
+      );
+      map[key]!.entries.add(_IndexedPost(index: i, post: post));
+    }
+
+    final sections = map.values.toList()
+      ..sort((a, b) => a.date.compareTo(b.date));
+
+    for (final s in sections) {
+      if (_room.type == 'group') {
+        final authors = s.entries
+            .where((e) =>
+                e.post.postType == 'certify' || e.post.postType == 'share')
+            .map((e) => e.post.authorName)
+            .toSet();
+        s.certifySummary = '인증 ${authors.length}/${_room.memberCount}명';
+      }
+    }
+    return sections;
+  }
+
+  void _showInviteCode() {
+    final code = _room.inviteCode;
+    if (code == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('초대 코드를 불러오는 중이에요.')),
+      );
+      _refreshRoomMeta();
+      return;
+    }
     showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) {
-        final bottom = MediaQuery.of(context).padding.bottom;
+        final bottom = MediaQuery.of(ctx).padding.bottom;
         return Padding(
-          padding: EdgeInsets.fromLTRB(24, 16, 24, 20 + bottom),
+          padding: EdgeInsets.fromLTRB(24, 16, 24, 24 + bottom),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Center(
-                child: Container(
-                  width: 36, height: 4,
-                  decoration: BoxDecoration(color: AppTheme.border, borderRadius: BorderRadius.circular(2)),
+              Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppTheme.border,
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
-              const SizedBox(height: 16),
-              Text('사진 추가', style: Theme.of(ctx).textTheme.titleMedium),
+              const SizedBox(height: 20),
+              Text('초대 코드', style: Theme.of(ctx).textTheme.titleMedium),
               const SizedBox(height: 12),
-              ListTile(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                tileColor: AppTheme.primarySurface,
-                leading: const Icon(Icons.camera_alt_rounded, color: AppTheme.primary),
-                title: const Text('카메라로 찍기', style: TextStyle(fontWeight: FontWeight.w600)),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _pickImage(ImageSource.camera);
-                },
+              Text(
+                code,
+                style: AppTheme.heroNumber.copyWith(
+                  fontSize: 32,
+                  letterSpacing: 6,
+                ),
               ),
               const SizedBox(height: 8),
-              ListTile(
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                tileColor: AppTheme.surface,
-                leading: const Icon(Icons.photo_library_rounded, color: AppTheme.primary),
-                title: const Text('갤러리에서 선택', style: TextStyle(fontWeight: FontWeight.w600)),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _pickImage(ImageSource.gallery);
-                },
+              Text(
+                '이 코드를 공유하면 친구가 방에 참여할 수 있어요.',
+                style: Theme.of(ctx).textTheme.bodyMedium?.copyWith(
+                      color: AppTheme.textSecondary,
+                    ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: code));
+                    Navigator.pop(ctx);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('초대 코드를 복사했어요')),
+                    );
+                  },
+                  icon: const Icon(Icons.copy_rounded),
+                  label: const Text('코드 복사'),
+                ),
               ),
             ],
           ),
@@ -428,475 +775,189 @@ class _QuitRoomDetailScreenState extends State<QuitRoomDetailScreen> {
     );
   }
 
-  void _showInviteCode() {
-    final code = _room.inviteCode;
-    if (code == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('초대 코드를 불러오는 중이에요. 잠시 후 다시 시도해 주세요.')),
-      );
-      _refreshRoomMeta();
-      return;
-    }
+  void _showPhotoOption() {
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => Container(
-        decoration: const BoxDecoration(
-          color: AppTheme.surfaceCard,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        padding: EdgeInsets.fromLTRB(
-          24,
-          16,
-          24,
-          MediaQuery.of(ctx).padding.bottom + 24,
-        ),
+      builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: AppTheme.textMuted,
-                borderRadius: BorderRadius.circular(2),
-              ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt_rounded),
+              title: const Text('카메라'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickImage(ImageSource.camera);
+              },
             ),
-            const SizedBox(height: 20),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: const Color(0xFFEDE9FE),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: const Icon(
-                Icons.vpn_key_rounded,
-                color: Color(0xFF7C3AED),
-                size: 28,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text('초대 코드', style: AppTheme.titleMedium),
-            const SizedBox(height: 12),
-            SelectableText(
-              code,
-              style: const TextStyle(
-                fontSize: 32,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 6,
-                color: AppTheme.primary,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              '이 코드를 공유하면 친구가 방에 참여할 수 있어요.',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: AppTheme.textSecondary,
-                  ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: () {
-                  Clipboard.setData(ClipboardData(text: code));
-                  Navigator.pop(ctx);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('초대 코드를 클립보드에 복사했어요')),
-                  );
-                },
-                icon: const Icon(Icons.copy_rounded),
-                label: const Text('코드 복사'),
-              ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_rounded),
+              title: const Text('갤러리'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickImage(ImageSource.gallery);
+              },
             ),
           ],
         ),
       ),
     );
   }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(_room.name),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.group_rounded),
-            tooltip: '멤버',
-            onPressed: _showMemberList,
-          ),
-          if (_room.type == 'group')
-            IconButton(
-              icon: const Icon(Icons.vpn_key_rounded),
-              tooltip: '초대 코드 보기',
-              onPressed: _showInviteCode,
-            ),
-        ],
-      ),
-      body: Column(
-        children: [
-          // 상단 방 정보
-          Container(
-            color: AppTheme.primary,
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 14),
-            child: Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        _room.type == 'solo' ? Icons.person_rounded : Icons.groups_rounded,
-                        color: Colors.white,
-                        size: 14,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        _room.type == 'solo' ? '솔로' : '그룹 ${_room.memberCount}명',
-                        style: const TextStyle(color: Colors.white, fontSize: 12),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  '개설일 ${_fmtDate(_room.createdAt)}',
-                  style: const TextStyle(color: Colors.white60, fontSize: 12),
-                ),
-              ],
-            ),
-          ),
-
-          // 피드
-          Expanded(
-            child: RefreshIndicator(
-              onRefresh: () => _loadPosts(userInitiated: true),
-              child: _buildFeed(),
-            ),
-          ),
-
-          // 입력창
-          _PostInput(
-            controller: _textCtrl,
-            posting: _posting,
-            onSend: () => _post(),
-            onPhotoTap: _showPhotoOption,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFeed() {
-    final posts = _room.posts;
-
-    if (_loadingPosts && posts.isEmpty) {
-      return ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        children: const [
-          SizedBox(height: 120),
-          Center(child: CircularProgressIndicator()),
-          SizedBox(height: 16),
-          Center(
-            child: Text(
-              '글 목록을 불러오는 중…',
-              style: TextStyle(color: AppTheme.textSecondary),
-            ),
-          ),
-        ],
-      );
-    }
-
-    if (posts.isEmpty) {
-      return ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(24, 48, 24, 24),
-        children: [
-          if (_postsLoadFailed) ...[
-            Icon(Icons.cloud_off_rounded, size: 48, color: AppTheme.textMuted.withValues(alpha: 0.7)),
-            const SizedBox(height: 12),
-            Text(
-              '글 목록을 불러오지 못했어요.',
-              style: Theme.of(context).textTheme.titleMedium,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '아래로 당겨 새로고침하거나 다시 시도해 주세요.',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: AppTheme.textSecondary),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 16),
-            Center(
-              child: OutlinedButton.icon(
-                onPressed: () => _loadPosts(userInitiated: true),
-                icon: const Icon(Icons.refresh_rounded, size: 18),
-                label: const Text('다시 시도'),
-              ),
-            ),
-            const SizedBox(height: 32),
-          ] else ...[
-            const Icon(Icons.chat_bubble_outline_rounded, size: 48, color: AppTheme.border),
-            const SizedBox(height: 12),
-            Text('첫 기록을 남겨 보세요!', style: Theme.of(context).textTheme.bodyLarge, textAlign: TextAlign.center),
-          ],
-        ],
-      );
-    }
-
-    return ListView.separated(
-      controller: _scrollCtrl,
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-      itemCount: posts.length + (_postsLoadFailed ? 1 : 0),
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
-      itemBuilder: (ctx, i) {
-        if (_postsLoadFailed && i == 0) {
-          return Material(
-            color: const Color(0xFFFFF7ED),
-            borderRadius: BorderRadius.circular(12),
-            child: ListTile(
-              leading: const Icon(Icons.cloud_off_rounded, color: Color(0xFFC47A12)),
-              title: const Text('최신 글을 불러오지 못했어요', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-              subtitle: const Text('아래로 당기거나 탭해서 다시 시도', style: TextStyle(fontSize: 12)),
-              trailing: IconButton(
-                icon: const Icon(Icons.refresh_rounded),
-                onPressed: () => _loadPosts(userInitiated: true),
-              ),
-              onTap: () => _loadPosts(userInitiated: true),
-            ),
-          );
-        }
-        final postIdx = _postsLoadFailed ? i - 1 : i;
-        final post = posts[postIdx];
-        return _PostCard(
-          post: post,
-          isMe: post.authorName == _room.myName,
-          onReact: () => _showReactionPicker(postIdx),
-        );
-      },
-    );
-  }
-
-  String _fmtDate(DateTime dt) {
-    final local = dt.toLocal();
-    return '${local.year}.${local.month.toString().padLeft(2, '0')}.${local.day.toString().padLeft(2, '0')}';
-  }
 }
 
-class _PostCard extends StatelessWidget {
-  const _PostCard({required this.post, required this.isMe, required this.onReact});
+class _DateSection {
+  _DateSection({
+    required this.dateKey,
+    required this.date,
+    required this.entries,
+    this.certifySummary,
+  });
+
+  final String dateKey;
+  final DateTime date;
+  final List<_IndexedPost> entries;
+  String? certifySummary;
+}
+
+class _IndexedPost {
+  _IndexedPost({required this.index, required this.post});
+  final int index;
   final RoomPost post;
-  final bool isMe;
-  final VoidCallback onReact;
+}
+
+class _StatusBanner extends StatelessWidget {
+  const _StatusBanner({
+    required this.room,
+    required this.stats,
+    required this.collapsed,
+    required this.onToggle,
+  });
+
+  final QuitRoom room;
+  final RoomStats? stats;
+  final bool collapsed;
+  final VoidCallback onToggle;
 
   @override
   Widget build(BuildContext context) {
-    final img = post.imageBase64;
-    Uint8List? imageBytes;
-    if (img != null && img.isNotEmpty) {
-      try {
-        imageBytes = base64Decode(img);
-      } catch (_) {}
-    }
-    final imageUrl = post.imageUrl;
-    final hasNetworkImage =
-        imageUrl != null && imageUrl.isNotEmpty && imageBytes == null;
-    final imageExpired = imageBytes == null &&
-        !hasNetworkImage &&
-        post.content.contains('사진을 공유했어요');
-
-    return Align(
-      alignment: post.isSosAlert ? Alignment.center : (isMe ? Alignment.centerRight : Alignment.centerLeft),
-      child: post.isSosAlert
-          ? _SosAlertChip(post: post)
-          : ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-              child: Column(
-                crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                children: [
-                  if (!isMe)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 4, bottom: 2),
+    final challengeStats = stats;
+    return Material(
+      color: AppTheme.primary,
+      child: InkWell(
+        onTap: onToggle,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+          child: collapsed
+              ? Row(
+                  children: [
+                    Icon(
+                      room.type == 'solo' ? Icons.person_rounded : Icons.groups_rounded,
+                      color: Colors.white70,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
                       child: Text(
-                        post.authorName,
-                        style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                              color: AppTheme.textSecondary,
-                            ),
+                        room.type == 'solo'
+                            ? '오늘 인증 ${stats?.myCertifyToday ?? 0}회'
+                            : '오늘 ${stats?.todayCertifyCount ?? 0}/${stats?.memberCount ?? room.memberCount}명 인증',
+                        style: const TextStyle(color: Colors.white, fontSize: 13),
                       ),
                     ),
-                  GestureDetector(
-                    onLongPress: onReact,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: isMe ? AppTheme.primary : AppTheme.surfaceCard,
-                        borderRadius: BorderRadius.only(
-                          topLeft: const Radius.circular(16),
-                          topRight: const Radius.circular(16),
-                          bottomLeft: Radius.circular(isMe ? 16 : 4),
-                          bottomRight: Radius.circular(isMe ? 4 : 16),
-                        ),
-                        boxShadow: AppTheme.cardShadowSubtle,
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (imageBytes != null)
-                            ClipRRect(
-                              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                              child: Image.memory(
-                                imageBytes,
-                                width: double.infinity,
-                                height: 180,
-                                fit: BoxFit.cover,
-                              ),
-                            )
-                          else if (hasNetworkImage)
-                            ClipRRect(
-                              borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-                              child: Image.network(
-                                imageUrl!,
-                                width: double.infinity,
-                                height: 180,
-                                fit: BoxFit.cover,
-                                loadingBuilder: (context, child, progress) {
-                                  if (progress == null) return child;
-                                  return Container(
-                                    width: double.infinity,
-                                    height: 180,
-                                    color: AppTheme.surface,
-                                    child: const Center(
-                                      child: CircularProgressIndicator(strokeWidth: 2),
-                                    ),
-                                  );
-                                },
-                                errorBuilder: (_, __, ___) => _ExpiredImagePlaceholder(
-                                  isMe: isMe,
-                                ),
-                              ),
-                            )
-                          else if (imageExpired)
-                            const _ExpiredImagePlaceholder(),
-                          if (post.content.isNotEmpty)
-                            Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                              child: Text(
-                                post.content,
-                                style: TextStyle(
-                                  color: isMe ? Colors.white : AppTheme.textPrimary,
-                                  fontSize: 14,
-                                  height: 1.4,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.only(top: 3, left: 4, right: 4),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
+                    Icon(Icons.expand_more_rounded, color: Colors.white.withValues(alpha: 0.7)),
+                  ],
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
                       children: [
-                        if (post.reactions.isNotEmpty) ...[
-                          Text(post.reactions.join(' '), style: const TextStyle(fontSize: 13)),
-                          const SizedBox(width: 4),
-                        ],
                         Text(
-                          _fmtTime(post.createdAt),
-                          style: Theme.of(context).textTheme.labelSmall,
+                          room.type == 'solo' ? '🌿 나의 금연' : '👥 우리 방',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14,
+                          ),
                         ),
+                        const Spacer(),
+                        Icon(Icons.expand_less_rounded, color: Colors.white.withValues(alpha: 0.7)),
                       ],
                     ),
-                  ),
-                ],
-              ),
-            ),
+                    const SizedBox(height: 6),
+                    if (room.type == 'solo') ...[
+                      Text(
+                        '오늘 인증 ${stats?.myCertifyToday ?? 0}/${stats?.myCertifyLimit ?? 3}회',
+                        style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 13),
+                      ),
+                    ] else ...[
+                      Text(
+                        '${room.memberCount}명 · 오늘 ${stats?.todayCertifyCount ?? 0}명 인증',
+                        style: TextStyle(color: Colors.white.withValues(alpha: 0.9), fontSize: 13),
+                      ),
+                      if ((stats?.longestQuitDays ?? 0) > 0)
+                        Text(
+                          '가장 긴 금연: ${stats?.longestNickname ?? ''} ${stats?.longestQuitDays}일',
+                          style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 12),
+                        ),
+                    ],
+                    if (room.hasChallenge &&
+                        challengeStats != null &&
+                        challengeStats.challengeTargetDays != null) ...[
+                      const SizedBox(height: 8),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          value: (challengeStats.challengePercent / 100)
+                              .clamp(0.0, 1.0),
+                          minHeight: 5,
+                          backgroundColor: Colors.white24,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '챌린지 ${challengeStats.challengeProgressDays}/${challengeStats.challengeTargetDays}일 (${challengeStats.challengePercent}%)',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.8),
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+        ),
+      ),
     );
-  }
-
-  String _fmtTime(DateTime dt) {
-    final local = dt.toLocal();
-    final now = DateTime.now();
-    if (local.year == now.year &&
-        local.month == now.month &&
-        local.day == now.day) {
-      final h = local.hour.toString().padLeft(2, '0');
-      final m = local.minute.toString().padLeft(2, '0');
-      return '$h:$m';
-    }
-    return '${local.month}/${local.day}';
   }
 }
 
-class _ExpiredImagePlaceholder extends StatelessWidget {
-  const _ExpiredImagePlaceholder({this.isMe = false});
-
-  final bool isMe;
+class _PledgePin extends StatelessWidget {
+  const _PledgePin({required this.text});
+  final String text;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      height: 180,
-      color: isMe ? Colors.white.withValues(alpha: 0.15) : AppTheme.surface,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      alignment: Alignment.center,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.photo_outlined,
-            color: isMe ? Colors.white70 : AppTheme.textMuted,
-            size: 32,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '보관 기간(90일)이 지나\n사진이 삭제되었어요',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: isMe ? Colors.white70 : AppTheme.textMuted,
-                  height: 1.4,
-                ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SosAlertChip extends StatelessWidget {
-  const _SosAlertChip({required this.post});
-  final RoomPost post;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFFFEF3C7),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFFBBF24).withValues(alpha: 0.5)),
+        color: AppTheme.primarySurface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border(left: BorderSide(color: AppTheme.primary, width: 3)),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('🆘', style: TextStyle(fontSize: 14)),
-          const SizedBox(width: 6),
-          Flexible(
+          const Text('📌', style: TextStyle(fontSize: 14)),
+          const SizedBox(width: 8),
+          Expanded(
             child: Text(
-              post.content,
-              style: const TextStyle(fontSize: 13, color: Color(0xFF92400E)),
-              textAlign: TextAlign.center,
+              text,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.primaryDark,
+                  ),
             ),
           ),
         ],
@@ -905,92 +966,352 @@ class _SosAlertChip extends StatelessWidget {
   }
 }
 
-class _PostInput extends StatelessWidget {
-  const _PostInput({
+class _CompactStatusStrip extends StatelessWidget {
+  const _CompactStatusStrip({
+    required this.room,
+    required this.stats,
+    required this.certifiedToday,
+  });
+
+  final QuitRoom room;
+  final RoomStats? stats;
+  final bool certifiedToday;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = room.type == 'solo'
+        ? (certifiedToday ? '오늘 인증 완료' : '오늘 인증 전')
+        : '오늘 ${stats?.todayCertifyCount ?? 0}/${stats?.memberCount ?? room.memberCount}명 인증';
+
+    return Material(
+      color: AppTheme.primary.withValues(alpha: 0.92),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        child: Text(
+          label,
+          style: const TextStyle(color: Colors.white, fontSize: 12),
+        ),
+      ),
+    );
+  }
+}
+
+class _RoomInputBar extends StatefulWidget {
+  const _RoomInputBar({
     required this.controller,
     required this.posting,
+    required this.panelExpanded,
+    required this.certifiedToday,
+    required this.certifyLimitReached,
+    required this.onTogglePanel,
+    required this.onFocusChanged,
+    required this.onCertify,
+    required this.onCheer,
     required this.onSend,
-    this.onPhotoTap,
+    required this.onPhoto,
+    required this.cheerChips,
   });
+
   final TextEditingController controller;
   final bool posting;
+  final bool panelExpanded;
+  final bool certifiedToday;
+  final bool certifyLimitReached;
+  final VoidCallback onTogglePanel;
+  final ValueChanged<bool> onFocusChanged;
+  final VoidCallback onCertify;
+  final Future<void> Function(String emoji, String type, String text) onCheer;
   final VoidCallback onSend;
-  final VoidCallback? onPhotoTap;
+  final VoidCallback onPhoto;
+  final List<(String, String, String)> cheerChips;
+
+  @override
+  State<_RoomInputBar> createState() => _RoomInputBarState();
+}
+
+class _RoomInputBarState extends State<_RoomInputBar> {
+  late FocusNode _focusNode;
+
+  @override
+  void initState() {
+    super.initState();
+    _focusNode = FocusNode();
+    _focusNode.addListener(_onFocusChange);
+    widget.controller.addListener(_onTextChange);
+  }
+
+  @override
+  void dispose() {
+    _focusNode.removeListener(_onFocusChange);
+    widget.controller.removeListener(_onTextChange);
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _onFocusChange() {
+    widget.onFocusChanged(_focusNode.hasFocus);
+  }
+
+  void _onTextChange() => setState(() {});
+
+  bool get _hasText => widget.controller.text.trim().isNotEmpty;
+
+  @override
+  Widget build(BuildContext context) {
+    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
+    final safeBottom = MediaQuery.paddingOf(context).bottom;
+    final bottomPad = keyboardOpen ? 6.0 : 6.0 + safeBottom;
+
+    return Material(
+      color: AppTheme.surfaceCard,
+      child: DecoratedBox(
+        decoration: const BoxDecoration(
+          border: Border(top: BorderSide(color: AppTheme.border)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (widget.panelExpanded) ...[
+              GestureDetector(
+                onVerticalDragUpdate: (d) {
+                  if (d.delta.dy > 4) widget.onTogglePanel();
+                },
+                behavior: HitTestBehavior.opaque,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 8, bottom: 4),
+                  child: Center(
+                    child: Container(
+                      width: 32,
+                      height: 3,
+                      decoration: BoxDecoration(
+                        color: AppTheme.border,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              _ExpandedTools(
+                certifiedToday: widget.certifiedToday,
+                certifyLimitReached: widget.certifyLimitReached,
+                posting: widget.posting,
+                onCertify: widget.onCertify,
+                onPhoto: widget.onPhoto,
+                onCheer: widget.onCheer,
+                cheerChips: widget.cheerChips,
+              ),
+              const Divider(height: 1, color: AppTheme.border),
+            ] else if (!keyboardOpen) ...[
+              GestureDetector(
+                onTap: widget.onTogglePanel,
+                onVerticalDragUpdate: (d) {
+                  if (d.delta.dy < -4) widget.onTogglePanel();
+                },
+                behavior: HitTestBehavior.opaque,
+                child: const SizedBox(
+                  height: 12,
+                  child: Center(
+                    child: _DragHandle(),
+                  ),
+                ),
+              ),
+            ],
+            Padding(
+              padding: EdgeInsets.fromLTRB(4, 2, 4, bottomPad),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    icon: Icon(
+                      widget.panelExpanded
+                          ? Icons.close_rounded
+                          : Icons.add_circle_outline_rounded,
+                      color: AppTheme.textSecondary,
+                    ),
+                    onPressed: widget.onTogglePanel,
+                    tooltip: widget.panelExpanded ? '닫기' : '인증·응원',
+                  ),
+                  Expanded(
+                    child: TextField(
+                      focusNode: _focusNode,
+                      controller: widget.controller,
+                      minLines: 1,
+                      maxLines: keyboardOpen ? 4 : 3,
+                      textInputAction: TextInputAction.newline,
+                      style: const TextStyle(fontSize: 15),
+                      decoration: InputDecoration(
+                        hintText: '메시지 입력',
+                        isDense: true,
+                        filled: true,
+                        fillColor: AppTheme.surface,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 10,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(22),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 2),
+                  IconButton(
+                    visualDensity: VisualDensity.compact,
+                    onPressed: widget.posting || !_hasText ? null : widget.onSend,
+                    icon: widget.posting
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(
+                            Icons.send_rounded,
+                            color: _hasText ? AppTheme.primary : AppTheme.textMuted,
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DragHandle extends StatelessWidget {
+  const _DragHandle();
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: const BoxDecoration(
-        color: AppTheme.surfaceCard,
-        border: Border(top: BorderSide(color: AppTheme.border)),
+      width: 32,
+      height: 3,
+      decoration: BoxDecoration(
+        color: AppTheme.border,
+        borderRadius: BorderRadius.circular(2),
       ),
-      padding: EdgeInsets.fromLTRB(
-        12, 8, 12,
-        MediaQuery.of(context).viewInsets.bottom + 8 + MediaQuery.of(context).padding.bottom,
-      ),
-      child: Row(
+    );
+  }
+}
+
+class _ExpandedTools extends StatelessWidget {
+  const _ExpandedTools({
+    required this.certifiedToday,
+    required this.certifyLimitReached,
+    required this.posting,
+    required this.onCertify,
+    required this.onPhoto,
+    required this.onCheer,
+    required this.cheerChips,
+  });
+
+  final bool certifiedToday;
+  final bool certifyLimitReached;
+  final bool posting;
+  final VoidCallback onCertify;
+  final VoidCallback onPhoto;
+  final Future<void> Function(String emoji, String type, String text) onCheer;
+  final List<(String, String, String)> cheerChips;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          IconButton(
-            icon: const Icon(Icons.add_photo_alternate_rounded),
-            color: AppTheme.textSecondary,
-            onPressed: onPhotoTap,
-            tooltip: '사진 추가',
-          ),
-          Expanded(
-            child: TextField(
-              controller: controller,
-              minLines: 1,
-              maxLines: 4,
-              style: const TextStyle(fontSize: 14),
-              decoration: InputDecoration(
-                hintText: '오늘의 금연 기록을 남겨요 ✍️',
-                filled: true,
-                fillColor: AppTheme.surface,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(20),
-                  borderSide: BorderSide.none,
-                ),
+          Row(
+            children: [
+              Expanded(
+                child: certifiedToday && !certifyLimitReached
+                    ? Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primarySurface,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: AppTheme.primary.withValues(alpha: 0.2),
+                          ),
+                        ),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.check_rounded,
+                                size: 16, color: AppTheme.primary),
+                            SizedBox(width: 6),
+                            Text(
+                              '오늘 인증 완료',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: AppTheme.primary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : certifyLimitReached
+                        ? Center(
+                            child: Text(
+                              '오늘 인증 3회 완료',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelMedium
+                                  ?.copyWith(color: AppTheme.textMuted),
+                            ),
+                          )
+                        : OutlinedButton.icon(
+                            onPressed: posting ? null : onCertify,
+                            icon: const Icon(Icons.eco_rounded, size: 18),
+                            label: const Text('오늘 인증하기'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppTheme.primary,
+                              side: const BorderSide(color: AppTheme.primary),
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                            ),
+                          ),
               ),
+              IconButton(
+                icon: const Icon(Icons.add_photo_alternate_outlined),
+                onPressed: posting ? null : onPhoto,
+                tooltip: '사진',
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: cheerChips.map((c) {
+                return Padding(
+                  padding: const EdgeInsets.only(right: 6),
+                  child: ActionChip(
+                    label: Text(
+                      '${c.$1} ${c.$3.split('!').first}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: posting ? null : () => onCheer(c.$1, c.$2, c.$3),
+                    backgroundColor: AppTheme.primarySurface,
+                    side: BorderSide(
+                      color: AppTheme.primary.withValues(alpha: 0.12),
+                    ),
+                  ),
+                );
+              }).toList(),
             ),
           ),
-          const SizedBox(width: 8),
-          _SendButton(posting: posting, onTap: onSend),
         ],
       ),
     );
   }
 }
-
-class _SendButton extends StatelessWidget {
-  const _SendButton({required this.posting, required this.onTap});
-  final bool posting;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: posting ? null : onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          color: posting ? AppTheme.border : AppTheme.primary,
-          shape: BoxShape.circle,
-        ),
-        child: posting
-            ? const Padding(
-                padding: EdgeInsets.all(10),
-                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-              )
-            : const Icon(Icons.send_rounded, color: Colors.white, size: 20),
-      ),
-    );
-  }
-}
-
-// ─── 멤버 목록 바텀시트 ──────────────────────────────────────────────
 
 class _MemberListSheet extends StatefulWidget {
   const _MemberListSheet({
@@ -1016,140 +1337,65 @@ class _MemberListSheetState extends State<_MemberListSheet> {
     _future = widget.fetchMembers();
   }
 
-  static const _avatarColors = [
-    AppTheme.primary,
-    Color(0xFF7C3AED),
-    Color(0xFFC47A12),
-    Color(0xFF0284C7),
-    Color(0xFF059669),
-  ];
-
   @override
   Widget build(BuildContext context) {
-    final bottomPad = MediaQuery.of(context).padding.bottom;
-    final room = widget.room;
-
+    final bottom = MediaQuery.of(context).padding.bottom;
     return Padding(
-      padding: EdgeInsets.fromLTRB(24, 20, 24, 24 + bottomPad),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Center(
-            child: Container(
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: AppTheme.border,
-                borderRadius: BorderRadius.circular(2),
+      padding: EdgeInsets.fromLTRB(24, 20, 24, 24 + bottom),
+      child: FutureBuilder<List<RoomMember>>(
+        future: _future,
+        builder: (ctx, snap) {
+          if (!snap.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          final members = snap.data!;
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '멤버 ${members.length}명',
+                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
               ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          FutureBuilder<List<RoomMember>>(
-            future: _future,
-            builder: (ctx, snap) {
-              if (!snap.hasData) {
-                return Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      '멤버 ${room.memberCount}명',
-                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 24),
-                    const Center(child: CircularProgressIndicator()),
-                    const SizedBox(height: 24),
-                  ],
-                );
-              }
-              final members = snap.data!;
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '멤버 ${members.length}명',
-                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+              const SizedBox(height: 12),
+              ...members.map((m) {
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: CircleAvatar(
+                    child: Text(m.nickname.isNotEmpty ? m.nickname[0] : '?'),
                   ),
-                  const SizedBox(height: 8),
-                  ...members.map((m) {
-                    final isMe = m.nickname == room.myName;
-                    final color = _avatarColors[m.nickname.hashCode.abs() % _avatarColors.length];
-                    return ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: CircleAvatar(
-                        radius: 20,
-                        backgroundColor: color.withValues(alpha: 0.15),
-                        child: Text(
-                          m.nickname.isNotEmpty ? m.nickname[0].toUpperCase() : '?',
-                          style: TextStyle(color: color, fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                      title: Row(
-                        children: [
-                          Text(m.nickname, style: const TextStyle(fontWeight: FontWeight.w600)),
-                          if (m.isAdmin) ...[
-                            const SizedBox(width: 6),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFFFF3CD),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: const Text(
-                                '👑 관리자',
-                                style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF92400E)),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                      trailing: isMe
-                          ? Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                              decoration: BoxDecoration(
-                                color: AppTheme.primarySurface,
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: const Text(
-                                '나',
-                                style: TextStyle(fontSize: 11, color: AppTheme.primary, fontWeight: FontWeight.w700),
-                              ),
-                            )
-                          : null,
-                    );
-                  }),
-                ],
-              );
-            },
-          ),
-          if (room.type == 'group') ...[
-            const Divider(),
-            if (room.inviteCode != null)
-              TextButton.icon(
-                onPressed: () {
-                  Clipboard.setData(ClipboardData(text: room.inviteCode!));
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('초대 코드를 복사했어요')),
-                  );
-                },
-                icon: const Icon(Icons.copy_rounded, size: 16),
-                label: Text('초대 코드 복사 (${room.inviteCode})'),
-              ),
-            if (widget.onDeleteRoom != null)
-              TextButton.icon(
-                style: TextButton.styleFrom(foregroundColor: AppTheme.error),
-                onPressed: () {
-                  Navigator.pop(context);
-                  widget.onDeleteRoom!();
-                },
-                icon: const Icon(Icons.delete_forever_rounded, size: 16),
-                label: const Text('방 삭제 (관리자)'),
-              ),
-          ],
-        ],
+                  title: Row(
+                    children: [
+                      Text(m.nickname, style: const TextStyle(fontWeight: FontWeight.w600)),
+                      if (m.isAdmin) ...[
+                        const SizedBox(width: 6),
+                        const Text('👑', style: TextStyle(fontSize: 12)),
+                      ],
+                    ],
+                  ),
+                  subtitle: Text(
+                    '${m.quitDays}일째${m.quitMode == 'restart' ? ' · 이번 시도' : ''}',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  trailing: m.certifiedToday
+                      ? const Icon(Icons.eco_rounded, color: AppTheme.primary, size: 18)
+                      : null,
+                );
+              }),
+              if (widget.onDeleteRoom != null) ...[
+                const Divider(),
+                TextButton.icon(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    widget.onDeleteRoom!();
+                  },
+                  icon: const Icon(Icons.delete_forever_rounded, color: AppTheme.error),
+                  label: const Text('방 삭제', style: TextStyle(color: AppTheme.error)),
+                ),
+              ],
+            ],
+          );
+        },
       ),
     );
   }

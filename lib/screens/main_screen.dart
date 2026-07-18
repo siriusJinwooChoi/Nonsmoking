@@ -24,9 +24,15 @@ import '../widgets/goal_celebration_dialog.dart';
 import '../widgets/home_hero_card.dart';
 import '../widgets/action_list_tile.dart';
 import '../widgets/section_header.dart';
+import '../data/quit_mode_prefs.dart';
+import '../screens/quit_mode_settings_screen.dart';
+import '../services/smoking_record_flow.dart';
 import '../widgets/sos_overlay.dart';
+import '../widgets/smoking_record_sheet.dart';
 import 'quit_room/quit_room_list_screen.dart';
 import 'quit_room/quit_room_models.dart';
+import '../services/quit_room_post_service.dart';
+import '../services/quit_room_stats_loader.dart';
 
 // ✅ Analytics helper
 import '../analytics/app_analytics.dart';
@@ -127,6 +133,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   int _skippedCigarettes = 0;
   int _failureCount = 0;
   int? _goalDays;
+  QuitMode _quitMode = QuitMode.continuous;
   bool _goalCelebrationShowing = false;
   Timer? _timer;
   List<TimeOfDay> _reminderTimes = [];
@@ -243,6 +250,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     if (!mounted) return;
     final millis = prefs.getInt('startTime');
     _failureCount = prefs.getInt(_failureCountKey) ?? 0;
+    _quitMode = await QuitModePrefs.getMode(prefs);
+    if (!prefs.containsKey(QuitModePrefs.quitModeKey)) {
+      await prefs.setString(
+        QuitModePrefs.quitModeKey,
+        QuitMode.continuous.storageValue,
+      );
+    }
     _mainReason = prefs.getString('pinnedReasonText') ?? '';
     _reasonController.text = _mainReason;
     _showReasonEditor = _mainReason.isEmpty;
@@ -254,6 +268,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
     if (millis != null) {
       _startTime = DateTime.fromMillisecondsSinceEpoch(millis);
+      await QuitModePrefs.ensureOriginStartTime(millis, prefs: prefs);
     } else {
       _startTime = DateTime.now();
       await prefs.setInt('startTime', _startTime!.millisecondsSinceEpoch);
@@ -713,7 +728,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   Future<bool> _showSmokingReasonDialog({required String action}) async {
-    final result = await _RecordBottomSheet.show(context: context, action: action);
+    final result = await SmokingRecordSheet.show(context: context, action: action);
     if (result == null) return false;
     final timeValue = result['time'] as String;
     final situationValue = result['situation'] as String;
@@ -782,45 +797,37 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
     );
   }
 
-  /// 저장 완료 피드백은 오버레이 다이얼로그로 표시한다.
-  Future<void> _showSmokingSavedFeedback() async {
-    if (!mounted) return;
-    HapticFeedback.mediumImpact();
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: true,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('흡연 기록이 저장되었습니다'),
-        content: Text(
-          '기록이 정상적으로 반영되었어요.',
-          style: AppTheme.bodyMedium.copyWith(color: AppTheme.textPrimary),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('확인'),
-          ),
-        ],
-      ),
+  /// 저장 완료 피드백 — [runSmokingRecordFlow]에서 처리
+  Future<void> _onSmokedTap() async {
+    final ok = await runSmokingRecordFlow(
+      context,
+      showReasonSheet: (ctx, {required action}) =>
+          SmokingRecordSheet.show(context: ctx, action: action),
     );
+    if (!ok || !mounted) return;
+    await _reloadAfterSmokingRecord();
   }
 
-  Future<void> _onSmokedTap() async {
-    final saved = await _showSmokingReasonDialog(action: 'smoked');
-    if (!saved) return;
+  Future<void> _reloadAfterSmokingRecord() async {
     final prefs = await SharedPreferences.getInstance();
-    _failureCount = (prefs.getInt(_failureCountKey) ?? 0) + 1;
-    await prefs.setInt(_failureCountKey, _failureCount);
-    final before = prefs.getInt('lungHealth') ?? 100;
-    final after = (before - 10).clamp(0, 100);
-    await prefs.setInt('lungHealth', after);
-    // 폐 회복 타이머 기준 시점을 현재로 갱신해, 방금 피움 직후 -10%가 즉시 상쇄되지 않도록 한다.
-    await prefs.setInt('lastUpdatedTime', DateTime.now().millisecondsSinceEpoch);
-    await syncWidgetData();
-    if (!mounted) return;
-    setState(() {});
-    await _showSmokingSavedFeedback();
+    _failureCount = prefs.getInt(_failureCountKey) ?? 0;
+    final millis = prefs.getInt('startTime');
+    if (millis != null) {
+      _startTime = DateTime.fromMillisecondsSinceEpoch(millis);
+    }
+    _refreshQuitMetricsDisplay();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _openQuitModeSettings() async {
+    final changed = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => const QuitModeSettingsScreen()),
+    );
+    if (changed == true && mounted) {
+      _quitMode = await QuitModePrefs.getMode();
+      setState(() {});
+    }
   }
 
   Future<void> _onStrongCravingTap() async {
@@ -843,6 +850,13 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       },
       onSmoked: _onSmokedTap,
     );
+  }
+
+  String _shareDaysLabel(int days) {
+    if (_quitMode == QuitMode.restart) {
+      return '$days일째 (이번 시도)';
+    }
+    return '$days일째';
   }
 
   Future<void> _shareTodayRecord() async {
@@ -887,7 +901,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
             ),
             const SizedBox(height: 6),
             Text(
-              '$dateStr · $days일째 금연 중',
+              '$dateStr · ${_shareDaysLabel(days)} 금연 중',
               style: Theme.of(ctx).textTheme.bodyMedium,
               textAlign: TextAlign.center,
             ),
@@ -922,7 +936,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _shareToKakao(int days, String savedStr, int cigsStr) async {
-    final text = '[$days일째 금연 중이에요 🌱]\n\n'
+    final label = _shareDaysLabel(days);
+    final text = '[$label 금연 중이에요 🌱]\n\n'
         '오늘도 담배를 참았어요!\n'
         '지금까지 ₩$savedStr 절약, 담배 $cigsStr개비를 넘겼어요.\n\n'
         '금연뱅크와 함께해요!\n'
@@ -961,34 +976,27 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
       return;
     }
 
-    final postContent = '$days일째 금연 중이에요 🌱\n₩$savedStr 절약 · $cigsStr개비 참았어요!';
-
-    QuitRoom? targetRoom = rooms.first;
-    if (rooms.length > 1 && mounted) {
-      targetRoom = await showDialog<QuitRoom>(
-        context: context,
-        builder: (_) => SimpleDialog(
-          title: const Text('어느 금연방에 공유할까요?'),
-          children: rooms.map((r) => SimpleDialogOption(
-                onPressed: () => Navigator.pop(context, r),
-                child: Text(r.name),
-              )).toList(),
-        ),
-      );
-    }
+    final targetRoom = await QuitRoomPostService.pickRoom(context, rooms);
     if (targetRoom == null || !mounted) return;
 
-    final post = RoomPost(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      authorName: targetRoom.myName,
-      content: postContent,
-      createdAt: DateTime.now(),
+    final stats = await QuitRoomStatsLoader.loadFromPrefs();
+    final postContent =
+        '${_shareDaysLabel(days)} · ₩$savedStr · $cigsStr개비 참았어요!';
+
+    final result = await QuitRoomPostService.shareStatsToRoom(
+      context: context,
+      room: targetRoom,
+      stats: stats,
+      message: postContent,
     );
-    final updated = targetRoom.copyWith(posts: [...targetRoom.posts, post]);
-    final updatedRooms = rooms.map((r) => r.id == updated.id ? updated : r).toList();
-    await prefs.setString(kQuitRoomsKey, encodeRooms(updatedRooms));
 
     if (!mounted) return;
+    if (result.error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.error!)),
+      );
+      return;
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('「${targetRoom.name}」에 공유했어요!')),
     );
@@ -1032,21 +1040,27 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   Future<void> _performFullReset() async {
     await AppAnalytics.log('full_reset_from_settings', params: {'source': 'settings'});
 
-    await disableDailyReminder();
+    try {
+      await disableDailyReminder();
+    } catch (_) {}
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('reminderHour');
     await prefs.remove('reminderMinute');
 
+    // 로컬만 즉시 초기화 (네트워크 hang 없음)
     await SupabaseSyncService.resetOnboardingForIntroReplay();
 
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('처음부터 다시 시작합니다.')),
+    if (kDebugMode) {
+      final p = await SharedPreferences.getInstance();
+      debugPrint(
+        '_performFullReset done: '
+        'force=${p.getBool('supabase_force_onboarding_once')} '
+        'configured=${p.getBool('isConfigured')}',
       );
     }
 
-    await Future.delayed(const Duration(milliseconds: 300));
+    // 설정 화면 등 스택을 비우고 intro로 재진입
     relaunchAppRoot();
   }
 
@@ -1126,6 +1140,8 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
                   goalProgress: goalProgress,
                   failureCount: _failureCount,
                   reasonText: _mainReason.isEmpty ? null : _mainReason,
+                  quitMode: _quitMode,
+                  onModeTap: _openQuitModeSettings,
                   onGoalTap: _pickGoalDays,
                   onReasonTap: _openReasonEditorInline,
                 );
@@ -1347,240 +1363,6 @@ class _RecordTypeButton extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-// ─── 기록 바텀시트 ────────────────────────────────────────────────────
-class _RecordBottomSheet extends StatefulWidget {
-  const _RecordBottomSheet({required this.action});
-  final String action;
-
-  static Future<Map<String, String>?> show({
-    required BuildContext context,
-    required String action,
-  }) {
-    return showModalBottomSheet<Map<String, String>>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _RecordBottomSheet(action: action),
-    );
-  }
-
-  @override
-  State<_RecordBottomSheet> createState() => _RecordBottomSheetState();
-}
-
-class _RecordBottomSheetState extends State<_RecordBottomSheet> {
-  static const _times = [
-    ('🌅', '이른 아침'),
-    ('☀️', '오전'),
-    ('🍱', '점심 후'),
-    ('🌤️', '오후'),
-    ('🌆', '저녁'),
-    ('🌙', '밤'),
-    ('🌛', '자정'),
-  ];
-
-  static const _situations = [
-    ('😤', '스트레스'),
-    ('🥱', '지루함'),
-    ('🍺', '술자리'),
-    ('🔄', '습관적으로'),
-    ('☕', '커피 마실 때'),
-    ('📱', '쉬는 시간'),
-    ('🚗', '운전 중'),
-    ('💼', '업무 중'),
-    ('💔', '힘든 감정'),
-  ];
-
-  static const _emotions = [
-    ('😠', '짜증나요'),
-    ('😴', '피곤해요'),
-    ('😰', '불안해요'),
-    ('😢', '우울해요'),
-    ('😤', '답답해요'),
-    ('😶', '멍해요'),
-    ('🙂', '괜찮아요'),
-    ('😄', '기분 좋아요'),
-  ];
-
-  String _time = '오후';
-  String _situation = '스트레스';
-  String _emotion = '짜증나요';
-
-  @override
-  Widget build(BuildContext context) {
-    final isSmoked = widget.action == 'smoked';
-    final accentColor = isSmoked ? AppTheme.error : AppTheme.craving;
-    final bottomPad = MediaQuery.of(context).viewInsets.bottom +
-        MediaQuery.of(context).padding.bottom;
-
-    return Container(
-      decoration: const BoxDecoration(
-        color: AppTheme.surfaceCard,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      padding: EdgeInsets.fromLTRB(24, 20, 24, 24 + bottomPad),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // 핸들 + 헤더
-          Center(
-            child: Container(
-              width: 36, height: 4,
-              decoration: BoxDecoration(
-                color: AppTheme.border,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: isSmoked ? const Color(0xFFFEE2E2) : const Color(0xFFFFEDD5),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  isSmoked ? Icons.smoking_rooms_rounded : Icons.whatshot_rounded,
-                  color: accentColor,
-                  size: 22,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    isSmoked ? '흡연 기록' : '욕구 기록',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  Text(
-                    isSmoked ? '패턴을 알면 더 쉽게 끊을 수 있어요' : '참아낸 순간도 기록이에요',
-                    style: Theme.of(context).textTheme.bodyMedium,
-                  ),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-
-          // 시간대
-          _ChipGroup(
-            label: '⏰  언제였나요?',
-            options: _times,
-            selected: _time,
-            onSelected: (v) => setState(() => _time = v),
-            color: accentColor,
-          ),
-          const SizedBox(height: 16),
-
-          // 상황
-          _ChipGroup(
-            label: '📍  어떤 상황이었나요?',
-            options: _situations,
-            selected: _situation,
-            onSelected: (v) => setState(() => _situation = v),
-            color: accentColor,
-          ),
-          const SizedBox(height: 16),
-
-          // 감정
-          _ChipGroup(
-            label: '💭  감정이 어땠나요?',
-            options: _emotions,
-            selected: _emotion,
-            onSelected: (v) => setState(() => _emotion = v),
-            color: accentColor,
-          ),
-          const SizedBox(height: 24),
-
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('취소'),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                flex: 2,
-                child: FilledButton(
-                  onPressed: () => Navigator.pop(context, {
-                    'time': _time,
-                    'situation': _situation,
-                    'emotion': _emotion,
-                  }),
-                  style: FilledButton.styleFrom(backgroundColor: accentColor),
-                  child: const Text('기록하기'),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ChipGroup extends StatelessWidget {
-  const _ChipGroup({
-    required this.label,
-    required this.options,
-    required this.selected,
-    required this.onSelected,
-    required this.color,
-  });
-  final String label;
-  final List<(String, String)> options;
-  final String selected;
-  final ValueChanged<String> onSelected;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: Theme.of(context).textTheme.labelLarge?.copyWith(color: AppTheme.textSecondary)),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: options.map((opt) {
-            final isSelected = selected == opt.$2;
-            return GestureDetector(
-              onTap: () => onSelected(opt.$2),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 160),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                decoration: BoxDecoration(
-                  color: isSelected ? color.withValues(alpha: 0.12) : AppTheme.surface,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: isSelected ? color : AppTheme.border,
-                    width: isSelected ? 1.5 : 1,
-                  ),
-                ),
-                child: Text(
-                  '${opt.$1} ${opt.$2}',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                    color: isSelected ? color : AppTheme.textSecondary,
-                  ),
-                ),
-              ),
-            );
-          }).toList(),
-        ),
-      ],
     );
   }
 }

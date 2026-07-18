@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../api/api_config.dart';
 import '../api/game_stats_prefs.dart';
 import '../auth/bff_auth_service.dart';
+import '../data/quit_mode_prefs.dart';
 import '../notifications/daily_reminder_worker.dart' as dw;
 import '../data/main_tutorial_prefs.dart';
 import '../notifications/pattern_peak_slots.dart';
@@ -72,7 +73,8 @@ abstract final class SupabaseSyncService {
     await prefs.setBool(_PrefsKeys.forceOnboardingOnce, true);
   }
 
-  /// 설정에서 「초기 설정으로 돌아가기」 — 로그인·약관은 유지하고 intro만 다시 진행.
+  /// 설정에서 「처음부터 다시 시작」 — 로그인·약관·닉네임은 유지하고 intro+튜토리얼만 다시 진행.
+  /// 네트워크 대기 없이 로컬만 즉시 초기화한다. (서버 동기화는 백그라운드)
   static Future<void> resetOnboardingForIntroReplay() async {
     final prefs = await SharedPreferences.getInstance();
 
@@ -92,21 +94,54 @@ abstract final class SupabaseSyncService {
       dw.kSelectedReasonTextKey,
       dw.kGoalDaysKey,
       dw.kGoalCongratulatedDayKey,
+      MainTutorialPrefs.completedKey,
     ]) {
       await prefs.remove(key);
     }
 
+    // 온보딩 완료(_finish) 전까지 유지되는 강제 플래그.
     await markForceOnboardingOnce();
 
-    if (SupabaseConfig.isConfigured && BffAuthService.instance.isLoggedIn) {
-      try {
-        await _pushOnboardingResetToRemote(prefs);
-      } catch (e, st) {
-        if (kDebugMode) {
-          debugPrint('SupabaseSyncService.resetOnboardingForIntroReplay: $e\n$st');
-        }
-      }
+    await prefs.setString(
+      QuitModePrefs.quitModeKey,
+      QuitMode.continuous.storageValue,
+    );
+    await prefs.remove(QuitModePrefs.changedAtKey);
+    await prefs.remove(QuitModePrefs.originStartTimeKey);
+
+    if (kDebugMode) {
+      debugPrint(
+        'resetOnboardingForIntroReplay: '
+        'isConfigured=${prefs.getBool(_PrefsKeys.isConfigured)} '
+        'force=${prefs.getBool(_PrefsKeys.forceOnboardingOnce)} '
+        'uid=${BffAuthService.instance.userId}',
+      );
     }
+
+    // 서버 push는 UI를 막지 않음 (토큰 갱신/네트워크 hang 방지)
+    if (SupabaseConfig.isConfigured && BffAuthService.instance.isLoggedIn) {
+      unawaited(() async {
+        try {
+          await _pushOnboardingResetToRemote(prefs)
+              .timeout(const Duration(seconds: 8));
+          if (kDebugMode) {
+            debugPrint('resetOnboardingForIntroReplay: remote reset OK');
+          }
+        } catch (e, st) {
+          if (kDebugMode) {
+            debugPrint(
+              'SupabaseSyncService.resetOnboardingForIntroReplay bg: $e\n$st',
+            );
+          }
+        }
+      }());
+    }
+  }
+
+  /// 온보딩 완료 시 강제 인트로 플래그 해제.
+  static Future<void> clearForceOnboardingFlag() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_PrefsKeys.forceOnboardingOnce, false);
   }
 
   static Future<void> _pushOnboardingResetToRemote(SharedPreferences prefs) async {
@@ -127,6 +162,9 @@ abstract final class SupabaseSyncService {
         'lung_health': 0,
         'lung_last_updated_ms': null,
         'pinned_reason_text': null,
+        'quit_mode': QuitMode.continuous.storageValue,
+        'quit_mode_changed_at_ms': null,
+        'origin_start_time_ms': null,
       },
       'reasons': {
         'reasons_json': <dynamic>[],
@@ -135,11 +173,13 @@ abstract final class SupabaseSyncService {
       },
     };
 
-    final res = await http.put(
-      _bffUri('/v1/sync/push'),
-      headers: headers,
-      body: jsonEncode(body),
-    );
+    final res = await http
+        .put(
+          _bffUri('/v1/sync/push'),
+          headers: headers,
+          body: jsonEncode(body),
+        )
+        .timeout(const Duration(seconds: 8));
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw Exception('onboarding reset push failed: ${res.statusCode}');
     }
@@ -267,11 +307,11 @@ abstract final class SupabaseSyncService {
     if (uid == null || uid.isEmpty) return false;
 
     final prefs = await SharedPreferences.getInstance();
-    final forceOnboarding =
-        prefs.getBool(_PrefsKeys.forceOnboardingOnce) ?? false;
+    // forceOnboardingOnce 는 pull 대상이 아님(shouldShowIntroFlow에서 처리).
+    // 여기 포함하면 플래그 유지 동안 waiter가 불필요하게 재실행된다.
     final pending = prefs.getBool(_PrefsKeys.pullPendingAfterLogin) ?? false;
     final initialDone = prefs.getBool(_initialPullDoneKey(uid)) ?? false;
-    return forceOnboarding || pending || !initialDone;
+    return pending || !initialDone;
   }
 
   /// 로그인 직후 UI 게이트 진입 전에 현재 사용자 기준으로 로컬 상태를 정렬한다.
@@ -301,11 +341,17 @@ abstract final class SupabaseSyncService {
     final forceOnboarding =
         prefs.getBool(_PrefsKeys.forceOnboardingOnce) ?? false;
     if (forceOnboarding) {
+      // 서버 pull로 이전/잔존 configured 상태를 덮어쓰지 않는다.
+      // force 플래그는 온보딩 완료(clearForceOnboardingFlag) 때만 해제한다.
       await prefs.setBool(_PrefsKeys.isConfigured, false);
       await prefs.setBool(_PrefsKeys.pullPendingAfterLogin, false);
       await prefs.setBool(_initialPullDoneKey(uid), true);
       await prefs.setString(_PrefsKeys.lastAuthUid, uid);
-      await prefs.setBool(_PrefsKeys.forceOnboardingOnce, false);
+      if (kDebugMode) {
+        debugPrint(
+          'runPostLoginPull: forceOnboarding active — skip pull, keep flag',
+        );
+      }
       return;
     }
 
@@ -332,8 +378,12 @@ abstract final class SupabaseSyncService {
       }
 
       if (remoteOnboardingDone == false) {
-        // 서버에서 온보딩 미완료 — 로컬도 미설정 상태로 맞추고 종료
-        await prefs.setBool(_PrefsKeys.isConfigured, false);
+        // 로컬에서 방금 온보딩을 마친 경우(서버 push 지연) 덮어쓰지 않음.
+        final localConfigured =
+            prefs.getBool(_PrefsKeys.isConfigured) ?? false;
+        if (!localConfigured) {
+          await prefs.setBool(_PrefsKeys.isConfigured, false);
+        }
         await prefs.setBool(_initialPullDoneKey(uid), true);
         await prefs.setBool(_PrefsKeys.pullPendingAfterLogin, false);
         await prefs.setString(_PrefsKeys.lastAuthUid, uid);
@@ -375,29 +425,42 @@ abstract final class SupabaseSyncService {
   static Future<bool> shouldShowIntroFlow() async {
     final prefs = await SharedPreferences.getInstance();
 
+    // 「처음부터 다시 시작」/신규 가입: 서버 상태와 무관하게 intro 강제.
     if (prefs.getBool(_PrefsKeys.forceOnboardingOnce) ?? false) {
-      if (!(prefs.getBool(_PrefsKeys.isConfigured) ?? false)) {
-        return true;
+      await prefs.setBool(_PrefsKeys.isConfigured, false);
+      if (kDebugMode) {
+        debugPrint('shouldShowIntroFlow: forceOnboardingOnce → true');
       }
-      await prefs.setBool(_PrefsKeys.forceOnboardingOnce, false);
+      return true;
+    }
+
+    // 로컬에서 이미 온보딩 완료 → 서버 push 지연으로 인트로를 다시 띄우지 않음.
+    // (완료 직후 remote가 아직 false여도 isConfigured를 false로 되돌리면 2회 진입됨)
+    final localConfigured = prefs.getBool(_PrefsKeys.isConfigured) ?? false;
+    if (localConfigured) {
+      if (kDebugMode) {
+        debugPrint('shouldShowIntroFlow: local isConfigured → false (skip intro)');
+      }
+      return false;
     }
 
     if (SupabaseConfig.isConfigured && BffAuthService.instance.isLoggedIn) {
       final remote = await _remoteOnboardingCompleted();
+      if (kDebugMode) {
+        debugPrint('shouldShowIntroFlow: local=false remote=$remote');
+      }
       if (remote == false) {
-        await prefs.setBool(_PrefsKeys.isConfigured, false);
         return true;
       }
       if (remote == true) {
+        // 서버만 완료·로컬 미설정 → pull로 맞출 차례. intro 재입력은 하지 않음.
         return false;
       }
-      // remote == null: 서버 미응답(네트워크 오류).
-      // 로그인된 기존 사용자에게 인트로를 강제 진입시키면 서버 데이터를 덮어쓸 위험이 있다.
-      // 신규 계정은 이 분기 도달 전에 forceOnboardingOnce 플래그로 보호된다.
+      // remote == null: 네트워크 오류. 로컬 미설정이어도 강제 intro는 위험.
       return false;
     }
 
-    return !(prefs.getBool(_PrefsKeys.isConfigured) ?? false);
+    return true;
   }
 
   static Future<bool?> _remoteOnboardingCompleted() async {
@@ -453,6 +516,9 @@ abstract final class SupabaseSyncService {
     final startMs =
         prefs.getInt(_PrefsKeys.startTime) ?? DateTime.now().millisecondsSinceEpoch;
     final lungLast = prefs.getInt(_PrefsKeys.lastUpdatedTime) ?? startMs;
+    final quitMode = await QuitModePrefs.getMode(prefs);
+    final quitModeChangedAt = prefs.getInt(QuitModePrefs.changedAtKey);
+    final originStartMs = prefs.getInt(QuitModePrefs.originStartTimeKey) ?? startMs;
 
     final body = <String, dynamic>{
       // 신규 통합 quit_profile
@@ -470,6 +536,10 @@ abstract final class SupabaseSyncService {
             (prefs.getInt(_PrefsKeys.lungHealth) ?? 100).clamp(0, 100),
         'lung_last_updated_ms': lungLast,
         'pinned_reason_text': prefs.getString(_PrefsKeys.pinnedReasonText),
+        'quit_mode': quitMode.storageValue,
+        if (quitModeChangedAt != null)
+          'quit_mode_changed_at_ms': quitModeChangedAt,
+        'origin_start_time_ms': originStartMs,
       },
       'reasons': {
         'reasons_json': reasonsList,
@@ -614,6 +684,37 @@ abstract final class SupabaseSyncService {
       await prefs.setString(_PrefsKeys.pinnedReasonText, pinned);
     } else {
       await prefs.remove(_PrefsKeys.pinnedReasonText);
+    }
+
+    final remoteMode = row['quit_mode'] as String?;
+    if (remoteMode != null && remoteMode.isNotEmpty) {
+      await prefs.setString(QuitModePrefs.quitModeKey, remoteMode);
+    } else if (!prefs.containsKey(QuitModePrefs.quitModeKey)) {
+      await prefs.setString(
+        QuitModePrefs.quitModeKey,
+        QuitMode.continuous.storageValue,
+      );
+    }
+
+    final modeChanged = row['quit_mode_changed_at_ms'];
+    if (modeChanged != null) {
+      await prefs.setInt(
+        QuitModePrefs.changedAtKey,
+        (modeChanged as num).toInt(),
+      );
+    }
+
+    final originMs = row['origin_start_time_ms'];
+    if (originMs != null && (originMs as num).toInt() > 0) {
+      await prefs.setInt(
+        QuitModePrefs.originStartTimeKey,
+        (originMs as num).toInt(),
+      );
+    } else if (startMs != null) {
+      await QuitModePrefs.ensureOriginStartTime(
+        (startMs as num).toInt(),
+        prefs: prefs,
+      );
     }
   }
 

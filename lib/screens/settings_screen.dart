@@ -10,6 +10,7 @@ import '../api/bff_profile_api.dart';
 import '../services/app_update_service.dart';
 import '../supabase/supabase_config.dart';
 import '../supabase/supabase_sync_service.dart';
+import '../screens/quit_mode_settings_screen.dart';
 import '../theme/app_theme.dart';
 import '../notifications/daily_reminder_worker.dart';
 import 'app_info_screen.dart';
@@ -287,7 +288,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
     if (confirmed == true) {
-      await widget.onFullReset();
+      // 확인 직후 즉시 로딩 표시 — 네트워크 hang 때도 피드백 제공
+      if (!mounted) return;
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const PopScope(
+          canPop: false,
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      );
+      try {
+        await widget.onFullReset();
+      } finally {
+        // relaunch가 스택을 비우면 context가 unmount될 수 있음
+        if (mounted) {
+          final nav = Navigator.of(context, rootNavigator: true);
+          if (nav.canPop()) nav.pop();
+        }
+      }
     }
   }
 
@@ -425,6 +444,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     onCalendarReminderChanged: _setCalendarReminder,
                     onPatternReminderChanged: _setPatternReminder,
                   ),
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 24),
+          _sectionTitle('내 금연'),
+          _settingsTile(
+            context,
+            icon: Icons.eco_rounded,
+            title: '금연 모드',
+            subtitle: '연속 · 재시작 방식 선택',
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const QuitModeSettingsScreen(),
                 ),
               );
             },

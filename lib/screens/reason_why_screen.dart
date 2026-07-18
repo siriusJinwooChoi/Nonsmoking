@@ -33,19 +33,21 @@ class _ReasonItem {
   });
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'text': text,
-    'pinned': pinned,
-    'createdAt': createdAt,
-    'displayNumber': displayNumber,
-  };
+        'id': id,
+        'text': text,
+        'pinned': pinned,
+        'createdAt': createdAt,
+        'displayNumber': displayNumber,
+      };
 
   static _ReasonItem fromJson(Map<String, dynamic> json) {
     return _ReasonItem(
-      id: (json['id'] as String?) ?? DateTime.now().millisecondsSinceEpoch.toString(),
+      id: (json['id'] as String?) ??
+          DateTime.now().millisecondsSinceEpoch.toString(),
       text: (json['text'] as String?) ?? '',
       pinned: (json['pinned'] as bool?) ?? false,
-      createdAt: (json['createdAt'] as int?) ?? DateTime.now().millisecondsSinceEpoch,
+      createdAt: (json['createdAt'] as int?) ??
+          DateTime.now().millisecondsSinceEpoch,
       displayNumber: (json['displayNumber'] as int?) ?? 0,
     );
   }
@@ -54,6 +56,16 @@ class _ReasonItem {
 class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
   static const String _prefsKey = 'quitReasons_v1';
   static const String _selectedReasonIdKey = 'selectedReasonId';
+
+  /// 빈 화면·여백을 채우는 예시 (탭하면 내 이유로 추가)
+  static const List<({String emoji, String text})> _exampleReasons = [
+    (emoji: '❤️', text: '가족과 더 오래 건강하게 함께하기 위해'),
+    (emoji: '🫁', text: '숨이 편해지고, 운동이 즐거워지도록'),
+    (emoji: '💰', text: '담배값으로 나다운 취미에 투자하려고'),
+    (emoji: '✨', text: '냄새가 아닌, 나답게 기억되고 싶어서'),
+    (emoji: '🌱', text: '작은 약속을 지키는 사람이 되고 싶어서'),
+    (emoji: '👶', text: '아이·손주에게 당당한 모습을 보여주려고'),
+  ];
 
   final List<_ReasonItem> _reasons = [];
   final ReasonsApiService _reasonsApi = const ReasonsApiService();
@@ -69,7 +81,8 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
   Future<void> _loadReasons() async {
     final prefs = await SharedPreferences.getInstance();
     _selectedReasonId = prefs.getString(_selectedReasonIdKey);
-    _reasonNotificationEnabled = prefs.getBool(kReasonNotificationEnabledKey) ?? false;
+    _reasonNotificationEnabled =
+        prefs.getBool(kReasonNotificationEnabledKey) ?? false;
 
     final raw = prefs.getString(_prefsKey);
 
@@ -87,14 +100,13 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
             .map((m) => _ReasonItem.fromJson(Map<String, dynamic>.from(m)))
             .where((r) => r.text.trim().isNotEmpty)
             .toList();
-        // 기존 데이터에 displayNumber 없으면 생성 순서로 1,2,3... 부여
-        final byCreated = List<_ReasonItem>.from(loaded)..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+        final byCreated = List<_ReasonItem>.from(loaded)
+          ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
         for (var i = 0; i < byCreated.length; i++) {
           if (byCreated[i].displayNumber <= 0) {
             byCreated[i].displayNumber = i + 1;
           }
         }
-        // 별표는 하나만: 여러 개 고정된 경우 첫 번째만 남김
         final pinnedCount = loaded.where((r) => r.pinned).length;
         if (pinnedCount > 1) {
           var foundFirst = false;
@@ -133,7 +145,6 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
       await _disableReasonNotification();
       return;
     }
-    // UI는 즉시 반영하고, 예약 작업은 뒤에서 수행해 체감 지연을 줄입니다.
     if (mounted) {
       setState(() {
         _selectedReasonId = item.id;
@@ -148,7 +159,10 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
     unawaited(_pushReasonsToApiIfAvailable());
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('매일 12:00에 선택한 이유로 알림이 옵니다.'), duration: Duration(seconds: 2)),
+      const SnackBar(
+        content: Text('매일 12:00에 선택한 이유로 알림이 옵니다.'),
+        duration: Duration(seconds: 2),
+      ),
     );
   }
 
@@ -163,7 +177,10 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
     unawaited(_pushReasonsToApiIfAvailable());
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('금연 이유 알림이 해지되었습니다.'), duration: Duration(seconds: 2)),
+      const SnackBar(
+        content: Text('금연 이유 알림이 해지되었습니다.'),
+        duration: Duration(seconds: 2),
+      ),
     );
   }
 
@@ -194,10 +211,11 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
     if (!SupabaseConfig.isConfigured) return;
     final token = await BffAuthService.instance.getValidAccessToken();
     if (token == null || token.isEmpty) return;
-    final pinned = _reasons.where((r) => r.pinned).map((r) => r.text.trim()).firstWhere(
-          (t) => t.isNotEmpty,
-          orElse: () => '',
-        );
+    final pinned =
+        _reasons.where((r) => r.pinned).map((r) => r.text.trim()).firstWhere(
+              (t) => t.isNotEmpty,
+              orElse: () => '',
+            );
     final selectedText = _reasons
         .where((r) => r.id == _selectedReasonId)
         .map((r) => r.text)
@@ -252,7 +270,8 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
         await prefs.setString(_selectedReasonIdKey, remote.selectedReasonId!);
       }
       if (remote.selectedReasonText != null) {
-        await prefs.setString(kSelectedReasonTextKey, remote.selectedReasonText!);
+        await prefs.setString(
+            kSelectedReasonTextKey, remote.selectedReasonText!);
       }
 
       await syncWidgetData();
@@ -271,22 +290,37 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
   }
 
   void _sortReasons() {
-    // ✅ 핀된 이유 먼저, 그 다음은 createdAt 최신순(최근 추가가 위로)
     _reasons.sort((a, b) {
       if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
       return b.createdAt.compareTo(a.createdAt);
     });
   }
 
-  Future<void> _addReason() async {
-    final reason = await _showInputDialog(context, title: '금연 이유 추가');
+  Future<void> _addReason({String? preset}) async {
+    final reason = preset ??
+        await _showInputDialog(context, title: '금연 이유 추가');
     if (reason == null) return;
 
     final trimmed = reason.trim();
     if (trimmed.isEmpty) return;
 
+    // 이미 같은 문구가 있으면 추가하지 않음
+    if (_reasons.any((r) => r.text.trim() == trimmed)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('이미 같은 이유가 있어요.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
     final now = DateTime.now().millisecondsSinceEpoch;
-    final nextNum = _reasons.isEmpty ? 1 : (_reasons.map((r) => r.displayNumber).reduce((a, b) => a > b ? a : b) + 1);
+    final nextNum = _reasons.isEmpty
+        ? 1
+        : (_reasons.map((r) => r.displayNumber).reduce((a, b) => a > b ? a : b) +
+            1);
     final item = _ReasonItem(
       id: now.toString(),
       text: trimmed,
@@ -325,7 +359,6 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
     }
   }
 
-  /// 별표는 하나만 선택: 다른 건 모두 해제 후 이 항목만 고정(또는 해제)
   Future<void> _togglePin(int index) async {
     setState(() {
       final currentlyPinned = _reasons[index].pinned;
@@ -342,7 +375,9 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(_reasons.any((r) => r.pinned) ? '중요 이유로 고정되었습니다. (흡연 욕구 시 표시됩니다.)' : '고정이 해제되었습니다.'),
+        content: Text(_reasons.any((r) => r.pinned)
+            ? '중요 이유로 고정되었습니다. (흡연 욕구 시 표시됩니다.)'
+            : '고정이 해제되었습니다.'),
         duration: const Duration(seconds: 2),
       ),
     );
@@ -366,22 +401,49 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
 
     if (!mounted) return;
 
-    // ✅ 되돌리기(Undo)
-    ScaffoldMessenger.of(context).showSnackBar(
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
       SnackBar(
-        content: const Text('금연 이유를 삭제했습니다.'),
-        duration: const Duration(seconds: 4),
-        action: SnackBarAction(
-          label: '되돌리기',
-          onPressed: () async {
-            // 원래 인덱스가 범위를 벗어나면 뒤에 붙임
-            final insertIndex = index.clamp(0, _reasons.length);
-            setState(() {
-              _reasons.insert(insertIndex, removed);
-              _sortReasons();
-            });
-            await _saveReasons();
-          },
+        // 확인을 누를 때까지 유지 (자동 소멸으로 남아 보이는 문제 방지)
+        duration: const Duration(days: 1),
+        dismissDirection: DismissDirection.horizontal,
+        content: Row(
+          children: [
+            const Expanded(
+              child: Text('금연 이유를 삭제했습니다.'),
+            ),
+            TextButton(
+              onPressed: () async {
+                final insertIndex = index.clamp(0, _reasons.length);
+                messenger.hideCurrentSnackBar();
+                if (!mounted) return;
+                setState(() {
+                  _reasons.insert(insertIndex, removed);
+                  _sortReasons();
+                });
+                await _saveReasons();
+              },
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: const Text('되돌리기'),
+            ),
+            TextButton(
+              onPressed: () => messenger.hideCurrentSnackBar(),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                textStyle: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              child: const Text('확인'),
+            ),
+          ],
         ),
       ),
     );
@@ -412,10 +474,10 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
   }
 
   Future<String?> _showInputDialog(
-      BuildContext context, {
-        String title = '',
-        String initialValue = '',
-      }) {
+    BuildContext context, {
+    String title = '',
+    String initialValue = '',
+  }) {
     final controller = TextEditingController(text: initialValue);
     return showDialog<String>(
       context: context,
@@ -442,193 +504,506 @@ class _ReasonWhyScreenState extends State<ReasonWhyScreen> {
     );
   }
 
+  List<({String emoji, String text})> get _unusedExamples {
+    final mine = _reasons.map((r) => r.text.trim()).toSet();
+    return _exampleReasons
+        .where((e) => !mine.contains(e.text.trim()))
+        .toList();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final examples = _unusedExamples;
+    final showExamples = examples.isNotEmpty && _reasons.length < 5;
+
     return Scaffold(
       backgroundColor: AppTheme.surface,
       appBar: AppBar(
         title: const Text('내가 금연하는 이유'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: () {
+            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+            Navigator.of(context).maybePop();
+          },
+        ),
       ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(
-                color: AppTheme.primary.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
+      body: CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Icon(Icons.info_outline_rounded, color: AppTheme.primary, size: 22),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      '이유 중에 하나를 선택하여 종 버튼을 누르시면 매일 점심시간(12:00)마다 금연 알림이 제공됩니다.',
-                      style: AppTheme.bodyMedium.copyWith(color: AppTheme.primary),
-                    ),
+                  _HeroHeader(
+                    notificationOn: _reasonNotificationEnabled,
+                    onDisableNotification: _reasonNotificationEnabled
+                        ? _disableReasonNotification
+                        : null,
                   ),
+                  const SizedBox(height: 20),
+                  if (_reasons.isNotEmpty)
+                    Text(
+                      '나의 이유',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
+                  if (_reasons.isNotEmpty) const SizedBox(height: 10),
                 ],
               ),
             ),
           ),
-          if (_reasonNotificationEnabled)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-              child: TextButton.icon(
-                onPressed: _disableReasonNotification,
-                icon: const Icon(Icons.notifications_off_rounded, size: 20),
-                label: const Text('금연 이유 알림 해지'),
-                style: TextButton.styleFrom(foregroundColor: AppTheme.textSecondary),
-              ),
-            ),
-          Expanded(
-            child: _reasons.isEmpty
-                ? Center(
+          if (_reasons.isEmpty)
+            SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.all(32),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.edit_note_rounded, size: 64, color: AppTheme.textMuted),
-                    const SizedBox(height: 16),
-                    Text(
-                      '아직 작성한 금연 이유가 없습니다.',
-                      textAlign: TextAlign.center,
-                      style: AppTheme.titleMedium,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '오른쪽 아래 + 버튼을 눌러 추가해보세요.',
-                      textAlign: TextAlign.center,
-                      style: AppTheme.bodyMedium,
-                    ),
-                  ],
-                ),
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+                child: _EmptyHint(),
               ),
             )
-          : ListView.builder(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 80),
-              itemCount: _reasons.length,
-              itemBuilder: (context, index) {
-                final item = _reasons[index];
-                final isSelected = _selectedReasonId == item.id;
-                return Container(
-                  key: ValueKey(item.id),
-                  margin: const EdgeInsets.only(bottom: 10),
+          else
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) {
+                    final item = _reasons[index];
+                    final isSelected = _selectedReasonId == item.id;
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _ReasonCard(
+                        item: item,
+                        isSelected: isSelected,
+                        onNotify: () => _selectReasonForNotification(index),
+                        onPin: () => _togglePin(index),
+                        onEdit: () => _editReason(index),
+                        onDelete: () => _confirmDelete(index),
+                      ),
+                    );
+                  },
+                  childCount: _reasons.length,
+                ),
+              ),
+            ),
+          if (showExamples)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+                child: _ExampleSection(
+                  examples: examples,
+                  onTap: (text) => _addReason(preset: text),
+                ),
+              ),
+            ),
+          const SliverToBoxAdapter(child: SizedBox(height: 100)),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _addReason(),
+        icon: const Icon(Icons.add_rounded),
+        label: const Text('이유 추가'),
+      ),
+    );
+  }
+}
+
+class _HeroHeader extends StatelessWidget {
+  const _HeroHeader({
+    required this.notificationOn,
+    this.onDisableNotification,
+  });
+
+  final bool notificationOn;
+  final VoidCallback? onDisableNotification;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppTheme.primary.withValues(alpha: 0.12),
+            AppTheme.primarySurface,
+            const Color(0xFFF0F7F5),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppTheme.primary.withValues(alpha: 0.12)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppTheme.primary.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.favorite_rounded,
+                  color: AppTheme.primary,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  '왜 끊고 싶은지, 한 문장으로',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            '종 아이콘을 누르면 매일 12:00에 그 이유가 알림으로 와요. '
+            '별은 흡연 욕구가 올 때 가장 먼저 보여 줄 이유를 고정해요.',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: AppTheme.textSecondary,
+                  height: 1.45,
+                ),
+          ),
+          if (notificationOn && onDisableNotification != null) ...[
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: onDisableNotification,
+                icon: const Icon(Icons.notifications_off_outlined, size: 18),
+                label: const Text('알림 끄기'),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppTheme.textSecondary,
+                  padding: EdgeInsets.zero,
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyHint extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Column(
+        children: [
+          Icon(
+            Icons.edit_note_rounded,
+            size: 48,
+            color: AppTheme.primary.withValues(alpha: 0.45),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            '아직 적은 이유가 없어요',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '아래에서 예시를 고르거나, + 로 직접 적어 보세요.',
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReasonCard extends StatelessWidget {
+  const _ReasonCard({
+    required this.item,
+    required this.isSelected,
+    required this.onNotify,
+    required this.onPin,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final _ReasonItem item;
+  final bool isSelected;
+  final VoidCallback onNotify;
+  final VoidCallback onPin;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceCard,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: item.pinned
+              ? AppTheme.accent.withValues(alpha: 0.35)
+              : isSelected
+                  ? AppTheme.primary.withValues(alpha: 0.28)
+                  : AppTheme.border,
+        ),
+        boxShadow: AppTheme.cardShadowSubtle,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 28,
+                  height: 28,
+                  alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: AppTheme.surfaceCard,
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: AppTheme.cardShadowSubtle,
+                    color: AppTheme.primarySurface,
+                    borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(
-                          item.pinned ? Icons.push_pin_rounded : Icons.push_pin_outlined,
-                          color: item.pinned ? AppTheme.warning : AppTheme.textMuted,
-                          size: 22,
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(
-                                '${item.displayNumber}. ${item.text}',
-                                style: AppTheme.bodyLarge,
-                                maxLines: 10,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              if (item.pinned || isSelected) ...[
-                                const SizedBox(height: 4),
-                                if (item.pinned)
-                                  Text('중요 이유로 고정됨', style: AppTheme.labelMedium),
-                                if (isSelected)
-                                  Text('매일 12:00 알림 사용 중', style: AppTheme.labelMedium.copyWith(color: AppTheme.primary)),
-                              ],
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        // 2x2 아이콘 그리드 (종, 별 / 연필, 휴지통)
-                        Container(
-                          decoration: BoxDecoration(
-                            color: AppTheme.surface.withValues(alpha: 0.5),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: AppTheme.textMuted.withValues(alpha: 0.3)),
-                          ),
-                          padding: const EdgeInsets.all(4),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  IconButton(
-                                    icon: Icon(
-                                      isSelected ? Icons.notifications_rounded : Icons.notifications_none_rounded,
-                                      color: isSelected ? AppTheme.primary : AppTheme.textMuted,
-                                      size: 22,
-                                    ),
-                                    onPressed: () => _selectReasonForNotification(index),
-                                    tooltip: isSelected ? '알림 해지' : '이 이유로 매일 알림 받기',
-                                    padding: const EdgeInsets.all(6),
-                                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                                  ),
-                                  IconButton(
-                                    icon: Icon(
-                                      item.pinned ? Icons.star_rounded : Icons.star_border_rounded,
-                                      color: item.pinned ? AppTheme.warning : AppTheme.textMuted,
-                                      size: 22,
-                                    ),
-                                    onPressed: () => _togglePin(index),
-                                    tooltip: item.pinned ? '고정 해제' : '중요 이유 고정',
-                                    padding: const EdgeInsets.all(6),
-                                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                                  ),
-                                ],
-                              ),
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  IconButton(
-                                    icon: const Icon(Icons.edit_rounded, color: AppTheme.primary, size: 22),
-                                    onPressed: () => _editReason(index),
-                                    tooltip: '수정',
-                                    padding: const EdgeInsets.all(6),
-                                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(Icons.delete_rounded, color: AppTheme.error, size: 22),
-                                    onPressed: () => _confirmDelete(index),
-                                    tooltip: '삭제',
-                                    padding: const EdgeInsets.all(6),
-                                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+                  child: Text(
+                    '${item.displayNumber}',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.primary,
+                      fontSize: 13,
                     ),
                   ),
-                );
-              },
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        item.text,
+                        style: AppTheme.bodyLarge.copyWith(height: 1.4),
+                      ),
+                      if (item.pinned || isSelected) ...[
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          children: [
+                            if (item.pinned)
+                              _StatusChip(
+                                icon: Icons.push_pin_rounded,
+                                label: '중요 고정',
+                                color: AppTheme.accent,
+                              ),
+                            if (isSelected)
+                              _StatusChip(
+                                icon: Icons.notifications_active_rounded,
+                                label: '매일 12:00',
+                                color: AppTheme.primary,
+                              ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: AppTheme.border),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            child: Row(
+              children: [
+                _ActionIcon(
+                  icon: isSelected
+                      ? Icons.notifications_rounded
+                      : Icons.notifications_none_rounded,
+                  color: isSelected ? AppTheme.primary : AppTheme.textMuted,
+                  tooltip: isSelected ? '알림 해지' : '매일 알림',
+                  onTap: onNotify,
+                ),
+                _ActionIcon(
+                  icon: item.pinned
+                      ? Icons.star_rounded
+                      : Icons.star_border_rounded,
+                  color: item.pinned ? AppTheme.accent : AppTheme.textMuted,
+                  tooltip: item.pinned ? '고정 해제' : '중요 고정',
+                  onTap: onPin,
+                ),
+                _ActionIcon(
+                  icon: Icons.edit_outlined,
+                  color: AppTheme.textSecondary,
+                  tooltip: '수정',
+                  onTap: onEdit,
+                ),
+                _ActionIcon(
+                  icon: Icons.delete_outline_rounded,
+                  color: AppTheme.error.withValues(alpha: 0.85),
+                  tooltip: '삭제',
+                  onTap: onDelete,
+                ),
+              ],
             ),
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _addReason,
-        child: const Icon(Icons.add_rounded),
+    );
+  }
+}
+
+class _StatusChip extends StatelessWidget {
+  const _StatusChip({
+    required this.icon,
+    required this.label,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(20),
       ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ActionIcon extends StatelessWidget {
+  const _ActionIcon({
+    required this.icon,
+    required this.color,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: IconButton(
+        onPressed: onTap,
+        tooltip: tooltip,
+        icon: Icon(icon, size: 22, color: color),
+        style: IconButton.styleFrom(
+          minimumSize: const Size(48, 44),
+          tapTargetSize: MaterialTapTargetSize.padded,
+        ),
+      ),
+    );
+  }
+}
+
+class _ExampleSection extends StatelessWidget {
+  const _ExampleSection({
+    required this.examples,
+    required this.onTap,
+  });
+
+  final List<({String emoji, String text})> examples;
+  final ValueChanged<String> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              '이런 이유도 있어요',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '탭하면 추가',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: AppTheme.textMuted,
+                  ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        ...examples.map((e) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () => onTap(e.text),
+                borderRadius: BorderRadius.circular(14),
+                child: Ink(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 14,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surfaceCard,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: AppTheme.border,
+                      style: BorderStyle.solid,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Text(e.emoji, style: const TextStyle(fontSize: 20)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          e.text,
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                color: AppTheme.textPrimary,
+                                height: 1.35,
+                              ),
+                        ),
+                      ),
+                      Icon(
+                        Icons.add_circle_outline_rounded,
+                        size: 20,
+                        color: AppTheme.primary.withValues(alpha: 0.7),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        }),
+      ],
     );
   }
 }
